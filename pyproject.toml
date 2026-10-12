@@ -35,8 +35,8 @@ classifiers = [
 dependencies = [
     "anyio>=3.4,<5",
     "fastapi>=0.110",
-    # YAML acceleration uses loader/dumper internals that changed in 2.4.
-    "omegaconf>=2.3,<2.4",
+    # YAML acceleration supports the tested 2.3 and 2.4 internal APIs.
+    "omegaconf>=2.3,<2.5",
     "packaging>=23",
     "pydantic>=1.10,<3",
     "psutil>=5.9",

@@ -5,16 +5,27 @@ import time
 from collections.abc import Hashable, Iterable, Iterator, Mapping
 from datetime import date, datetime, time as datetime_time
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple
+from importlib import import_module
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import yaml
 from omegaconf import DictConfig, ListConfig, OmegaConf
-from omegaconf._utils import OmegaConfDumper, get_omega_conf_dumper, get_yaml_loader
+from omegaconf._utils import get_omega_conf_dumper
 
 from pyruns._config import CONFIG_DEFAULT_FILENAME, CONFIG_FILENAME, MAX_CONFIG_FILE_BYTES
 from pyruns.utils.info_io import _replace_with_retry, load_task_metadata
 from pyruns.utils.file_io import read_bounded_bytes, regular_file_opener
 from pyruns.utils.sort_utils import normalize_task_search_text, sort_tasks_for_manager
+
+
+# OmegaConf moved the loader factory from _utils to _yaml in 2.4.
+try:
+    _omega_yaml = import_module("omegaconf._yaml")
+except ModuleNotFoundError as exc:
+    if exc.name != "omegaconf._yaml":
+        raise
+    _omega_yaml = import_module("omegaconf._utils")
+get_yaml_loader = cast(Any, _omega_yaml).get_yaml_loader
 
 
 # OmegaConf's loader inherits YAML 1.1 integer resolution, which would turn
@@ -33,20 +44,24 @@ _PYRUNS_INT_PATTERN = re.compile(
 @lru_cache(maxsize=2)
 def _get_pyruns_yaml_loader(*, pure_python: bool = False) -> Any:
     """Reuse the configured class; yaml.load creates a fresh parser per call."""
-    if not pure_python:
-        python_loader = _get_pyruns_yaml_loader(pure_python=True)
-        c_loader = getattr(yaml, "CSafeLoader", None)
-        if c_loader is None:
-            return python_loader
+    loader = get_yaml_loader()
+    c_loader = getattr(yaml, "CSafeLoader", None)
+    if pure_python or c_loader is None:
+        if not issubclass(loader, yaml.SafeLoader):
+            # OmegaConf 2.4 selects libyaml itself. Put the Python parser first
+            # while retaining its mapping/alias checks and scalar constructors.
+            class PyrunsPythonYamlLoader(yaml.SafeLoader, loader):
+                yaml_implicit_resolvers = loader.yaml_implicit_resolvers.copy()
+                yaml_constructors = loader.yaml_constructors.copy()
+                yaml_multi_constructors = loader.yaml_multi_constructors.copy()
 
-        # Replace parsing while retaining OmegaConf's mapping constructor,
-        # duplicate-key checks and Pyruns' private scalar resolvers.
-        class PyrunsYamlLoader(c_loader, python_loader):
+            loader = PyrunsPythonYamlLoader
+    elif not issubclass(loader, c_loader):
+        # OmegaConf 2.3 still needs a C parser; do not repeat that base on 2.4.
+        class PyrunsYamlLoader(c_loader, loader):
             pass
 
-        return PyrunsYamlLoader
-
-    loader = get_yaml_loader()
+        loader = PyrunsYamlLoader
     loader.yaml_implicit_resolvers = {
         key: [
             (tag, regexp)
@@ -92,13 +107,15 @@ def load_config_text(text: str) -> DictConfig | ListConfig:
 @lru_cache(maxsize=2)
 def _get_pyruns_yaml_dumper(*, pure_python: bool = False) -> Any:
     """Use libyaml's emitter with OmegaConf's scalar representers when available."""
-    python_dumper = get_omega_conf_dumper()
+    omega_dumper = get_omega_conf_dumper()
     c_dumper = None if pure_python else getattr(yaml, "CDumper", None)
-    if c_dumper is None:
-        return python_dumper
+    base: Any = c_dumper if c_dumper is not None else yaml.Dumper
 
-    class PyrunsYamlDumper(c_dumper, OmegaConfDumper):
-        pass
+    # Copy representers onto the requested emitter. Combining C and Python
+    # emitter bases would select incompatible serializer methods on 2.4.
+    class PyrunsYamlDumper(base):
+        yaml_representers = omega_dumper.yaml_representers.copy()
+        yaml_multi_representers = omega_dumper.yaml_multi_representers.copy()
 
     return PyrunsYamlDumper
 
@@ -147,7 +164,7 @@ def load_config_view_text(text: str) -> DictConfig | ListConfig | dict[str, Any]
 def to_container(value: Any, *, resolve: bool = False) -> Any:
     """Convert an OmegaConf value to safe JSON/YAML-compatible containers."""
 
-    if isinstance(value, (DictConfig, ListConfig)):
+    if OmegaConf.is_config(value):
         return OmegaConf.to_container(value, resolve=resolve, enum_to_str=True)
     return value
 

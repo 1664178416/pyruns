@@ -4,7 +4,9 @@ import json
 import time
 from unittest import mock
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, __version__ as omegaconf_version
+from omegaconf.errors import KeyValidationError
+from packaging.version import Version
 import pytest
 import yaml
 
@@ -46,7 +48,6 @@ def test_view_aliases_and_documents_are_independent(pyruns_yaml_backend):
     ("1: one\n", "1=one", ["1: one"]),
     ("false: no\n", "False=False", ["false: false"]),
     ("0.5: ratio\n", "0.5=ratio", ["0.5: ratio"]),
-    ('1: numeric\n"1": text\n', "1=numeric, 1=text", ["1: numeric", "1: text"]),
 ])
 def test_nonstring_config_keys_preserve_preview_search_and_values(
     as_omegaconf, document, preview, search_terms,
@@ -59,6 +60,21 @@ def test_nonstring_config_keys_preserve_preview_search_and_values(
     assert actual_preview == preview
     assert all(term in search for term in search_terms)
     assert config_utils.to_container(config, resolve=False) == before
+
+
+@pytest.mark.parametrize("loader", [config_utils.load_config_text, config_utils.load_config_view_text])
+def test_ambiguous_numeric_keys_follow_omegaconf_contract(loader):
+    document = '1: numeric\n"1": text\n'
+    if Version(omegaconf_version) >= Version("2.4"):
+        with pytest.raises(KeyValidationError, match="Conflicting integer and string keys"):
+            loader(document)
+    else:
+        config = loader(document)
+        assert config_utils.to_container(config) == {1: "numeric", "1": "text"}
+        for value in (config, config_utils.to_container(config)):
+            preview, search = config_utils.build_config_preview_and_search_text(value)
+            assert preview == "1=numeric, 1=text"
+            assert "1: numeric" in search and "1: text" in search
 
 
 @pytest.mark.parametrize("document", [

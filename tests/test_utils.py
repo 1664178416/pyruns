@@ -16,7 +16,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, __version__ as omegaconf_version
+from packaging.version import Version
 from unittest.mock import patch
 
 import pyruns.utils.batch_utils as batch_utils
@@ -280,7 +281,8 @@ def test_argparse_literal_unpack_roundtrips_without_executing_script(tmp_path, e
     workspace = tmp_path / "_pyruns_"
     generate_config_file(str(workspace), str(script), params)
     actual = OmegaConf.to_container(OmegaConf.load(workspace / "config_default.yaml"))
-    normalized = OmegaConf.to_container(OmegaConf.create({"value": expected, "device": "cpu"}))
+    # YAML represents sequence defaults as lists, including native tuple input.
+    normalized = json.loads(json.dumps({"value": expected, "device": "cpu"}))
     assert actual == normalized
 
 
@@ -2202,7 +2204,7 @@ class TestYamlIO:
             "octal: 0o17\nbinary: 0b101\nrate: 1e-3\nflag: true\n"
             "date: 2026-09-25\nbase: local\npointer: ${base}\n"
             "large: 9007199254740993\nfloat: 1.0\nzero: -0.0\ntext: '1e-3'\n"
-            "7: number-key\n'7': string-key\n"
+            "7: number-key\n'8': string-key\n"
         )
         global_yaml = yaml.safe_load(text)
         global_omegaconf = OmegaConf.to_container(OmegaConf.create(text), resolve=False)
@@ -2211,7 +2213,7 @@ class TestYamlIO:
             "octal": 15, "binary": 5, "rate": 0.001, "flag": True,
             "date": "2026-09-25", "base": "local", "pointer": "${base}",
             "large": 9007199254740993, "float": 1.0, "zero": -0.0, "text": "1e-3",
-            7: "number-key", "7": "string-key",
+            7: "number-key", "8": "string-key",
         }
         for _ in range(3):
             config = config_utils.load_config_text(text)
@@ -2223,6 +2225,14 @@ class TestYamlIO:
             config.base = "modified"
         assert yaml.safe_load(text) == global_yaml
         assert OmegaConf.to_container(OmegaConf.create(text), resolve=False) == global_omegaconf
+
+    @pytest.mark.skipif(Version(omegaconf_version) < Version("2.4"), reason="OmegaConf 2.4 alias guards")
+    def test_omegaconf_alias_guards_survive_backend_selection(self, monkeypatch, pyruns_yaml_backend):
+        monkeypatch.setenv("OMEGACONF_MAX_YAML_EXPANDED_NODES", "12")
+        with pytest.raises(yaml.YAMLError, match="node expansion"):
+            config_utils.load_config_text("base: &base [a, b, c, d]\nfirst: *base\nsecond: *base\n")
+        with pytest.raises(yaml.YAMLError, match="recursive aliases"):
+            config_utils.load_config_text("value: &loop [*loop]\n")
 
     def test_config_parse_state_does_not_leak_between_documents_or_errors(self, pyruns_yaml_backend):
         text = "source: &data\n  value: 7\ncopy: *data\n"
@@ -2246,7 +2256,7 @@ class TestYamlIO:
     ])
     def test_config_errors_preserve_python_loader_diagnostics(self, pyruns_yaml_backend, document):
         with pytest.raises(yaml.YAMLError) as original:
-            yaml.load(document, Loader=config_utils.get_yaml_loader())
+            yaml.load(document, Loader=config_utils._get_pyruns_yaml_loader(pure_python=True))
         with pytest.raises(yaml.YAMLError) as actual:
             config_utils.load_config_text(document)
         assert type(actual.value) is type(original.value)
@@ -2509,8 +2519,8 @@ class TestGenerateBatchConfigs:
                 id="falsy-parent-keys",
             ),
             pytest.param(
-                {7: "1 | 2", "7": "fixed", 0.5: "(x | y)"},
-                [{7: v, "7": "fixed", 0.5: tag} for v in (1, 2) for tag in ("x", "y")],
+                {7: "1 | 2", "8": "fixed", 0.5: "(x | y)"},
+                [{7: v, "8": "fixed", 0.5: tag} for v in (1, 2) for tag in ("x", "y")],
                 id="typed-leaf-keys",
             ),
         ],

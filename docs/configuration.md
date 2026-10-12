@@ -11,6 +11,10 @@ Pyruns 的配置不是“堆一页键值对”。
 
 ![任务详情与配置语义示意](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/task_info.png)
 
+Pyruns 0.3.14 支持 OmegaConf 2.3 和 2.4，均保留 Pyruns 的批量范围、科学计数法和未解析插值语义。
+OmegaConf 2.4 会拒绝同一映射中同时出现整数键 `1` 和字符串键 `"1"`；请为它们使用不重复的名称。
+2.4 的 YAML 别名展开限制也会保留，具体变化见 [上游升级说明](https://omegaconf.cli.dev/docs/migration/2.4)。
+
 ## 1. 两个最重要的概念
 
 ### `workspace_kind`

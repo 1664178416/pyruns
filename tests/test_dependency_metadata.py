@@ -93,7 +93,8 @@ def test_python_runtime_dependency_contract():
     omegaconf = next(Requirement(item) for item in dependencies if item.startswith("omegaconf"))
     assert "2.3.0" in omegaconf.specifier
     assert "2.3.1" in omegaconf.specifier
-    assert "2.4.0" not in omegaconf.specifier
+    assert "2.4.0" in omegaconf.specifier
+    assert "2.5.0" not in omegaconf.specifier
 
 
 def test_ci_installs_declared_web_test_dependencies():
