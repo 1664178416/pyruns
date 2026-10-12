@@ -39,12 +39,21 @@ jobs:
           tests/test_dependency_metadata.py
           tests/test_cli.py::test_cli_dependency_import_failure_is_reported_once
           --junitxml=test-results/compatibility.xml
-      - name: Upload compatibility report
+      - name: Verify clean installation with latest dependencies
+        if: matrix.omegaconf == '2.4'
+        run: |
+          python -m venv .tmp-install-venv
+          .tmp-install-venv/bin/python -m pip install --upgrade pip
+          .tmp-install-venv/bin/python -m pip install . "omegaconf~=${{ matrix.omegaconf }}.0"
+          .tmp-install-venv/bin/python -m pip check
+          .tmp-install-venv/bin/python -I scripts/check_installed_lifecycle.py --output test-results/installed.json
+      - name: Upload compatibility reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compatibility-omegaconf-${{ matrix.omegaconf }}
-          path: test-results/compatibility.xml
+          path: test-results/
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
 

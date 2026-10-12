@@ -1,4 +1,4 @@
-"""Verify a wheel installation through real CLI tasks outside the source tree.
+"""Verify an installation through real CLI tasks and UI outside the source tree.
 
 Run with the isolated environment's Python and -I. A JSON report contains every
 command and its output; failed checks also preserve the temporary project.
@@ -9,18 +9,24 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+from html.parser import HTMLParser
+from http.cookiejar import CookieJar
 from importlib.metadata import version
 import io
 import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import sysconfig
 import tempfile
 import time
 import traceback
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_opener
 
 
 WORKLOAD = '''import faulthandler
@@ -109,14 +115,120 @@ def _cleanup(project, identities):
     return {"terminated": [p.pid for p in processes], "remaining": [p.pid for p in alive]}
 
 
+class _AssetRefs(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.paths = set()
+
+    def handle_starttag(self, tag, attrs):
+        for key, value in attrs:
+            if key in {"src", "href"} and value and (value.startswith("/assets/") or value == "/pyruns.svg"):
+                self.paths.add(value)
+
+
+def _verify_ui(project, report, scripts, env, identities, package):
+    import psutil
+    from websockets.sync.client import connect
+    from websockets.typing import Origin
+
+    with socket.socket() as available:
+        available.bind(("127.0.0.1", 0))
+        port = available.getsockname()[1]
+    base_url = f"http://127.0.0.1:{port}"
+    executable = scripts / ("pyr.exe" if os.name == "nt" else "pyr")
+    command = [str(executable), "ui", "shell", "--no-browser", "--port", str(port)]
+    entry: dict[str, Any] = {"argv": command}
+    report["ui"] = entry
+    log_path = project / "ui-server.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        process = subprocess.Popen(command, cwd=project, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        try:
+            identities.add((process.pid, psutil.Process(process.pid).create_time()))
+            cookies = CookieJar()
+            opener = build_opener(ProxyHandler({}), HTTPCookieProcessor(cookies))
+            deadline = time.monotonic() + 30
+            while True:
+                assert process.poll() is None, "UI server exited before accepting requests"
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                token_url = next((line.removeprefix("[pyruns] UI: ") for line in lines
+                                  if line.startswith(f"[pyruns] UI: {base_url}/?token=")), None)
+                if token_url:
+                    try:
+                        with opener.open(token_url, timeout=1) as response:
+                            html = response.read()
+                            assert response.status == 200 and response.geturl() == base_url + "/"
+                        break
+                    except HTTPError:
+                        raise
+                    except (URLError, OSError):
+                        pass  # The CLI prints the URL just before the server binds.
+                if time.monotonic() >= deadline:
+                    raise AssertionError("UI server did not become ready within 30 seconds")
+                time.sleep(0.1)
+
+            static = package / "web" / "static"
+            assert html == (static / "index.html").read_bytes(), "UI did not serve the installed frontend"
+            parser = _AssetRefs()
+            parser.feed(html.decode("utf-8"))
+            assert any(path.endswith(".js") for path in parser.paths)
+            assert any(path.endswith(".css") for path in parser.paths)
+            assert "/pyruns.svg" in parser.paths
+            for path in sorted(parser.paths):
+                with opener.open(base_url + path, timeout=10) as response:
+                    assert response.status == 200
+                    assert response.read() == (static / path.removeprefix("/")).read_bytes(), path
+            entry["assets"] = sorted(parser.paths)
+
+            with opener.open(base_url + "/api/workspace", timeout=10) as response:
+                workspace = json.load(response)
+            assert workspace["workspace_kind"] == "shell" and workspace["workspace_ready"]
+            assert project in Path(workspace["run_root"]).resolve().parents, workspace
+            entry["workspace"] = workspace
+
+            notes = "installed UI notes 中文\nsecond line"
+            request = Request(base_url + "/api/tasks/wheel-shell/notes", method="PATCH",
+                              data=json.dumps({"notes": notes, "expected_notes": ""}).encode("utf-8"),
+                              headers={"Content-Type": "application/json", "Origin": base_url})
+            with opener.open(request, timeout=10) as response:
+                updated = json.load(response)
+            assert updated["ok"] and updated["task"]["notes"] == notes, updated
+            entry["notes_roundtrip"] = True
+
+            cookie_header = "; ".join(f"{cookie.name}={cookie.value}" for cookie in cookies)
+            # A supplied socket bypasses proxy auto-detection across websockets 12-15.
+            with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+                with connect(f"ws://127.0.0.1:{port}/api/tasks/events", sock=connection,
+                             origin=Origin(base_url), additional_headers={"Cookie": cookie_header},
+                             open_timeout=10, close_timeout=5) as events:
+                    ready = json.loads(events.recv(timeout=10))
+                    assert ready == {"type": "ready", "revision": 0}, ready
+                    entry["event"] = ready
+            report["checks"].append("installed UI server, authentication, frontend assets, API read/write, and WebSocket")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+                raise AssertionError("UI server did not stop within 15 seconds") from None
+            finally:
+                entry["exit_code"] = process.returncode
+                entry["log"] = log_path.read_text(encoding="utf-8", errors="replace")
+
+
 def _verify(project, report, identities):
-    report["dependencies"] = {name: version(name) for name in ("omegaconf", "PyYAML")}
+    report["dependencies"] = {name: version(name) for name in (
+        "omegaconf", "PyYAML", "fastapi", "pydantic", "starlette", "anyio", "uvicorn", "websockets",
+    )}
     import pyruns
     from pyruns.web.app import create_app
 
     installed = Path(pyruns.__file__).resolve()
     expected_package = Path(sysconfig.get_path("purelib")).resolve() / "pyruns"
-    assert installed.parent == expected_package, f"not an isolated wheel import: {installed}"
+    assert installed.parent == expected_package, f"not an isolated installation: {installed}"
     assert create_app().title == "Pyruns API"
     assert pyruns.__version__ == version("pyruns")
     report.update(installed=str(installed), version=version("pyruns"))
@@ -267,6 +379,9 @@ def _verify(project, report, identities):
         assert cli("-w", "train", "log", f"retained@{run}") == log
     report["tasks"] = [shell, restored]
     report["checks"].append("rename, trash, and restore preserve configuration and complete history")
+
+    report["phase"] = "UI server"
+    _verify_ui(project, report, scripts, env, identities, installed.parent)
 
     report["phase"] = "process exit"
     _wait_for_exit(project, identities)
