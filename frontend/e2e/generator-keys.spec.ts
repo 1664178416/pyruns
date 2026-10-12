@@ -100,7 +100,8 @@ test('generator reports recursive YAML aliases and keeps the draft editable', as
 test('generator preserves typed keys and fixed list mappings through edits and creation', async ({ page }) => {
   // Existing v2 numeric pins must survive changes to the internal integer representation.
   await page.addInitScript(() => localStorage.setItem('pyruns_pinned_params_v2', JSON.stringify(['[["number","7"]]'])))
-  const yaml = '7: numeric\n"7": string\ntrue: boolean\n"true": text\n0.5: ratio\neditable: 1\nrows: [{1: numeric, "1": string}, {}, "x | y"]\n'
+  // OmegaConf 2.4 rejects integer and string keys with the same digits.
+  const yaml = '7: numeric\n"8": string\ntrue: boolean\n"true": text\n0.5: ratio\neditable: 1\nrows: [{1: numeric, "2": string}, {}, "x | y"]\n'
   await withGeneratorWorkspace(page, yaml, async runRoot => {
     await expect(page.getByRole('button', { name: 'Unpin [7]', exact: true })).toBeVisible()
     const editable = page.getByRole('textbox', { name: 'editable parameter value', exact: true })
@@ -143,7 +144,7 @@ test('generator tree retains empty parent keys and edits search results at their
 })
 
 test('generator preserves integer precision in values, keys and lists', async ({ page }) => {
-  const yaml = 'seed: 9007199254740993\n9007199254740992: first\n9007199254740993: second\n"9007199254740993": text\nrows: [9007199254740993, {9007199254740993: nested}]\n'
+  const yaml = 'seed: 9007199254740993\n9007199254740992: first\n9007199254740993: second\n"9007199254740994": text\nrows: [9007199254740993, {9007199254740993: nested}]\n'
   await withGeneratorWorkspace(page, yaml, async runRoot => {
     const seed = page.getByRole('textbox', { name: 'seed parameter value', exact: true })
     await expect(seed).toHaveValue('9007199254740993')
@@ -183,7 +184,7 @@ test('generator preserves floating types when editing integral floats', async ({
 })
 
 test('generator batch previews retain numeric values and key types from saved tasks', async ({ page }) => {
-  const yaml = 'seed: 9007199254740993 | 9007199254740995\nrate: 1.0\nzero: -0.0\ncopy: ${seed}\n9007199254740993: numeric-key\n"9007199254740993": string-key\nrows: [1.0, {9007199254740993: nested}]\n'
+  const yaml = 'seed: 9007199254740993 | 9007199254740995\nrate: 1.0\nzero: -0.0\ncopy: ${seed}\n9007199254740993: numeric-key\n"9007199254740994": string-key\nrows: [1.0, {9007199254740993: nested}]\n'
   await withGeneratorWorkspace(page, yaml, async runRoot => {
     const responsePromise = page.waitForResponse(response => response.url().endsWith('/api/generator/preview'))
     await page.getByRole('button', { name: 'Preview Batch Tasks', exact: true }).click()
