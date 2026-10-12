@@ -110,6 +110,7 @@ def _cleanup(project, identities):
 
 
 def _verify(project, report, identities):
+    report["dependencies"] = {name: version(name) for name in ("omegaconf", "PyYAML")}
     import pyruns
     from pyruns.web.app import create_app
 
@@ -143,7 +144,8 @@ def _verify(project, report, identities):
         started = time.monotonic()
         try:
             result = subprocess.run(command, cwd=project, env=env, capture_output=True,
-                                    encoding="utf-8", errors="replace", timeout=90)
+                                    encoding="utf-8", errors="replace", timeout=90,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except subprocess.TimeoutExpired as error:
             stdout = error.stdout.decode("utf-8", "replace") if isinstance(error.stdout, bytes) else (error.stdout or "")
             stderr = error.stderr.decode("utf-8", "replace") if isinstance(error.stderr, bytes) else (error.stderr or "")
