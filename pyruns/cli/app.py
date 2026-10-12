@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import NoReturn, Sequence
 
 from pyruns import __version__
+from pyruns.cli.errors import CliError, CliUsageError
 
 
 class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
@@ -1239,7 +1240,7 @@ def _main(argv: Sequence[str] | None = None, *, prog: str | None = None) -> int:
             program=parser.prog,
         )
 
-        from pyruns.cli.commands import CliError, dispatch
+        from pyruns.cli.commands import dispatch
 
         return int(dispatch(context, args) or 0)
     except BrokenPipeError:
@@ -1247,8 +1248,6 @@ def _main(argv: Sequence[str] | None = None, *, prog: str | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        from pyruns.cli.commands import CliError, CliUsageError
-
         if isinstance(exc, CliError):
             if isinstance(exc, CliUsageError):
                 handler = str(getattr(args, "handler", "") or "")

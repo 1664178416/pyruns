@@ -423,6 +423,33 @@ def test_broken_pipe_exits_cleanly_without_internal_error(tmp_path, monkeypatch,
     assert "internal error" not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("debug", [False, True])
+def test_cli_dependency_import_failure_is_reported_once(tmp_path, monkeypatch, capsys, debug):
+    import builtins
+
+    original_import = builtins.__import__
+    attempts = []
+
+    def failing_import(name, *args, **kwargs):
+        if name == "pyruns.cli.commands":
+            attempts.append(name)
+            raise ImportError("dependency API is unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+    if debug:
+        with pytest.raises(ImportError, match="dependency API is unavailable"):
+            main(["--debug", "status"])
+    else:
+        assert main(["status"]) == 1
+        error = capsys.readouterr().err
+        assert error.count("dependency API is unavailable") == 1
+        assert "--debug" in error
+        assert "Traceback" not in error
+    assert attempts == ["pyruns.cli.commands"]
+
+
 def test_run_and_export_advertise_one_clear_canonical_option_set():
     _parser, commands = build_parser("pyr", show_all_commands=True)
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyruns"
-version = "0.3.13"
+version = "0.3.14"
 description = "Git-style CLI and web UI for reproducible Python experiments and terminal workloads."
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,8 @@ classifiers = [
 dependencies = [
     "anyio>=3.4,<5",
     "fastapi>=0.110",
-    "omegaconf>=2.3,<3",
+    # YAML acceleration uses loader/dumper internals that changed in 2.4.
+    "omegaconf>=2.3,<2.4",
     "packaging>=23",
     "pydantic>=1.10,<3",
     "psutil>=5.9",

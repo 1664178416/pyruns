@@ -39,6 +39,7 @@ from pyruns._config import (
     WORKSPACE_KIND_SCRIPT,
     WORKSPACE_KIND_SHELL,
 )
+from pyruns.cli.errors import CliError, CliUsageError
 from pyruns.cli.runner import (
     SubmissionInterrupted,
     SubmissionResult,
@@ -110,21 +111,6 @@ _INTERRUPT_CANCEL_TIMEOUT_SEC = 15.0
 _CMD_META_CHARS = frozenset("&|<>^()%!")
 _SHELL_SCRIPT_EXTENSIONS = frozenset({".sh", ".ps1", ".cmd", ".bat"})
 CLI_JSON_SCHEMA_VERSION = 1
-
-
-class CliError(RuntimeError):
-    """User-facing command failure."""
-
-    def __init__(self, message: str, *, exit_code: int = 1) -> None:
-        super().__init__(message)
-        self.exit_code = exit_code
-
-
-class CliUsageError(CliError):
-    """Invalid command-line combination not expressible through argparse."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message, exit_code=2)
 
 
 @contextmanager
