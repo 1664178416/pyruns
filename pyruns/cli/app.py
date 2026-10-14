@@ -211,22 +211,15 @@ def _exec_help_epilog(program: str) -> str:
         "    It does not capture runtime-expanded argument values or external file contents.\n"
         "    -d returns after submission. Omit -d to follow logs and wait for the result.\n\n"
         "  Task naming:\n"
-        f"    {program} exec -- python -V                         auto-name as task_<timestamp>\n"
-        f"    {program} exec -nt smoke -- python -V               name as smoke_<timestamp>\n"
-        f"    {program} exec -n smoke -- python -V                 use the exact name smoke\n"
+        f"    {program} exec -c \"python -V\"                       auto-name as task_<timestamp>\n"
+        f"    {program} exec -nt smoke -c \"python -V\"             name as smoke_<timestamp>\n"
+        f"    {program} exec -n smoke -c \"python -V\"               use the exact name smoke\n"
         "    -n/--name and -nt/--name-timestamp are mutually exclusive.\n\n"
-        "  Exact argv (preserve individual program arguments):\n"
-        f"    {program} exec -n smoke -- python -V\n"
-        f"    {program} exec -n train -- python train.py --epochs 10\n"
-        f"    {program} exec -n tests -- python -m pytest -q\n"
-        "    -- ends Pyruns option parsing. Each following token is one program argument.\n"
-        "    Quote individual arguments as required by the calling shell. Pyruns passes the\n"
-        "    received argv unchanged and performs no additional shell expansion.\n\n"
         "  Run an existing script by path:\n"
-        f"    {program} exec -n setup -- ./scripts/setup.sh arg1\n"
-        f"    {program} exec -n setup-ps -- .\\scripts\\setup.ps1 arg1\n"
-        f"    {program} exec -n setup-cmd -- .\\scripts\\setup.cmd arg1\n"
-        "    .sh, .ps1, .cmd, and .bat select their matching interpreter automatically.\n"
+        f"    {program} exec -n setup -c \"bash ./scripts/setup.sh arg1\"\n"
+        f"    {program} exec -n setup-ps -c \"pwsh -NoProfile -File .\\scripts\\setup.ps1 arg1\"\n"
+        f"    {program} exec -n setup-cmd -c \"cmd /c .\\scripts\\setup.cmd arg1\"\n"
+        "    Include the script interpreter in the command.\n"
         "    Reruns read the original script path again. To save its contents, use --stdin.\n\n"
         "  Quoted shell command (-c; also supports pipes, redirects, and chaining):\n"
         f"    {program} exec -n report -c \"python eval.py > metrics.txt\"\n"
@@ -253,7 +246,7 @@ def _exec_help_epilog(program: str) -> str:
         "    It saves the complete script before starting, including with -d/--detach.\n"
         "    Shebangs do not override the workspace shell.\n"
         "    Use Bash for Bash scripts. UTF-8 input (up to 4 MiB); CRLF is normalized to LF.\n"
-        "    --stdin cannot be combined with -c or argv. Task processes do not inherit stdin.\n"
+        "    --stdin cannot be combined with -c. Task processes do not inherit stdin.\n"
         f"    {program} exec -n pipeline --dry-run --json --stdin < pipeline.sh\n"
         "    The preview reads and validates input without creating or running a task.\n\n"
         "  PowerShell multiline input (single-quoted here-string):\n"
@@ -280,8 +273,8 @@ def _exec_help_epilog(program: str) -> str:
         f"  Restore terminal detection with '{program} config set shell_mode follow'.\n"
         "  These project settings affect new tasks; reruns keep their saved interpreter.\n\n"
         "Environment:\n"
-        f"  {program} exec -n gpu0 -e CUDA_VISIBLE_DEVICES=0 SEED=42 -- python train.py\n"
-        f"  {program} exec -n gpu0 --env-file .env.train -e SEED=42 -- python train.py\n"
+        f"  {program} exec -n gpu0 -e CUDA_VISIBLE_DEVICES=0 SEED=42 -c \"python train.py\"\n"
+        f"  {program} exec -n gpu0 --env-file .env.train -e SEED=42 -c \"python train.py\"\n"
         "  One -e accepts multiple KEY=VALUE entries; repeating -e is optional.\n"
         "  -e and --env-file are saved with the task for CLI and Web UI reruns.\n"
         "  Set/export required variables in the script, or persist them with -e/--env-file.\n"
@@ -463,7 +456,7 @@ def build_parser(
             "  task       a saved command or YAML configuration with an exact name\n"
             "  run        one execution; rerunning a task keeps numbered history\n\n"
             "Quick start -- track one terminal command:\n"
-            f"  {program} exec -n check -- python -V   create and run task 'check'\n"
+            f"  {program} exec -n check -c \"python -V\"   create and run task 'check'\n"
             f"  {program} ls                            list tasks\n"
             f"  {program} show check                    inspect command and run history\n"
             f"  {program} log check                     print its output\n"
@@ -574,12 +567,10 @@ def build_parser(
             "or use -n NAME when the task name must be exact.\n"
             "Use -c for quoted shell commands. Prefer --stdin to record a complete script and its\n"
             "explicit parameters, especially for long commands and AI agents.\n"
-            "For direct program execution, '-- PROGRAM ARG ...' ends Pyruns option parsing and stores\n"
-            "every following item as an exact argv element. It does not enable shell parsing.\n"
             "-c/--command supports ordinary programs as well as pipes, redirects, variable\n"
-            "expansion, globs, &&, and other shell syntax. A leading .sh, .ps1, .cmd, or .bat file\n"
-            "is launched with its matching interpreter while Pyruns records its log and duration.\n"
-            "A command is required. For a multiline shell script, use --stdin with a file redirect,\n"
+            "expansion, globs, &&, and other syntax supported by the workspace shell.\n"
+            "Choose one input: -c COMMAND_STRING or --stdin. For a multiline shell script,\n"
+            "use --stdin with a file redirect, "
             "pipe, or heredoc; --stdin never opens an interactive input prompt."
         ),
         epilog=_exec_help_epilog(program),
@@ -640,10 +631,9 @@ def build_parser(
         help="persist KEY=VALUE lines from UTF-8 files; later files then -e take precedence",
     )
     execute.add_argument(
-        "command_argv",
+        "_command_tail",
         nargs=argparse.REMAINDER,
-        metavar="PROGRAM [ARG ...]",
-        help="exact program and arguments after --; shell syntax is not interpreted",
+        help=argparse.SUPPRESS,
     )
 
     add = command(
@@ -1274,7 +1264,7 @@ def _main(argv: Sequence[str] | None = None, *, prog: str | None = None) -> int:
 
         if (
             args.command == "exec"
-            and args.command_argv == ["help"]
+            and args._command_tail == ["help"]
             and args.shell_command is None
             and not args.stdin
         ):

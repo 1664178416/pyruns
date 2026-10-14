@@ -6,8 +6,8 @@ Pyruns to manage commands.
 ```bash
 cd examples/6_shell_workspace
 pyr init
-pyr exec -n bash-example -- ./payloads/bash_or_wsl.sh
-pyr exec -n powershell-example -- .\payloads\powershell.ps1
+pyr exec -n bash-example -c "bash ./payloads/bash_or_wsl.sh"
+pyr exec -n powershell-example -c "pwsh -NoProfile -File .\payloads\powershell.ps1"
 ```
 
 These commands are tracked replacements for running the payloads directly:

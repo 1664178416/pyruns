@@ -61,7 +61,7 @@ pyr run --help
 
 命令帮助统一从 `pyr COMMAND --help` 进入。
 每份命令帮助都包含用途、参数、典型示例和关键注意事项；其中 `pyr exec --help` 是选择
-精确 argv、Shell 表达式、现有脚本、环境变量和后续任务操作的完整决策指南。帮助命令
+`-c` 命令字符串、`--stdin` 多行脚本、环境变量和后续任务操作的完整决策指南。帮助命令
 只读，不会创建工作区。
 
 默认帮助列出全部命令及一句用途说明，包括恢复、导出和项目配置；`help -a` 仍兼容，并额外显示命令分组摘要。
@@ -115,7 +115,7 @@ pyr init train.py --config configs/default.yaml
 Python 脚本工作区批量生成并运行任务。因此 `exec` 与 `run` 不是按 Shell/Python 语言划分：
 
 ```bash
-pyr exec -n train -- python train.py       # 创建一个命令任务并运行
+pyr exec -n train -c "python train.py"  # 创建一个命令任务并运行
 pyr -w shell run train                    # 重跑这个命令任务
 pyr init train.py --config default.yaml   # 创建 Python 参数配置工作区
 pyr -w train run --config sweep.yaml      # 从配置生成并运行 Python 任务
@@ -126,19 +126,19 @@ pyr -w train run --config sweep.yaml      # 从配置生成并运行 Python 任�
 `exec` 不要求手动命名。省略名称时，每次会以当前本地时间生成任务名：
 
 ```bash
-pyr exec -- python -V                # task_YYYY-MM-DD_HH-MM-SS
+pyr exec -c "python -V"  # task_YYYY-MM-DD_HH-MM-SS
 ```
 
 需要可读前缀并希望自动区分每次执行时，使用 `-nt` / `--name-timestamp`：
 
 ```bash
-pyr exec -nt smoke -- python -V      # smoke_YYYY-MM-DD_HH-MM-SS
+pyr exec -nt smoke -c "python -V"  # smoke_YYYY-MM-DD_HH-MM-SS
 ```
 
 需要之后用固定名称执行 `show`、`log` 或 `run` 时，继续使用 `-n` / `--name`：
 
 ```bash
-pyr exec -n smoke -- python -V       # 精确名称 smoke
+pyr exec -n smoke -c "python -V"  # 精确名称 smoke
 ```
 
 `-n` 与 `-nt` 互斥。自动名称若在同一秒冲突，会安全追加唯一后缀；精确名称冲突仍直接报错，
@@ -146,51 +146,39 @@ pyr exec -n smoke -- python -V       # 精确名称 smoke
 
 任务启动时，Pyruns 会先把 START 横幅和 Source 状态写入 run log，再转存命令的 stdout/stderr，确保框架元数据不会夹在命令输出中间。Source 采集与子进程并行；采集期间输出线程持续排空 stdout/stderr，并使用超过阈值后自动落盘的临时缓冲，因此不需要人为休眠，也不会因等待 Source 而堵塞子进程。
 
-### 精确 argv 模式
-
-需要严格保留普通程序的独立参数时，使用 `--` 后的参数向量；短命令也可用 `-c`，
-需要记录完整多行脚本的自动化或 AI agent 推荐使用 `--stdin`：
-
-```bash
-pyr exec --name smoke -- python -V
-pyr exec --name train -- python train.py --epochs 10 --lr 0.001
-```
-
-这里的 `--` 是 CLI 参数分隔符：它表示 Pyruns 的 `exec` 选项到此结束，后面的每一项都是目标命令的独立 argv。`--` 不会启动 shell 解析，所以管道、重定向、`$VAR`、通配符和 `&&` 都不会被 Pyruns 展开。Pyruns 会为每个参数做当前平台所需的转义，再把任务保存为 `config.ps1`、`config.cmd` 或 `config.sh`。参数里的空格和短横线不会被误认为 Pyruns 自己的选项。
+`exec` 新建任务只接受 `-c "完整命令"` 或 `--stdin`。普通程序的参数放在命令字符串内；
+需要记录长命令的全部正文、变量赋值、引号和换行时，使用 `--stdin`。
 
 ### 无副作用预览
 
 在真正创建 workspace、task 或启动 runner 前，可以查看完整执行计划：
 
 ```bash
-pyr exec --dry-run --name smoke -- python -V
-pyr exec --dry-run --name smoke --json -- python -V
+pyr exec --dry-run --name smoke -c "python -V"
+pyr exec --dry-run --name smoke --json -c "python -V"
 ```
 
-计划会说明目标 workspace 是否需要创建、任务名是否可精确使用、工作目录、argv 或 shell 表达式、解释器和环境变量。`--dry-run` 不创建 `_pyruns_`、设置文件或任务目录，也不会执行用户命令。它与 `--detach` 互斥，因为预览不会产生可供后台接管的任务。显式任务名已存在时仍会像真实执行一样报错；自动时间戳名称冲突时，计划会说明真实执行需要生成唯一后缀。
+计划会说明目标 workspace 是否需要创建、任务名是否可精确使用、工作目录、Shell 命令、解释器和环境变量。`--dry-run` 不创建 `_pyruns_`、设置文件或任务目录，也不会执行用户命令。它与 `--detach` 互斥，因为预览不会产生可供后台接管的任务。显式任务名已存在时仍会像真实执行一样报错；自动时间戳名称冲突时，计划会说明真实执行需要生成唯一后缀。
 
 ### 直接运行 Shell 脚本文件
 
-当精确 argv 的第一个参数是已有的 Shell 脚本文件时，Pyruns 自动选择解释器：
-
-| 文件 | 运行方式 |
-| --- | --- |
-| `.sh` | 当前可用的 Bash/sh；不要求文件具有 executable bit |
-| `.ps1` | PowerShell 的非交互 `-File` 模式 |
-| `.cmd` / `.bat` | Windows `cmd.exe` |
+执行已有脚本时，把解释器和脚本路径一起放入 `-c` 命令字符串：
 
 ```bash
-pyr exec --name setup -- ./scripts/setup.sh
-pyr exec --name setup-ps -- .\scripts\setup.ps1
-pyr exec --name setup-cmd -- .\scripts\setup.cmd
+pyr exec --name setup -c "bash ./scripts/setup.sh"
+pyr exec --name setup-ps -c "pwsh -NoProfile -File .\scripts\setup.ps1"
+pyr exec --name setup-cmd -c "cmd /c .\scripts\setup.cmd"
 ```
 
-脚本路径可以包含空格。路径之后如果还有内容，它们是脚本自己的参数，不是 Pyruns 参数，并会按独立 argv 传递。文件不存在、平台不支持或解释器不可用时，`exec` 会在创建任务前给出明确错误。任务保存的是解释器调用与原脚本绝对路径，不复制脚本本身；每次运行会记录 stdout/stderr 日志、开始/结束时间、高精度运行时长、原始退出码、脚本内容哈希和所在 Git 状态。因此 `pyr exec -n setup -- ./xxx.sh` 是 `bash xxx.sh` 最直接的受跟踪替代，重跑也会保留脚本原目录语义并识别源文件变化。
+路径中的空格应按工作区 Shell 规则引用；脚本自己的参数也放在命令字符串内。
+任务保存的是完整调用命令和创建时的工作目录，重跑会重新读取原脚本文件。
+需要保存提交时的脚本正文时使用 `--stdin`，源文件之后的修改不会影响重跑。
+每次运行都会记录 stdout/stderr 日志、开始/结束时间、运行时长和原始退出码。
 
 `--detach`、`run`、`wait`、`stop`、`show` 和 `log` 对这类任务没有特殊规则，和普通 Shell 任务完全一致：
 
 ```bash
-pyr exec --name setup --detach -- ./scripts/setup.sh
+pyr exec --name setup --detach -c "bash ./scripts/setup.sh"
 pyr -w shell wait setup
 pyr -w shell run setup
 pyr -w shell log setup
@@ -254,7 +242,7 @@ Pyruns 先读取完整的 UTF-8 文本，再保存为任务 Shell 脚本并交�
 `--stdin` 使用与 `-c` 相同的工作区 Shell，并保存解析到的解释器；脚本首行的 shebang
 不会覆盖这个设置。Bash 脚本应从 Bash 终端提交，或将工作区 Shell 配置为 Bash。输入
 支持 UTF-8 BOM，CRLF 会统一为 LF，其他正文空格与空行保留；大小上限与任务脚本一致，
-为 4 MiB。`--stdin` 不能与 `-c` 或 `-- PROGRAM ARG ...` 同用，且在终端直接运行时会
+为 4 MiB。`--stdin` 不能与 `-c` 同用，且在终端直接运行时会
 报错，必须提供重定向、管道或 heredoc。任务进程不继承调用端的标准输入。
 
 PowerShell 可使用单引号 here-string：
@@ -269,8 +257,7 @@ Write-Output 'second step'
 
 管道输入必须使用 UTF-8；Windows PowerShell 5.1 需要先设置
 `$OutputEncoding = [System.Text.UTF8Encoding]::new($false)`。可配合 `--dry-run` 预览正文，
-或配合 `-d` 后台执行；输入会在创建任务前读完。不要使用 `pyr exec -- bash -s` 来传递
-正文，任务进程不继承调用端的标准输入。
+或配合 `-d` 后台执行；输入会在创建任务前读完。任务进程不继承调用端的标准输入。
 
 记录已有 PowerShell 脚本时，用管道读取整个 UTF-8 文件：
 
@@ -286,7 +273,8 @@ Get-Content -Raw -Encoding UTF8 .\pipeline.ps1 |
 
 ### 调用端引用规则
 
-Pyruns 不安装或修改 Bash、Zsh、Fish、PowerShell 的行编辑器。所有平台都遵循同一命令契约：`--` 只传递精确 argv；变量、管道、分号、重定向、通配符和命令链放在一个引用后的 `-c` 表达式中，或通过 `--stdin` 提交完整脚本。
+所有平台都遵循同一命令契约：普通程序、变量、管道、分号、重定向、通配符和命令链
+放在一个引用后的 `-c` 字符串中，或通过 `--stdin` 提交完整脚本。
 
 PowerShell 示例：
 
@@ -302,17 +290,16 @@ pyr exec -c 'printf "%s\n" "$HOME" | sed "s/home/HOME/"'
 
 这是调用端 shell 的固有限制：它会在启动 `pyr` 前解析自己的控制符，因此外部 CLI 无法在启动后找回未引用的剩余文本。颜色捕获使用伪终端：Linux/macOS 通过系统 PTY，Windows 在已有控制台时通过原生 ConPTY。没有已附着的 Windows 控制台时，会回退到隐藏管道，避免弹出控制台窗口，此时颜色可能丢失。伪终端捕获的 SGR 颜色进入 `runN.log`，清屏、光标定位和窗口标题等界面控制序列会被过滤。
 
-如果操作系统无法直接启动精确 argv 的首个参数，Pyruns 会自动改用工作区 shell 执行已安全
-引用的任务 payload。这样 PowerShell 的 `ls` 等 alias 或 shell builtin 可以直接使用；命令失败时
-保留 PowerShell、Bash 或 cmd 自己产生的原始完整错误，不再重写成 Pyruns 的错误摘要。argv 中的
-重定向符、连接符等值仍保持引用，不会意外变成 shell 语法。
+命令由工作区 Shell 执行，PowerShell 的 `ls` 等 alias 或 shell builtin 可以直接使用。
+命令失败时保留 PowerShell、Bash 或 cmd 自己产生的完整错误。
 
 ### 环境变量
 
-少量变量用 `-e` / `--env` 后接一个或多个 `KEY=VALUE`。`--` 是明确边界，所以多个变量不会吞掉目标命令；`-e` 也可以按变量组重复使用：
+少量变量用 `-e` / `--env` 后接一个或多个 `KEY=VALUE`，再用 `-c` 提供完整命令；
+`-e` 也可以按变量组重复使用：
 
 ```bash
-pyr exec --name gpu0 -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -- python train.py
+pyr exec --name gpu0 -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -c "python train.py"
 ```
 
 Pyruns 已自动为子进程设置 `PYTHONUNBUFFERED=1`、`PYTHONIOENCODING=utf-8` 和 `PYTHONUTF8=1`，一般无需再写入任务环境。
@@ -328,7 +315,7 @@ TOKENIZERS_PARALLELISM=false
 ```
 
 ```bash
-pyr exec --name gpu0 --env-file .env.train -e SEED=42 -- python train.py
+pyr exec --name gpu0 --env-file .env.train -e SEED=42 -c "python train.py"
 ```
 
 合并顺序是：前面的 env 文件 < 后面的 env 文件 < 命令行 `-e`。文件不会执行 `export`、变量插值、命令替换或行内注释；`VALUE` 可以包含额外的 `=`。所有任务环境值都会明文保存到 `task_info.json` 并由 `show` 显示，不要放入密码、token 或其他密钥。
@@ -341,7 +328,7 @@ pyr exec --name gpu0 --env-file .env.train -e SEED=42 -- python train.py
 或 Python 的 `join()` 等待它们，并传播失败结果；命令退出后仍存活的后台进程不会延长任务。
 
 ```bash
-pyr exec --name smoke -- python smoke.py
+pyr exec --name smoke -c "python smoke.py"
 ```
 
 此时按 Ctrl+C 会向这次 `exec` 提交的任务请求取消，并在完成清理后返回 `130`。这与单独执行 `wait` 或 `log -f` 不同：后两者只观察已有任务，中断观察不会停止任务。
@@ -349,7 +336,7 @@ pyr exec --name smoke -- python smoke.py
 长任务使用 `--detach`。Pyruns 会在隐藏 runner 接受任务后返回：
 
 ```bash
-pyr exec --name train --detach -- python train.py --epochs 100
+pyr exec --name train --detach -c "python train.py --epochs 100"
 pyr -w shell wait train
 ```
 
@@ -640,8 +627,8 @@ JSON 只写 stdout；用户可读错误仍写 stderr，并由退出码表示成�
 
 ```bash
 pyr init
-pyr exec --name env-check -- python -V
-pyr exec --name smoke --detach -- python train.py --epochs 1
+pyr exec --name env-check -c "python -V"
+pyr exec --name smoke --detach -c "python train.py --epochs 1"
 pyr -w shell show smoke --json
 pyr -w shell wait smoke --timeout 600
 pyr -w shell log smoke

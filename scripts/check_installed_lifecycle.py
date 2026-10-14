@@ -16,6 +16,8 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -248,14 +250,14 @@ def _verify(project, report, identities):
     env.update(PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYRUNS_UPDATE_STATE_DIR=str(project / ".update"))
     env["PATH"] = str(scripts) + os.pathsep + env.get("PATH", "")
 
-    def cli(*arguments, expected=0, program="pyr"):
+    def cli(*arguments, expected=0, program="pyr", input_text=None):
         executable = scripts / (program + (".exe" if os.name == "nt" else ""))
         command = [str(executable), *map(str, arguments)]
         entry = {"argv": command, "expected_exit": expected}
         report["commands"].append(entry)
         started = time.monotonic()
         try:
-            result = subprocess.run(command, cwd=project, env=env, capture_output=True,
+            result = subprocess.run(command, cwd=project, env=env, input=input_text, capture_output=True,
                                     encoding="utf-8", errors="replace", timeout=90,
                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except subprocess.TimeoutExpired as error:
@@ -282,17 +284,37 @@ def _verify(project, report, identities):
     cli("help")
     report["checks"].append("installed imports, app, and both entry points")
 
-    # Exact argv must survive spaces, Unicode, and literal shell syntax.
+    # Saved stdin scripts must survive spaces, Unicode, and literal shell syntax.
     # -I ignores PYTHONUTF8, so select UTF-8 explicitly for Windows pipe output.
     report["phase"] = "shell execution"
     arguments = ["two words", "literal;$(echo unexpected)", "中文"]
     payload = 'import json, sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))'
-    cli("exec", "-d", "-n", "wheel-shell", "--", sys.executable, "-I", "-X", "utf8", "-c", payload, *arguments)
+    if os.name == "nt":
+        # Automation may have no terminal ancestor and otherwise follow cmd.exe.
+        # Select the interpreter matching the PowerShell script below explicitly.
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        assert powershell, "PowerShell is required for the Windows installation check"
+        cli("init")
+        cli("config", "set", "shell_executable", powershell)
+        cli("config", "set", "shell_mode", "custom")
+    parts = [sys.executable, "-I", "-X", "utf8", "-c", payload, *arguments]
+    expression = (
+        "& " + " ".join("'" + part.replace("'", "''") + "'" for part in parts)
+        if os.name == "nt" else shlex.join(parts)
+    )
+    script_text = "# Saved command and explicit parameters\n" + expression + "\n"
+    cli("exec", "-d", "-n", "wheel-shell", "--stdin", input_text=script_text)
     cli("-w", "shell", "wait", "wheel-shell", "--timeout", "60")
     shell = show("shell", "wheel-shell")
     assert shell["status"] == "completed" and shell["exit_codes"] == [0]
-    assert json.dumps(arguments, ensure_ascii=False) in cli("-w", "shell", "log", "wheel-shell").splitlines()
-    report["checks"].append("detached shell exact argv and logs")
+    assert Path(shell["payload"]).read_text(encoding="utf-8") == script_text
+    assert shell["command_mode"] == "shell" and shell["command_argv"] is None
+    shell_log = re.sub(r"\x1b\[[0-9;]*m", "", cli("-w", "shell", "log", "wheel-shell"))
+    assert json.dumps(arguments, ensure_ascii=False) in shell_log.splitlines()
+    cli("-w", "shell", "run", "wheel-shell")
+    shell = show("shell", "wheel-shell")
+    assert shell["exit_codes"] == [0, 0]
+    report["checks"].append("detached stdin script, saved parameters, logs, and rerun")
 
     report["phase"] = "config snapshot and failed run"
     config = {"steps": 600, "label": "wheel 中文", "nested": {"enabled": True, "values": [1, 2, 3]}}

@@ -38,7 +38,7 @@ features:
 
 ```bash
 pip install pyruns
-pyr exec -n smoke -- python -V
+pyr exec -n smoke -c "python -V"
 ```
 
 从 [安装与快速开始](/getting-started) 进入完整使用流程，或直接查看 [Web 界面操作](/ui-guide) 和 [命令行 CLI 控制](/cli-guide)。

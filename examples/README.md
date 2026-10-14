@@ -34,7 +34,7 @@ pip install "pyruns[examples]"
 ```bash
 cd examples/3_hydra_script
 pyr init
-pyr exec -n hydra-smoke -- python train.py model=small_net optimizer=adam train.epochs=2
+pyr exec -n hydra-smoke -c "python train.py model=small_net optimizer=adam train.epochs=2"
 ```
 
 ## 4_advanced_argparse
@@ -68,7 +68,7 @@ want Pyruns to manage commands rather than a single Python entrypoint.
 ```bash
 cd examples/6_shell_workspace
 pyr init
-pyr exec -n bash-example -- ./payloads/bash_or_wsl.sh
+pyr exec -n bash-example -c "bash ./payloads/bash_or_wsl.sh"
 ```
 
 ## 7_multi_script_project

@@ -22,7 +22,7 @@ pip install pyruns
 pyr --help
 
 # 运行并记录一个命令；shell workspace 会自动创建
-pyr exec -n smoke -- python -V
+pyr exec -n smoke -c "python -V"
 
 # 查询结果
 pyr ls
@@ -39,8 +39,8 @@ pyr run smoke
 `task_YYYY-MM-DD_HH-MM-SS`。想保留语义前缀并自动附加时间戳时使用 `-nt`：
 
 ```bash
-pyr exec -- python -V
-pyr exec -nt smoke -- python -V       # smoke_YYYY-MM-DD_HH-MM-SS
+pyr exec -c "python -V"
+pyr exec -nt smoke -c "python -V"  # smoke_YYYY-MM-DD_HH-MM-SS
 ```
 
 `-n smoke` 仍表示精确名称 `smoke`，因此 `-n` 与 `-nt` 互斥。
@@ -48,7 +48,7 @@ pyr exec -nt smoke -- python -V       # smoke_YYYY-MM-DD_HH-MM-SS
 长任务使用 `--detach`，随后用独立命令控制：
 
 ```bash
-pyr exec -n train -d -- python train.py --epochs 100
+pyr exec -n train -d -c "python train.py --epochs 100"
 pyr status
 pyr wait train
 pyr log train
@@ -99,7 +99,7 @@ pyr [GLOBAL OPTIONS] COMMAND [COMMAND OPTIONS]
 pyr -C path/to/project ls             # -C 在命令前：从另一个目录发现项目
 pyr -w train ls --json                # -w 在命令前；--json 属于 ls
 pyr ui shell -p 8099                  # -p/--port 只属于 ui/dev
-pyr exec -n check -- python -V        # -- 后面是原样传给目标程序的 argv
+pyr exec -n check -c "python -V"  # -c 后是完整命令字符串
 ```
 
 `-w` 只在 `ls`、`run`、`show`、`log` 等任务命令需要消除多 workspace 歧义时使用；项目只有一个 workspace 时可以省略。`exec` 固定使用 shell workspace，Web UI 则直接写成 `pyr ui shell`、`pyr ui train` 或 `pyr ui train.py`，不要写成 `pyr -w shell ui`。`ui` / `dev` 还提供 `-p, --port`、`--browser` 和 `--no-browser`，它们同样必须写在命令后。`--json` 不是全局模式，只在支持它的具体命令后使用，例如 `pyr status --json`。
@@ -128,8 +128,8 @@ pyr exec -n check -- python -V        # -- 后面是原样传给目标程序的 
 | `ui` / `dev` | 显式启动 Web UI |
 | `help` | 查看总帮助或子命令帮助 |
 
-每个命令都提供独立的场景化帮助；例如 `pyr exec --help` 会直接说明精确 argv、Shell
-表达式、脚本执行和环境变量持久化之间的区别。完整说明见
+每个命令都提供独立的场景化帮助；例如 `pyr exec --help` 会直接说明 `-c`、`--stdin`、
+脚本执行和环境变量持久化。完整说明见
 [CLI 详细指南](docs/cli-guide.md)。
 
 ## 两种工作区
@@ -141,34 +141,28 @@ pyr exec -n check -- python -V        # -- 后面是原样传给目标程序的 
 
 ```bash
 pyr init
-pyr exec -- python -V
-pyr exec -nt env-check -- python -V
-pyr exec -n env-check -- python -V
-pyr exec -n install -- python -m pip install -r requirements.txt
-pyr exec -n baseline -d -- python train.py --config baseline.yaml
+pyr exec -c "python -V"
+pyr exec -nt env-check -c "python -V"
+pyr exec -n env-check -c "python -V"
+pyr exec -n install -c "python -m pip install -r requirements.txt"
+pyr exec -n baseline -d -c "python train.py --config baseline.yaml"
 ```
 
-Shell 脚本文件也直接交给 `exec`，不需要手写解释器：
+执行已有脚本时，在完整命令中写明解释器：
 
 ```bash
-pyr exec -n setup -- ./scripts/setup.sh
-pyr exec -n setup-ps -- .\scripts\setup.ps1
-pyr exec -n setup-cmd -- .\scripts\setup.cmd
-pyr exec -n setup-bat -- .\scripts\setup.bat
+pyr exec -n setup -c "bash ./scripts/setup.sh"
+pyr exec -n setup-ps -c "pwsh -NoProfile -File .\scripts\setup.ps1"
+pyr exec -n setup-cmd -c "cmd /c .\scripts\setup.cmd"
+pyr exec -n setup-bat -c "cmd /c .\scripts\setup.bat"
 ```
 
-这就是对 `bash xxx.sh` / `pwsh -File xxx.ps1` 最常用的受跟踪替代：Pyruns 根据 `.sh`、`.ps1`、`.cmd`、`.bat` 扩展名选择 Bash/sh、PowerShell 或 `cmd.exe`。文件路径之后的内容是该脚本自己的参数，不是 Pyruns 参数。Pyruns 会保留参数边界，并记录日志、开始/结束时间、高精度运行时长、原始退出码、脚本内容哈希和 Git 状态。任务重跑仍使用原脚本路径，因此依赖脚本原目录的相对路径语义不会改变。
-
-`--` 是标准的 CLI 参数边界，不是 Pyruns 的一种“模式”：
-
-- `--` 是参数分隔符，表示 Pyruns 自己的选项到此结束；后面的每一项都是目标程序的独立 argv，Pyruns 不做管道、重定向、变量展开或通配符解析。
-- `-c` / `--command` 接收后续 shell command text，命名和 `sh -c`、`python -c` 的习惯一致。
-
-普通程序和脚本路径优先使用 `--`：
+`exec` 只有两种命令输入：`-c "完整命令"` 和 `--stdin`。前者保存解释器调用和脚本路径，
+重跑会重新读取原文件；后者保存脚本正文，适合完整记录多行命令。脚本参数也放在完整命令内：
 
 ```bash
-pyr exec -n preprocess -- ./scripts/preprocess.sh "dataset A" --fast
-pyr exec -n train -- python train.py --lr 0.001
+pyr exec -n preprocess -c 'bash ./scripts/preprocess.sh "dataset A" --fast'
+pyr exec -n train -c "python train.py --lr 0.001"
 ```
 
 短命令及包含管道、重定向、变量展开、通配符或 `&&` 的 Shell 表达式都可以使用 `-c`：
@@ -218,8 +212,7 @@ Pyruns 保存收到的脚本文本，后续源文件变化不影响重跑。`--s
 不会等待交互式终端输入；它接收 UTF-8 文本（最多 4 MiB），并使用工作区 Shell 执行。
 详见[标准输入提交多行脚本](docs/cli-guide.md#通过标准输入提交多行脚本)。
 
-Pyruns 不安装 shell 专用的行编辑钩子；普通程序使用 `--` 后的精确 argv，Shell 表达式使用
-带引号的 `-c`，完整脚本使用 `--stdin`。
+普通程序和 Shell 表达式使用带引号的 `-c`，完整脚本使用 `--stdin`。
 
 ```powershell
 pyr exec -c '$colors=@("Red","Green"); 1..2 | ForEach-Object { Write-Host $_ -ForegroundColor $colors[$_-1] }'
@@ -229,10 +222,10 @@ Shell task 使用跨平台伪终端捕获颜色：Linux/macOS 使用系统 PTY�
 
 `exec` 始终使用 `<当前目录>/_pyruns_/_shell_`，不会复用父目录中的 shell workspace。启动横幅和 Source 状态会先写入日志，随后才转存命令输出。Source 采集与子进程并行执行；期间 stdout/stderr 会持续读入可落盘缓冲，不会通过休眠或阻塞子进程来换取日志顺序。
 
-少量任务环境变量只需写一次 `-e`，后面连续列出多个 `KEY=VALUE`，并用 `--` 与目标命令分隔：
+少量任务环境变量只需写一次 `-e`，后面连续列出多个 `KEY=VALUE`，再用 `-c` 提供完整命令：
 
 ```bash
-pyr exec -n train -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -- python train.py
+pyr exec -n train -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -c "python train.py"
 ```
 
 `-e` / `--env` 是可重复选项，也可以按变量组分开书写。
@@ -250,7 +243,7 @@ TOKENIZERS_PARALLELISM=false
 ```
 
 ```bash
-pyr exec -n train --env-file .env.train -e SEED=42 -- python train.py
+pyr exec -n train --env-file .env.train -e SEED=42 -c "python train.py"
 ```
 
 `--env-file` 可重复，后面的文件覆盖前面的文件，命令行 `-e` 最后覆盖所有文件。文件只接受空行、整行 `#` 注释和 `KEY=VALUE`，不会执行 shell 插值。任务环境会明文保存在元数据并由 `show` 显示，因此不要在其中保存密钥。
@@ -258,8 +251,8 @@ pyr exec -n train --env-file .env.train -e SEED=42 -- python train.py
 执行前可做真正无副作用的预览；加入 `--json` 可得到稳定计划对象：
 
 ```bash
-pyr exec --dry-run -n report -- python eval.py
-pyr exec --dry-run -n report --json -- python eval.py
+pyr exec --dry-run -n report -c "python eval.py"
+pyr exec --dry-run -n report --json -c "python eval.py"
 ```
 
 预览不会创建 `_pyruns_`、任务或设置文件，也不会启动用户命令；`--dry-run` 与 `--detach` 互斥。

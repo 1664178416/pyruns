@@ -22,7 +22,7 @@ pip install pyruns
 pyr --help
 
 # Run and track one command; the shell workspace is created automatically
-pyr exec -n smoke -- python -V
+pyr exec -n smoke -c "python -V"
 
 # Inspect the result
 pyr ls
@@ -40,8 +40,8 @@ Pyruns generates `task_YYYY-MM-DD_HH-MM-SS`. Use `-nt` to keep a semantic prefix
 the timestamp automatically:
 
 ```bash
-pyr exec -- python -V
-pyr exec -nt smoke -- python -V       # smoke_YYYY-MM-DD_HH-MM-SS
+pyr exec -c "python -V"
+pyr exec -nt smoke -c "python -V"  # smoke_YYYY-MM-DD_HH-MM-SS
 ```
 
 `-n smoke` still means the exact name `smoke`, so `-n` and `-nt` are mutually exclusive.
@@ -49,7 +49,7 @@ pyr exec -nt smoke -- python -V       # smoke_YYYY-MM-DD_HH-MM-SS
 Detach long-running work, then control it with separate commands:
 
 ```bash
-pyr exec -n train -d -- python train.py --epochs 100
+pyr exec -n train -d -c "python train.py --epochs 100"
 pyr status
 pyr wait train
 pyr log train
@@ -100,7 +100,7 @@ Command options appear after the command. The common forms are easier to read se
 pyr -C path/to/project ls             # discover a project from another directory
 pyr -w train ls --json                # select a workspace; --json belongs to ls
 pyr ui shell -p 8099                  # -p/--port belongs only to ui/dev
-pyr exec -n check -- python -V        # everything after -- is target argv
+pyr exec -n check -c "python -V"  # complete command string after -c
 ```
 
 Use `-w` only to disambiguate task commands such as `ls`, `run`, `show`, and `log` when a project has several workspaces; omit it when only one workspace exists. `exec` always targets the shell workspace, while the Web UI takes its target directly: `pyr ui shell`, `pyr ui train`, or `pyr ui train.py`; do not write `pyr -w shell ui`. `ui` / `dev` also expose `-p, --port`, `--browser`, and `--no-browser`, all after the command. `--json` is not global: append it only to a command that advertises machine output, such as `pyr status --json`.
@@ -130,7 +130,7 @@ Commands:
 | `help` | show top-level or command help |
 
 Every command has its own scenario-oriented help. For example, `pyr exec --help`
-explains exact argv, shell expressions, script execution, and persisted environment
+explains `-c`, `--stdin`, script execution, and persisted environment
 values. See the [complete CLI guide](docs/cli-guide.md) for every option and contract.
 
 ## Two workspace types
@@ -141,31 +141,35 @@ Use it for arbitrary terminal commands, repository reproduction, installation, p
 
 ```bash
 pyr init
-pyr exec -- python -V
-pyr exec -nt env-check -- python -V
-pyr exec -n env-check -- python -V
-pyr exec -n install -- python -m pip install -r requirements.txt
-pyr exec -n baseline -d -- python train.py --config baseline.yaml
+pyr exec -c "python -V"
+pyr exec -nt env-check -c "python -V"
+pyr exec -n env-check -c "python -V"
+pyr exec -n install -c "python -m pip install -r requirements.txt"
+pyr exec -n baseline -d -c "python train.py --config baseline.yaml"
 ```
 
-Pass shell script files directly to `exec`; there is no need to spell out the interpreter:
+Include the interpreter in the complete command when running an existing script:
 
 ```bash
-pyr exec -n setup -- ./scripts/setup.sh
-pyr exec -n setup-ps -- .\scripts\setup.ps1
-pyr exec -n setup-cmd -- .\scripts\setup.cmd
-pyr exec -n setup-bat -- .\scripts\setup.bat
+pyr exec -n setup -c "bash ./scripts/setup.sh"
+pyr exec -n setup-ps -c "pwsh -NoProfile -File .\scripts\setup.ps1"
+pyr exec -n setup-cmd -c "cmd /c .\scripts\setup.cmd"
+pyr exec -n setup-bat -c "cmd /c .\scripts\setup.bat"
 ```
 
-This is the tracked replacement for common `bash xxx.sh` or `pwsh -File xxx.ps1` calls. Pyruns maps `.sh`, `.ps1`, `.cmd`, and `.bat` to Bash/sh, PowerShell, or `cmd.exe`. Values after the file path are arguments for that script, not Pyruns options. Pyruns records logs, elapsed time, the raw exit code, and the script content hash for every run. Reruns still use the original script path, so relative-path behavior based on the script directory remains intact.
-
-`--` is the standard end-of-options separator. It passes every following item as an exact argv element and is not a Pyruns execution mode. Use `-c` / `--command`, following the familiar `sh -c` convention, only when a command intentionally relies on pipes, redirects, expansion, globs, or chaining:
+`exec` accepts two inputs: `-c "COMPLETE COMMAND"` and `--stdin`. The first saves the command
+and reads the original script file again on reruns; the second saves the full script text.
+Use `-c` / `--command` for ordinary programs, pipes, redirects, expansion, globs, or chaining:
 
 ```bash
 pyr exec -n report -c "python eval.py > metrics.txt"
 ```
 
-`-c` consumes the remaining command text, so `-c echo hello` becomes `echo hello`. Expressions containing `;`, `|`, redirects, or variables must be quoted according to the calling shell so that they remain one argument until Pyruns starts. Pyruns does not install shell-specific line-editor hooks. The contract is the same everywhere: use exact argv after `--` for ordinary programs and a quoted `-c` expression for shell syntax.
+`-c` accepts one quoted command string. Pyruns options may appear before or after it, for example
+`pyr exec -c "python train.py --epochs 10" -n train -d`; keep the program's options inside the quotes.
+For the legacy unquoted form `-c echo hello`, place Pyruns options before `-c`.
+Follow the calling shell's quoting rules to preserve variables and shell syntax. Use `--stdin`
+for complex or multiline scripts.
 
 To record a complete existing script, run this in Bash:
 
@@ -186,17 +190,18 @@ BASH
 ```
 
 The complete UTF-8 script is saved with the task, so reruns use the captured text. `--stdin` must
-receive redirected input and cannot be combined with `-c` or `-- PROGRAM ARG ...`.
+receive redirected input and cannot be combined with `-c`.
 
 Shell tasks preserve terminal colors through a cross-platform pseudoterminal: Linux and macOS use the system PTY, while Windows explicitly uses native ConPTY without creating a visible console window. SGR colors are stored and replayed; screen clearing, cursor positioning, and window-title controls are filtered. Pyruns falls back to ordinary stdout/stderr pipes only when terminal capture is unavailable.
 
 `exec` always uses `<current-directory>/_pyruns_/_shell_`; it does not reuse a parent directory's shell workspace. The start banner and source state are written before command output is copied into the log. Source collection runs concurrently with the child process; stdout/stderr is continuously drained into a disk-backed buffer without sleeps or child-process blocking.
 
-Use one `-e` followed by multiple `KEY=VALUE` entries, with `--` separating them from the target command. Repeating `-e` remains supported. Use a UTF-8 env file for larger sets:
+Use one `-e` followed by multiple `KEY=VALUE` entries, then `-c` for the complete command.
+Repeating `-e` remains supported. Use a UTF-8 env file for larger sets:
 
 ```bash
-pyr exec -n train -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -- python train.py
-pyr exec -n train --env-file .env.train -e SEED=42 -- python train.py
+pyr exec -n train -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -c "python train.py"
+pyr exec -n train --env-file .env.train -e SEED=42 -c "python train.py"
 ```
 
 Pyruns already sets `PYTHONUNBUFFERED=1`, `PYTHONIOENCODING=utf-8`, and `PYTHONUTF8=1` for child processes. In a POSIX shell, `CUDA_VISIBLE_DEVICES=0 pyr exec ...` also reaches the child for that invocation, but it is not persisted in task metadata and is not guaranteed on a later `pyr run`, Web UI run, or invocation from another terminal. Use `-e` or `--env-file` for reproducible values visible in `show`.
@@ -207,8 +212,8 @@ Preview an execution with no filesystem or process side effects; append `--json`
 versioned plan object:
 
 ```bash
-pyr exec --dry-run -n report -- python eval.py
-pyr exec --dry-run -n report --json -- python eval.py
+pyr exec --dry-run -n report -c "python eval.py"
+pyr exec --dry-run -n report --json -c "python eval.py"
 ```
 
 The preview does not create `_pyruns_`, tasks, or settings files, and it does not start the user command. `--dry-run` and `--detach` are mutually exclusive.

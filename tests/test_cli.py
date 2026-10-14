@@ -39,6 +39,35 @@ from pyruns.utils.info_io import load_task_info, update_task_info
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _command_string(parts: list[str]) -> str:
+    """Quote test programs for the native workspace shell."""
+
+    if os.name == "nt":
+        return "& " + " ".join("'" + str(part).replace("'", "''") + "'" for part in parts)
+    return shlex.join(parts)
+
+
+def _legacy_argv_task(project, name, parts, *, script=None, env=None):
+    """Seed a task saved by the removed argv CLI without using that input form."""
+
+    from pyruns.cli.commands import _render_argument_command
+    from pyruns.core.task_generator import TaskGenerator
+    from pyruns.utils.shell_runtime import build_script_file_argv
+
+    workspace = Path(bootstrap_shell_workspace(str(project / "_pyruns_")))
+    argv = build_script_file_argv(str(script), parts, str(workspace)) if script else parts
+    return TaskGenerator(root_dir=str(workspace / TASKS_DIR)).create_shell_task(
+        name,
+        _render_argument_command(argv, str(workspace)) + "\n",
+        command_mode="argv",
+        command_argv=argv,
+        workdir=str(project),
+        script_path=str(script) if script else None,
+        env=env,
+        exact_name=True,
+    )
+
+
 def test_cli_log_path_rejects_simulated_reparse_file(tmp_path, simulate_reparse):
     from pyruns.cli import commands
 
@@ -286,7 +315,7 @@ def test_official_entrypoints_render_their_own_complete_help(
     assert result.returncode == 0, result.stderr
     assert f"usage: {program} " in result.stdout
     assert f"{program} and {alternate} are identical" in result.stdout
-    assert f"{program} exec -n check -- python -V" in result.stdout
+    assert f'{program} exec -n check -c "python -V"' in result.stdout
     assert f"{program} COMMAND --help" in result.stdout
     assert not (tmp_path / "_pyruns_").exists()
 
@@ -297,18 +326,19 @@ def test_official_entrypoints_render_their_own_complete_help(
     assert exec_help.stdout == command_help.stdout
     assert not (tmp_path / "_pyruns_").exists()
     assert f"usage: {program} exec" in command_help.stdout
-    assert f"{program} exec -n smoke -- python -V" in command_help.stdout
-    assert ".sh, .ps1, .cmd" in command_help.stdout
-    assert f"{program} exec -n setup -- ./scripts/setup.sh" in command_help.stdout
+    assert f'{program} exec -n smoke -c "python -V"' in command_help.stdout
+    assert f'{program} exec -n setup -c "bash ./scripts/setup.sh' in command_help.stdout
     assert "--env-file" in command_help.stdout
-    assert "-e CUDA_VISIBLE_DEVICES=0 SEED=42 -- python train.py" in command_help.stdout
+    assert '-e CUDA_VISIBLE_DEVICES=0 SEED=42 -c "python train.py"' in command_help.stdout
     assert f"{program} exec -nt pipeline -d --stdin < pipeline.sh" in command_help.stdout
     help_content = " ".join(command_help.stdout.split())
     assert "Prefer --stdin to record a complete script" in help_content
     assert "explicit parameters, especially for long commands and AI agents" in help_content
     assert "does not capture runtime-expanded argument values or external file contents" in help_content
     assert "Set/export required variables in the script" in help_content
-    assert "Exact argv (preserve individual program arguments):" in command_help.stdout
+    assert "argv" not in command_help.stdout
+    assert "PROGRAM [ARG ...]" not in command_help.stdout
+    assert "Choose one input: -c COMMAND_STRING or --stdin" in help_content
     assert "Pyruns options can come before or after it" in help_content
     assert "Reruns read the original script path again" in command_help.stdout
     assert "Quoted shell command (-c; also supports pipes" in command_help.stdout
@@ -316,7 +346,6 @@ def test_official_entrypoints_render_their_own_complete_help(
     assert "GPU idle percent = 100 - reported GPU utilization" in command_help.stdout
     assert "All requested GPUs must qualify together" in command_help.stdout
     assert "timeout 0 waits indefinitely" in command_help.stdout
-    assert "Each following token is one program argument" in command_help.stdout
     assert "-c COMMAND_STRING" in command_help.stdout
     assert "--shell" not in command_help.stdout
     assert "python eval.py > metrics.txt" in command_help.stdout
@@ -402,7 +431,7 @@ def test_every_command_has_workspace_free_help(command, tmp_path):
     "args",
     [
         ("init", "--json"),
-        ("exec", "--json", "--", "python", "-V"),
+        ("exec", "--json", "-c", _command_string(["python", "-V"])),
         ("add", "config.yaml", "--json"),
         ("run", "task", "--json"),
         ("ls", "--json"),
@@ -431,26 +460,26 @@ def test_every_machine_readable_command_accepts_json_in_its_natural_scope(args):
     assert parsed.json_output is True
 
 
-def test_json_stays_in_command_scope_and_exec_separator_preserves_child_options():
+def test_json_stays_in_command_scope_and_exec_string_preserves_child_options():
     parser, _commands = build_parser("pyr", show_all_commands=True)
 
     assert parser.parse_args(("config", "list", "--json")).json_output is True
 
     child_args = parser.parse_args(
-        ("exec", "--", "python", "train.py", "--json")
+        ("exec", "-c", _command_string(["python", "train.py", "--json"]))
     )
     assert child_args.json_output is False
-    assert child_args.command_argv == ["--", "python", "train.py", "--json"]
+    assert child_args.shell_command == _command_string(["python", "train.py", "--json"])
 
 
 def test_exec_parses_timestamped_name_option_without_confusing_exact_name():
     parser, _commands = build_parser("pyr", show_all_commands=True)
 
-    parsed = parser.parse_args(("exec", "-nt", "smoke", "--", "python", "-V"))
+    parsed = parser.parse_args(("exec", "-nt", "smoke", "-c", _command_string(["python", "-V"])))
 
     assert parsed.name is None
     assert parsed.name_timestamp == "smoke"
-    assert parsed.command_argv == ["--", "python", "-V"]
+    assert parsed.shell_command == _command_string(["python", "-V"])
 
 
 def test_json_output_is_strict_and_versioned(capsys):
@@ -772,13 +801,21 @@ def test_run_rejects_workspace_flag_after_command(tmp_path):
     assert "unrecognized arguments: -w" in result.stderr
 
 
-def test_exec_argv_requires_the_standard_separator(tmp_path, capsys, monkeypatch):
+@pytest.mark.parametrize("arguments", [
+    ["python", "-V"],
+    ["--"],
+    ["--", "python", "-V"],
+    ["-c", "echo hello", "--", "python", "-V"],
+])
+def test_exec_rejects_removed_argv_input_before_creating_workspace(
+    tmp_path, capsys, monkeypatch, arguments,
+):
     monkeypatch.chdir(tmp_path)
-    assert main(["exec", sys.executable, "-V"]) == 2
+    assert main(["exec", *arguments]) == 2
     stderr = capsys.readouterr().err
 
     assert "usage: pyr exec" in stderr
-    assert "exec argv form requires '--' before COMMAND" in stderr
+    assert '-c' in stderr and '--stdin' in stderr
     assert not (tmp_path / "_pyruns_").exists()
 
 
@@ -803,9 +840,9 @@ def test_bare_context_options_are_not_silently_ignored(tmp_path, args, message):
         ("-w", "", "ls"),
         ("init", ""),
         ("init", "train.py", "--config", ""),
-        ("exec", "--name", "", "--", "python", "-V"),
-        ("exec", "--name-timestamp", "", "--", "python", "-V"),
-        ("exec", "--env-file", "", "--", "python", "-V"),
+        ("exec", "--name", "", "-c", _command_string(["python", "-V"])),
+        ("exec", "--name-timestamp", "", "-c", _command_string(["python", "-V"])),
+        ("exec", "--env-file", "", "-c", _command_string(["python", "-V"])),
         ("add", ""),
         ("add", "config.yaml", "--name", ""),
         ("run", "task", "--config", ""),
@@ -830,7 +867,7 @@ def test_explicit_empty_values_fail_instead_of_selecting_a_default(tmp_path, arg
         (("run", "task", "--config", "config.yaml"), "either exact TASK names or --config"),
         (("run", "--name", "named"), "--name is only valid together with --config"),
         (("run",), "run requires at least one TASK or --config CONFIG"),
-        (("exec", "--dry-run", "--detach", "--", "python", "-V"), "either --dry-run or --detach"),
+        (("exec", "--dry-run", "--detach", "-c", _command_string(["python", "-V"])), "either --dry-run or --detach"),
         (("run", "--config", "config.yaml", "--dry-run", "--detach"), "either --dry-run or --detach"),
         (("log", "task", "--follow", "--run", "2"), "--follow cannot be combined with --run"),
         (("log", "task", "--follow", "--path"), "--follow cannot be combined with --path"),
@@ -867,9 +904,7 @@ def test_exec_rejects_exact_and_timestamped_names_together(tmp_path):
         "exact",
         "-nt",
         "prefixed",
-        "--",
-        "python",
-        "-V",
+        "-c", _command_string(["python", "-V"]),
     )
 
     assert result.returncode == 2
@@ -911,9 +946,7 @@ def test_json_is_available_only_after_supported_commands(tmp_path):
         "--json",
         "-n",
         "natural-json",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
     assert dry_run.returncode == 0, dry_run.stderr
     assert json.loads(dry_run.stdout)["dry_run"] is True
@@ -931,9 +964,7 @@ def test_command_long_options_require_exact_spelling(tmp_path):
         "--dry",
         "-n",
         "planned",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
     assert abbreviated.returncode == 2
     assert "--dry" in abbreviated.stderr
@@ -944,9 +975,7 @@ def test_command_long_options_require_exact_spelling(tmp_path):
         "--dry-run",
         "-n",
         "planned",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
     assert exact.returncode == 0, exact.stderr
     assert not (tmp_path / "_pyruns_").exists()
@@ -1040,10 +1069,7 @@ def test_exec_with_explicit_shell_selector_bootstraps_fresh_project(tmp_path):
         "--json",
         "-n",
         "explicit-shell",
-        "--",
-        sys.executable,
-        "-c",
-        "print('ok')",
+        "-c", _command_string([sys.executable, "-c", "print('ok')"]),
     )
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
@@ -1063,9 +1089,7 @@ def test_exec_dry_run_is_stable_json_and_has_no_workspace_side_effect(tmp_path):
         "planned",
         "--env",
         "MODE=check",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1084,15 +1108,17 @@ def test_exec_dry_run_is_stable_json_and_has_no_workspace_side_effect(tmp_path):
             "name_available": True,
         },
         "workdir": str(tmp_path).replace("\\", "/"),
-        "command_mode": "argv",
-        "command_argv": [sys.executable, "-V"],
-        "shell_expression": None,
-        "shell_executable": None,
-        "shell_kind": None,
+        "command_mode": "shell",
+        "command_argv": None,
+        "shell_expression": _command_string([sys.executable, "-V"]),
+        "shell_executable": payload["shell_executable"],
+        "shell_kind": payload["shell_kind"],
         "script": None,
         "env": {"MODE": "check"},
         "detach": False,
     }
+    assert Path(payload["shell_executable"]).is_file()
+    assert payload["shell_kind"]
     assert not (tmp_path / "_pyruns_").exists()
 
 
@@ -1112,7 +1138,7 @@ def test_exec_dry_run_reports_automatic_name_collision_without_writing(
     )
     before = {path.name for path in (workspace / TASKS_DIR).iterdir()}
 
-    result = main(["exec", "--dry-run", "--json", "--", sys.executable, "-V"])
+    result = main(["exec", "--dry-run", "--json", "-c", _command_string([sys.executable, "-V"])])
     captured = capsys.readouterr()
 
     assert result == 0, captured.out + captured.err
@@ -1134,9 +1160,7 @@ def test_exec_dry_run_appends_timestamp_to_requested_prefix(tmp_path):
         "--json",
         "-nt",
         "smoke",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1154,7 +1178,7 @@ def test_exec_dry_run_appends_timestamp_to_requested_prefix(tmp_path):
 @pytest.mark.parametrize("command_first", [False, True])
 def test_exec_command_string_dry_run_does_not_evaluate_the_expression(tmp_path, command_first):
     marker = tmp_path / "must-not-exist.txt"
-    expression = f'echo touched -n child > "{marker}"'
+    expression = f'echo touched -- -n child > "{marker}"'
     command = ["-c", expression]
     options = ["--dry-run", "--name", "preview"]
     arguments = [*command, *options] if command_first else [*options, *command]
@@ -1366,10 +1390,7 @@ def test_exec_uses_current_directory_instead_of_ancestor_workspace(tmp_path):
         "exec",
         "--name",
         "local-shell",
-        "--",
-        sys.executable,
-        "-c",
-        "print('local workspace')",
+        "-c", _command_string([sys.executable, "-c", "print('local workspace')"]),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1431,20 +1452,17 @@ def test_typo_suggestions_preserve_exact_command_workspace_and_task_matching(tmp
     assert "Task name cannot start or end with whitespace" in task_whitespace.stderr
 
 
-def test_exec_exact_argv_runs_and_returns_task_result(tmp_path):
+def test_exec_command_string_runs_and_returns_task_result(tmp_path):
     bootstrap_shell_workspace(str(tmp_path / "_pyruns_"))
     result = _run_cli(
         tmp_path,
         "exec",
         "--name",
         "argv-smoke",
-        "--",
-        sys.executable,
-        "-c",
-        "print('hello exact argv')",
+        "-c", _command_string([sys.executable, "-c", "print('hello shell command')"]),
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "hello exact argv" in result.stdout
+    assert "hello shell command" in result.stdout
 
     task_dir = tmp_path / "_pyruns_" / "_shell_" / TASKS_DIR / "argv-smoke"
     assert load_task_info(str(task_dir))["status"] == "completed"
@@ -1461,10 +1479,7 @@ def test_exec_auto_initializes_shell_workspace(tmp_path, monkeypatch, capsys):
             "exec",
             "--name",
             "auto-init",
-            "--",
-            sys.executable,
-            "-c",
-            "print('auto initialized')",
+            "-c", _command_string([sys.executable, "-c", "print('auto initialized')"]),
         ]
     ) == 0
     assert "auto initialized" in capsys.readouterr().out
@@ -1475,7 +1490,7 @@ def test_exec_auto_initializes_shell_workspace(tmp_path, monkeypatch, capsys):
     assert (task_dir / info["config_file"]).is_file()
 
 
-def test_exact_argv_rendering_matches_each_shell_runtime(monkeypatch):
+def test_legacy_argv_and_recovery_rendering_matches_each_shell_runtime(monkeypatch):
     from pyruns.cli import commands
 
     parts = ["python", "script with space.py", "--label", "a'b", "$HOME", "x&y"]
@@ -1504,24 +1519,6 @@ def test_exact_argv_rendering_matches_each_shell_runtime(monkeypatch):
         lambda _workspace: {"terminal_kind": "bash"},
     )
     assert shlex.split(commands._render_argument_command(parts, "workspace")) == parts
-
-
-def test_exec_missing_script_file_reports_clear_error(tmp_path):
-    bootstrap_shell_workspace(str(tmp_path / "_pyruns_"))
-    suffix = ".ps1" if os.name == "nt" else ".sh"
-    result = _run_cli(
-        tmp_path,
-        "exec",
-        "--name",
-        "missing-script",
-        "--",
-        f"missing file{suffix}",
-    )
-    assert result.returncode == 1
-    assert f"script file not found: missing file{suffix}" in result.stderr
-    assert not (
-        tmp_path / "_pyruns_" / "_shell_" / TASKS_DIR / "missing-script"
-    ).exists()
 
 
 _NATIVE_SCRIPT_CASES = (
@@ -1600,7 +1597,7 @@ def _script_contract_lines(output: str) -> list[str]:
 
 
 @pytest.mark.parametrize(("kind", "suffix"), _NATIVE_SCRIPT_CASES)
-def test_exec_script_file_matches_direct_execution_and_rerun(tmp_path, kind, suffix):
+def test_legacy_script_file_matches_direct_execution_and_rerun(tmp_path, kind, suffix):
     project = tmp_path / "workspace with spaces"
     project.mkdir()
     bootstrap_shell_workspace(str(project / "_pyruns_"))
@@ -1637,18 +1634,11 @@ def test_exec_script_file_matches_direct_execution_and_rerun(tmp_path, kind, suf
     # This checks behavior, including runner/shell startup and log draining;
     # busy CI hosts need more headroom than a single native command.
     run_timeout = 60
-    first = _run_cli(
-        project,
-        "exec",
-        "--name",
-        task_name,
-        "--env",
-        "PYRUNS_SCRIPT_ENV=persisted-env",
-        "--",
-        str(script.relative_to(project)),
-        *arguments,
-        timeout=run_timeout,
+    _legacy_argv_task(
+        project, task_name, arguments, script=script,
+        env={"PYRUNS_SCRIPT_ENV": "persisted-env"},
     )
+    first = _run_cli(project, "-w", "shell", "run", task_name, timeout=run_timeout)
     assert first.returncode == 0, first.stdout + first.stderr
     assert _script_contract_lines(first.stdout) == direct_lines
 
@@ -1672,14 +1662,13 @@ def test_exec_script_file_matches_direct_execution_and_rerun(tmp_path, kind, suf
     assert direct_failure.returncode == 7
 
     failure_name = f"fail-{kind}"
+    _legacy_argv_task(project, failure_name, ["fail"], script=script)
     first_failure = _run_cli(
         project,
-        "exec",
-        "--name",
+        "-w",
+        "shell",
+        "run",
         failure_name,
-        "--",
-        str(script.relative_to(project)),
-        "fail",
         timeout=run_timeout,
     )
     assert first_failure.returncode == 1
@@ -1698,7 +1687,7 @@ def test_exec_script_file_matches_direct_execution_and_rerun(tmp_path, kind, suf
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows Bash or WSL")
-def test_exec_runs_sh_file_on_windows_when_bash_is_available(tmp_path):
+def test_legacy_sh_file_runs_on_windows_when_bash_is_available(tmp_path):
     from pyruns.utils import shell_runtime
 
     wsl = shutil.which("wsl.exe")
@@ -1739,18 +1728,11 @@ def test_exec_runs_sh_file_on_windows_when_bash_is_available(tmp_path):
     )
     assert direct.returncode == 0, direct.stdout + direct.stderr
 
-    result = _run_cli(
-        project,
-        "exec",
-        "--name",
-        "direct-windows-sh",
-        "--env",
-        "PYRUNS_SCRIPT_ENV=wsl-env-ok",
-        "--",
-        str(script),
-        "value with spaces",
-        "x&y",
+    _legacy_argv_task(
+        project, "direct-windows-sh", ["value with spaces", "x&y"], script=script,
+        env={"PYRUNS_SCRIPT_ENV": "wsl-env-ok"},
     )
+    result = _run_cli(project, "-w", "shell", "run", "direct-windows-sh")
     assert result.returncode == 0, result.stdout + result.stderr
     markers = [
         f"cwd={translated.rsplit('/', 1)[0]}",
@@ -1779,17 +1761,10 @@ def test_exec_runs_sh_file_on_windows_when_bash_is_available(tmp_path):
 
 @pytest.mark.skipif(os.name != "nt", reason="requires PowerShell and cmd.exe")
 def test_exact_argv_rerun_ignores_changed_shell_runtime(tmp_path):
-    bootstrap_shell_workspace(str(tmp_path / "_pyruns_"))
-    first = _run_cli(
-        tmp_path,
-        "exec",
-        "--name",
-        "cross-shell-argv",
-        "--",
-        sys.executable,
-        "-c",
-        "print('cross-shell-ok')",
+    _legacy_argv_task(
+        tmp_path, "cross-shell-argv", [sys.executable, "-c", "print('cross-shell-ok')"],
     )
+    first = _run_cli(tmp_path, "-w", "shell", "run", "cross-shell-argv")
     assert first.returncode == 0, first.stdout + first.stderr
 
     settings = tmp_path / "_pyruns_" / "_pyruns_settings.yaml"
@@ -2122,10 +2097,7 @@ def test_exec_failure_propagates_nonzero(tmp_path):
         "exec",
         "--name",
         "argv-failure",
-        "--",
-        sys.executable,
-        "-c",
-        "raise SystemExit(7)",
+        "-c", _command_string([sys.executable, "-c", "raise SystemExit(7)"]),
     )
     assert result.returncode == 1
     task_dir = tmp_path / "_pyruns_" / "_shell_" / TASKS_DIR / "argv-failure"
@@ -2150,7 +2122,7 @@ def test_exec_failure_propagates_nonzero(tmp_path):
     assert detail["run_environments"] == info["run_environments"]
     assert detail["selected_run"]["environment"] == info["run_environments"][0]
     assert detail["selected_run"]["environment"]["host"]
-    assert detail["selected_run"]["environment"]["launcher"] == sys.executable
+    assert detail["selected_run"]["environment"]["launcher"] == info["shell_executable"]
 
 
 def test_exec_detach_returns_before_completion(tmp_path):
@@ -2172,10 +2144,7 @@ def test_exec_detach_returns_before_completion(tmp_path):
         "--name",
         "detached",
         "--detach",
-        "--",
-        sys.executable,
-        "-c",
-        child_code,
+        "-c", _command_string([sys.executable, "-c", child_code]),
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "detached"
@@ -2195,10 +2164,7 @@ def test_exec_environment_is_persisted_and_used(tmp_path):
         "env-task",
         "--env",
         "PYRUNS_V1_VALUE=works",
-        "--",
-        sys.executable,
-        "-c",
-        "import os; print(os.environ['PYRUNS_V1_VALUE'])",
+        "-c", _command_string([sys.executable, "-c", "import os; print(os.environ['PYRUNS_V1_VALUE'])"]),
     )
     assert result.returncode == 0
     assert "works" in result.stdout
@@ -2220,9 +2186,7 @@ def test_exec_accepts_multiple_values_after_one_env_flag(tmp_path, env_flag):
         "--dry-run",
         "--name",
         "compact-env",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -2284,14 +2248,13 @@ def test_exec_env_files_merge_in_order_and_cli_env_takes_precedence(tmp_path):
         "override.env",
         "-e",
         "PYRUNS_ENV_SHARED=command-line",
-        "--",
-        sys.executable,
         "-c",
-        (
+        _command_string([
+            sys.executable, "-c",
             "import json,os; "
             "print(json.dumps({k: os.environ[k] for k in "
-            "['PYRUNS_ENV_A','PYRUNS_ENV_SHARED','PYRUNS_ENV_TOKEN','PYRUNS_ENV_B']}))"
-        ),
+            "['PYRUNS_ENV_A','PYRUNS_ENV_SHARED','PYRUNS_ENV_TOKEN','PYRUNS_ENV_B']}))",
+        ]),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -2328,9 +2291,7 @@ def test_exec_validates_env_files_before_creating_workspace(
         "exec",
         "--env-file",
         filename,
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
 
     assert result.returncode == 2
@@ -2346,9 +2307,7 @@ def test_exec_validates_environment_before_creating_workspace(tmp_path):
         "invalid-env",
         "--env",
         "BROKEN",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
 
     assert result.returncode == 2
@@ -2358,8 +2317,8 @@ def test_exec_validates_environment_before_creating_workspace(tmp_path):
 
 def test_exec_rejects_an_explicit_duplicate_name(tmp_path):
     bootstrap_shell_workspace(str(tmp_path / "_pyruns_"))
-    first = _run_cli(tmp_path, "exec", "--name", "duplicate", "--", sys.executable, "-V")
-    second = _run_cli(tmp_path, "exec", "--name", "duplicate", "--", sys.executable, "-V")
+    first = _run_cli(tmp_path, "exec", "--name", "duplicate", "-c", _command_string([sys.executable, "-V"]))
+    second = _run_cli(tmp_path, "exec", "--name", "duplicate", "-c", _command_string([sys.executable, "-V"]))
 
     assert first.returncode == 0, first.stdout + first.stderr
     assert second.returncode == 1
@@ -2369,7 +2328,7 @@ def test_exec_rejects_an_explicit_duplicate_name(tmp_path):
 
 
 def test_exec_without_name_creates_timestamped_task(tmp_path):
-    result = _run_cli(tmp_path, "exec", "--", sys.executable, "-V")
+    result = _run_cli(tmp_path, "exec", "-c", _command_string([sys.executable, "-V"]))
 
     assert result.returncode == 0, result.stdout + result.stderr
     tasks_dir = tmp_path / "_pyruns_" / "_shell_" / TASKS_DIR
@@ -2384,7 +2343,7 @@ def test_exec_without_name_creates_timestamped_task(tmp_path):
 
 def test_exec_missing_program_preserves_workspace_shell_error(tmp_path):
     missing = "__pyruns_missing_program_9f0d8a__"
-    result = _run_cli(tmp_path, "exec", "--name", "missing-program", "--", missing)
+    result = _run_cli(tmp_path, "exec", "--name", "missing-program", "-c", _command_string([missing]))
 
     assert result.returncode == 1
     assert missing in result.stdout
@@ -2411,7 +2370,7 @@ def test_exec_missing_program_preserves_workspace_shell_error(tmp_path):
     assert "Traceback:" not in error_text
 
 
-def test_exec_matches_direct_argv_environment_and_creation_workdir(tmp_path):
+def test_exec_stdin_matches_direct_arguments_environment_and_creation_workdir(tmp_path):
     bootstrap_shell_workspace(str(tmp_path / "_pyruns_"))
     nested = tmp_path / "nested" / "deeper"
     nested.mkdir(parents=True)
@@ -2422,6 +2381,9 @@ def test_exec_matches_direct_argv_environment_and_creation_workdir(tmp_path):
     )
     arguments = [
         "value with spaces",
+        "--",
+        "--stdin",
+        "-c",
         "x&y",
         "%PATH%",
         "$HOME",
@@ -2452,8 +2414,8 @@ def test_exec_matches_direct_argv_environment_and_creation_workdir(tmp_path):
         "cwd-argv",
         "--env",
         "PYRUNS_ENV_MARKER=same-env",
-        "--",
-        *command,
+        "--stdin",
+        input_text=_command_string(command) + "\n",
     )
     assert first.returncode == 0, first.stdout + first.stderr
     first_payload = next(
@@ -2470,8 +2432,12 @@ def test_exec_matches_direct_argv_environment_and_creation_workdir(tmp_path):
     workspace = nested / "_pyruns_" / "_shell_"
     task_dir = workspace / TASKS_DIR / "cwd-argv"
     info = load_task_info(str(task_dir))
-    assert info["command_mode"] == "argv"
-    assert info["cmd"] == command
+    assert info["command_mode"] == "shell"
+    assert info.get("cmd") is None
+    shown = _run_cli(nested, "-w", "shell", "show", "cwd-argv", "--json")
+    detail = json.loads(shown.stdout)
+    assert detail["command_mode"] == "shell" and detail["command_argv"] is None
+    assert Path(detail["payload"]).read_text(encoding="utf-8") == _command_string(command) + "\n"
     assert info["env"] == {"PYRUNS_ENV_MARKER": "same-env"}
     assert Path(info["workdir"]) == nested
 
@@ -2506,7 +2472,7 @@ def test_exec_command_string_consumes_an_unquoted_tail_and_rejects_separator(tmp
 
     separator = _run_cli(tmp_path, "exec", "-c", "echo hello", "--")
     assert separator.returncode == 2
-    assert "-c/--command cannot be combined with '--' or argv arguments" in separator.stderr
+    assert "exec no longer accepts" in separator.stderr
     assert not (tmp_path / "_pyruns_").exists()
 
     removed = _run_cli(tmp_path, "exec", "--shell", "echo hello")
@@ -2701,10 +2667,7 @@ def test_ls_show_log_and_status_have_machine_contracts(tmp_path):
         "exec",
         "--name",
         "inspect-me",
-        "--",
-        sys.executable,
-        "-c",
-        "print('machine-readable')",
+        "-c", _command_string([sys.executable, "-c", "print('machine-readable')"]),
     )
     assert completed.returncode == 0
 
@@ -2899,10 +2862,7 @@ def test_show_and_log_accept_task_run_references(tmp_path):
         "exec",
         "--name",
         "versioned",
-        "--",
-        sys.executable,
-        "-c",
-        "import os; print(os.environ['PYRUNS_RUN_INDEX'])",
+        "-c", _command_string([sys.executable, "-c", "import os; print(os.environ['PYRUNS_RUN_INDEX'])"]),
     )
     rerun = _run_cli(tmp_path, "-w", "shell", "run", "versioned")
     assert created.returncode == 0, created.stdout + created.stderr
@@ -3195,9 +3155,7 @@ def test_task_names_reserve_at_for_run_references(tmp_path):
         "exec",
         "--name",
         "invalid@name",
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
 
     assert result.returncode == 2
@@ -3212,9 +3170,7 @@ def test_task_names_reject_boundary_whitespace_without_creating_workspace(tmp_pa
         "exec",
         "--name",
         name,
-        "--",
-        sys.executable,
-        "-V",
+        "-c", _command_string([sys.executable, "-V"]),
     )
 
     assert result.returncode == 2
@@ -3255,10 +3211,7 @@ def test_wait_aggregates_results_and_timeout_does_not_stop_the_task(tmp_path):
             "--name",
             name,
             "--detach",
-            "--",
-            sys.executable,
-            "-c",
-            code,
+            "-c", _command_string([sys.executable, "-c", code]),
         )
         assert submitted.returncode == 0, submitted.stderr
 
@@ -3300,10 +3253,7 @@ def test_wait_aggregates_results_and_timeout_does_not_stop_the_task(tmp_path):
         "--name",
         "wait-timeout",
         "--detach",
-        "--",
-        sys.executable,
-        "-c",
-        "import time; time.sleep(20)",
+        "-c", _command_string([sys.executable, "-c", "import time; time.sleep(20)"]),
     )
     assert long_task.returncode == 0, long_task.stderr
 
@@ -3344,10 +3294,7 @@ def test_wait_sigint_returns_130_without_stopping_task(tmp_path):
         "--name",
         "interrupt-wait",
         "--detach",
-        "--",
-        sys.executable,
-        "-c",
-        "import time; time.sleep(20)",
+        "-c", _command_string([sys.executable, "-c", "import time; time.sleep(20)"]),
     )
     assert submitted.returncode == 0, submitted.stderr
     task_dir = tmp_path / "_pyruns_" / "_shell_" / TASKS_DIR / "interrupt-wait"
@@ -3402,10 +3349,7 @@ def test_stop_reaches_detached_runner(tmp_path):
         "--name",
         "cancel-me",
         "--detach",
-        "--",
-        sys.executable,
-        "-c",
-        "import time; print('started', flush=True); time.sleep(20)",
+        "-c", _command_string([sys.executable, "-c", "import time; print('started', flush=True); time.sleep(20)"]),
     )
     assert submitted.returncode == 0
     task_dir = tmp_path / "_pyruns_" / "_shell_" / TASKS_DIR / "cancel-me"
@@ -3535,10 +3479,7 @@ def test_rm_ls_trash_and_restore(tmp_path):
         "exec",
         "--name",
         "recoverable",
-        "--",
-        sys.executable,
-        "-c",
-        "print('ok')",
+        "-c", _command_string([sys.executable, "-c", "print('ok')"]),
     )
     assert result.returncode == 0
 
@@ -3682,10 +3623,7 @@ def test_export_defaults_to_stdout_and_can_write_file(tmp_path):
         "exec",
         "--name",
         "exportable",
-        "--",
-        sys.executable,
-        "-c",
-        "print('ok')",
+        "-c", _command_string([sys.executable, "-c", "print('ok')"]),
     )
     assert result.returncode == 0
     stdout_export = _run_cli(

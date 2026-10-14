@@ -274,7 +274,7 @@ pyr -w train run <exact-task-name>
 ```text
 pyr init
   → _pyruns_/_shell_/
-pyr exec --name <task> -- <argv...>
+pyr exec --name <task> -c "COMMAND"
   → TaskGenerator.create_shell_task(...)
   → tasks/<task>/{config.ps1|config.cmd|config.sh}
   → hidden runner → executor resolves shell runtime

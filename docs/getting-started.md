@@ -24,7 +24,7 @@ Pyruns 同时安装 `pyr` 与 `pyruns` 两个完全等价的正式命令。本�
 
 ```bash
 cd my-project
-pyr exec -n smoke -- python -V
+pyr exec -n smoke -c "python -V"
 ```
 
 `exec` 会自动创建 shell workspace、任务和第一次运行记录：
@@ -42,8 +42,8 @@ my-project/
 省略名称会生成 `task_YYYY-MM-DD_HH-MM-SS`，`-nt PREFIX` 则生成带语义前缀的时间戳名称：
 
 ```bash
-pyr exec -- python -V
-pyr exec -nt smoke -- python -V       # smoke_YYYY-MM-DD_HH-MM-SS
+pyr exec -c "python -V"
+pyr exec -nt smoke -c "python -V"  # smoke_YYYY-MM-DD_HH-MM-SS
 ```
 
 `-n NAME` 是精确名称，`-nt PREFIX` 是自动名称，两者不能同时使用。同一秒发生名称冲突时，
@@ -54,8 +54,8 @@ Pyruns 仍会使用现有的安全去重后缀，避免覆盖任务。
 只预览计划、不创建 workspace/task 也不运行命令：
 
 ```bash
-pyr exec --dry-run -n smoke -- python -V
-pyr exec --dry-run -n smoke --json -- python -V
+pyr exec --dry-run -n smoke -c "python -V"
+pyr exec --dry-run -n smoke --json -c "python -V"
 ```
 
 任务结束后查询：
@@ -82,7 +82,7 @@ _pyruns_/_shell_/tasks/smoke/
 默认 `exec` 会跟随日志并把任务成功或失败反映到退出码。长任务可使用 `--detach`：
 
 ```bash
-pyr exec -n train -d -- python train.py --epochs 100
+pyr exec -n train -d -c "python train.py --epochs 100"
 ```
 
 runner 接受任务后，命令立即返回；关闭调用终端不会终止任务。Windows 上 runner 和任务进程不会弹出新的控制台窗口。
@@ -104,23 +104,26 @@ pyr stop train
 
 取消请求会送到真正拥有该任务的 runner，而不是只修改显示状态。
 
-## 4. 什么时候使用 `-c`
+## 4. 使用 `-c` 执行完整命令
 
-普通程序或脚本文件总是优先使用 `--` 后的精确 argv。直接运行脚本文件时，Pyruns 会按扩展名选择解释器，这可以直接替代 `bash xxx.sh`，同时保留日志、运行时长、退出码和源码状态：
+普通程序和脚本文件都使用 `-c "完整命令"`。脚本需要的解释器写在命令内，
+Pyruns 记录日志、运行时长和退出码：
 
 ```bash
-pyr exec -n eval -- python eval.py --checkpoint "best model.pt"
-pyr exec -n preprocess -- ./scripts/preprocess.sh "dataset A" --fast
+pyr exec -n eval -c 'python eval.py --checkpoint "best model.pt"'
+pyr exec -n preprocess -c 'bash ./scripts/preprocess.sh "dataset A" --fast'
 ```
 
-只有需要管道、重定向、变量展开、通配符或 `&&` 等 shell 解析时才使用 `-c` / `--command`。`-c` 会消费并合并后续 command text；简单命令可直接写成 `-c echo hello`。表达式含 `;`、`|`、重定向或变量时，通常仍要按调用端 shell 的规则引用整段，避免 Pyruns 启动前就被拆开：
+`-c` / `--command` 也支持管道、重定向、变量展开、通配符和 `&&` 等工作区 Shell 语法。
+将整段命令引用为一个参数，Pyruns 选项可以放在 `-c "命令"` 前面或后面。
+长命令和多行脚本使用 `--stdin` 保存完整正文。Shell 表达式示例：
 
 ```bash
 pyr exec -n report -c "python eval.py > metrics.txt"
 pyr exec -n pipeline -c "python preprocess.py && python train.py | tee train.log"
 ```
 
-Pyruns 不修改 Bash、Zsh、Fish 或 PowerShell 的行编辑器。所有平台都使用相同规则：普通程序或脚本使用 `--` 后的精确 argv；需要 shell 语法时，将完整表达式引用为 `-c` 的一个参数。例如 PowerShell：
+所有平台都使用相同规则：`-c` 接收完整命令字符串，`--stdin` 接收完整脚本正文。例如 PowerShell：
 
 ```powershell
 pyr exec -c '$colors=@("Red","Green"); 1..2 | ForEach-Object { Write-Host $_ -ForegroundColor $colors[$_-1] }'
@@ -128,10 +131,10 @@ pyr exec -c '$colors=@("Red","Green"); 1..2 | ForEach-Object { Write-Host $_ -Fo
 
 Shell task 使用跨平台伪终端保留颜色：Linux/macOS 使用系统 PTY，Windows 在已有控制台时使用原生 ConPTY。没有已附着的 Windows 控制台时，会回退到隐藏的 stdout/stderr 管道，避免弹出控制台窗口，此时颜色可能丢失。伪终端捕获的日志保留 SGR 颜色，但过滤清屏、光标定位和窗口标题等控制序列。
 
-少量环境变量只需写一次 `-e`，`--` 明确标记目标命令的开始：
+少量环境变量只需写一次 `-e`，再用 `-c` 提供完整命令：
 
 ```bash
-pyr exec -n gpu0 -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -- python train.py
+pyr exec -n gpu0 -e CUDA_VISIBLE_DEVICES=0 TOKENIZERS_PARALLELISM=false SEED=42 -c "python train.py"
 ```
 
 `-e` / `--env` 可以按变量组重复使用。Pyruns 已自动为子进程设置 `PYTHONUNBUFFERED=1`、`PYTHONIOENCODING=utf-8` 和 `PYTHONUTF8=1`。
@@ -145,7 +148,7 @@ TOKENIZERS_PARALLELISM=false
 ```
 
 ```bash
-pyr exec -n gpu0 --env-file .env.train -e SEED=42 -- python train.py
+pyr exec -n gpu0 --env-file .env.train -e SEED=42 -c "python train.py"
 ```
 
 `--env-file` 可重复：后面的文件覆盖前面的文件，命令行 `-e` 再覆盖文件值。文件只读取空行、整行 `#` 注释和 `KEY=VALUE`，不做 shell 插值。变量会明文保存到任务元数据，所以不要用于密钥。

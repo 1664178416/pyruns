@@ -8,7 +8,6 @@ import os
 import re
 import signal
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -91,10 +90,7 @@ from pyruns.utils.settings import (
     setting_numbers_are_finite,
     unset_setting_for_root,
 )
-from pyruns.utils.shell_runtime import (
-    build_script_file_argv,
-    get_shell_runtime_for_workspace,
-)
+from pyruns.utils.shell_runtime import get_shell_runtime_for_workspace
 from pyruns.utils.task_files import MAX_TASK_PAYLOAD_BYTES, resolve_task_config_file
 from pyruns.utils.time_utils import get_now_str
 from pyruns.update_coordination import (
@@ -109,7 +105,6 @@ _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _VALID_STATUSES = {"pending", "queued", "running", "completed", "failed", "cancelled"}
 _INTERRUPT_CANCEL_TIMEOUT_SEC = 15.0
 _CMD_META_CHARS = frozenset("&|<>^()%!")
-_SHELL_SCRIPT_EXTENSIONS = frozenset({".sh", ".ps1", ".cmd", ".bat"})
 CLI_JSON_SCHEMA_VERSION = 1
 
 
@@ -832,39 +827,6 @@ def _render_recovery_command(
     return _render_argument_command(parts, workspace)
 
 
-def _resolve_exec_script_path(parts: list[str]) -> str | None:
-    """Validate and resolve a directly invoked shell script path."""
-
-    extension = os.path.splitext(parts[0])[1].lower()
-    if extension not in _SHELL_SCRIPT_EXTENSIONS:
-        return None
-
-    script_path = os.path.abspath(os.path.expanduser(parts[0]))
-    if not os.path.isfile(script_path):
-        resolved = shutil.which(parts[0]) if not os.path.dirname(parts[0]) else None
-        if resolved and os.path.isfile(resolved):
-            script_path = os.path.abspath(resolved)
-        else:
-            raise CliError(f"script file not found: {parts[0]}")
-    return script_path
-
-
-def _build_exec_argv(
-    parts: list[str],
-    workspace: str,
-    source_script: str | None,
-) -> list[str]:
-    """Return the exact process argv persisted for an exec task."""
-
-    if not source_script:
-        return [str(part) for part in parts]
-
-    try:
-        return build_script_file_argv(source_script, parts[1:], workspace)
-    except (RuntimeError, ValueError) as exc:
-        raise CliError(str(exc)) from exc
-
-
 def _active_run_index(info: dict[str, Any]) -> int:
     latest_run = _latest_run_index(info, info)
     if str(info.get("status", "") or "").lower() != "queued":
@@ -1464,18 +1426,20 @@ def _read_exec_stdin() -> str:
 
 
 def cmd_exec(context: Any, args: Any) -> int:
-    parts = list(args.command_argv or [])
-    has_separator = bool(parts and parts[0] == "--")
-    if has_separator:
-        parts = parts[1:]
+    # Keep a hidden tail for the help alias and legacy unquoted -c transport;
+    # positional program/argv input is no longer a command source.
+    parts = list(args._command_tail or [])
     shell_command = args.shell_command
     from_stdin = bool(getattr(args, "stdin", False))
     if from_stdin:
-        if shell_command is not None or parts or has_separator:
-            raise CliUsageError("--stdin cannot be combined with -c/--command or argv arguments")
+        if shell_command is not None or parts:
+            raise CliUsageError("--stdin accepts only script input; do not add -c/--command or positional arguments")
         shell_command = _read_exec_stdin()
-    if shell_command is not None and has_separator:
-        raise CliUsageError("-c/--command cannot be combined with '--' or argv arguments")
+    if parts and parts[0] == "--":
+        raise CliUsageError(
+            "exec no longer accepts '-- PROGRAM ARG ...'; "
+            "use -c \"COMMAND\" or --stdin with a file, pipe, or heredoc"
+        )
     if shell_command is not None and parts:
         recovered = (
             _recover_windows_shell_command()
@@ -1485,12 +1449,9 @@ def cmd_exec(context: Any, args: Any) -> int:
         shell_command = recovered if recovered is not None else " ".join(
             [str(shell_command), *(str(part) for part in parts)]
         )
-        parts = []
-    if shell_command is None and parts and not has_separator:
-        raise CliUsageError("exec argv form requires '--' before COMMAND")
-    if shell_command is None and not parts:
+    if shell_command is None:
         raise CliUsageError(
-            "exec requires a command after '--' or -c/--command; "
+            "exec requires a command via -c/--command or --stdin; "
             "use --stdin with a file, pipe, or heredoc for multiline scripts"
         )
 
@@ -1511,32 +1472,18 @@ def cmd_exec(context: Any, args: Any) -> int:
     if name_error:
         raise CliUsageError(name_error)
 
-    source_script: str | None = None
-    uses_shell_command = shell_command is not None
-    if uses_shell_command:
-        command_text = str(shell_command)
-        if not command_text.strip():
-            raise CliUsageError("-c/--command cannot be empty")
-    else:
-        if not str(parts[0]).strip():
-            raise CliUsageError("exec command cannot be empty")
-        source_script = _resolve_exec_script_path(parts)
+    command_text = str(shell_command)
+    if not command_text.strip():
+        raise CliUsageError("-c/--command cannot be empty")
 
     dry_run = bool(args.dry_run)
     workspace = _shell_workspace_for_exec(context, create=not dry_run)
-    command_argv: list[str] | None = None
-    shell_executable: str | None = None
-    shell_kind: str | None = None
-    if uses_shell_command:
-        runtime = get_shell_runtime_for_workspace(workspace)
-        shell_executable = str(runtime.get("executable", "") or "").strip()
-        shell_kind = str(runtime.get("terminal_kind", "") or "").strip().lower()
-        if not shell_executable or not bool(runtime.get("available", False)):
-            source_option = "--stdin" if from_stdin else "-c/--command"
-            raise CliError(f"unable to resolve an available shell for {source_option}")
-    else:
-        command_argv = _build_exec_argv(parts, workspace, source_script)
-        command_text = _render_argument_command(command_argv, workspace)
+    runtime = get_shell_runtime_for_workspace(workspace)
+    shell_executable = str(runtime.get("executable", "") or "").strip()
+    shell_kind = str(runtime.get("terminal_kind", "") or "").strip().lower()
+    if not shell_executable or not bool(runtime.get("available", False)):
+        source_option = "--stdin" if from_stdin else "-c/--command"
+        raise CliError(f"unable to resolve an available shell for {source_option}")
 
     if dry_run:
         tasks_dir = os.path.join(workspace, TASKS_DIR)
@@ -1556,12 +1503,12 @@ def cmd_exec(context: Any, args: Any) -> int:
             "creates_workspace": not workspace_exists,
             "task": task_plan,
             "workdir": _normalized_path(context.directory),
-            "command_mode": "shell" if uses_shell_command else "argv",
-            "command_argv": command_argv,
-            "shell_expression": command_text if uses_shell_command else None,
+            "command_mode": "shell",
+            "command_argv": None,
+            "shell_expression": command_text,
             "shell_executable": shell_executable or None,
             "shell_kind": shell_kind or None,
-            "script": _normalized_path(source_script) if source_script else None,
+            "script": None,
             "env": env,
             "detach": bool(args.detach),
         }
@@ -1598,13 +1545,11 @@ def cmd_exec(context: Any, args: Any) -> int:
                     requested_name,
                     command_text if from_stdin else command_text.rstrip() + "\n",
                     exact_name=exact_name,
-                    command_mode="shell" if uses_shell_command else "argv",
-                    command_argv=command_argv,
+                    command_mode="shell",
                     workdir=context.directory,
                     shell_executable=shell_executable,
                     shell_kind=shell_kind,
                     env=env,
-                    script_path=source_script,
                     gpu_wait_rule=getattr(args, "gpu_wait", None),
                 )
             except ValueError as exc:

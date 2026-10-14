@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from pyruns._config import CONFIG_DEFAULT_FILENAME, TASKS_DIR
+from pyruns.cli.commands import _render_argument_command
 from pyruns.cli.runner import SubmissionResult
 from pyruns.cli.submission_protocol import (
     SCHEMA_VERSION,
@@ -616,10 +617,11 @@ def test_foreground_exec_sigint_stops_and_verifies_the_managed_process(tmp_path)
         "exec",
         "--name",
         "foreground-sigint",
-        "--",
-        sys.executable,
         "-c",
-        "import time; print('ready', flush=True); time.sleep(20)",
+        _render_argument_command(
+            [sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(20)"],
+            str(workspace),
+        ),
     ]
     code = (
         "import signal, sys\n"
@@ -675,10 +677,11 @@ def test_log_follow_sigint_stops_observing_without_stopping_the_task(tmp_path):
             "--name",
             "observe-sigint",
             "--detach",
-            "--",
-            sys.executable,
             "-c",
-            "import time; print('ready', flush=True); time.sleep(20)",
+            _render_argument_command(
+                [sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(20)"],
+                str(workspace),
+            ),
         ),
         cwd=tmp_path,
         env=_source_env(),
@@ -776,10 +779,8 @@ def test_stop_verifies_the_entire_managed_process_tree_has_exited(tmp_path):
             "--name",
             "process-tree",
             "--detach",
-            "--",
-            sys.executable,
             "-c",
-            parent_code,
+            _render_argument_command([sys.executable, "-c", parent_code], str(workspace)),
         ),
         cwd=tmp_path,
         env=_source_env(),
