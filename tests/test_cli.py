@@ -1336,8 +1336,10 @@ def test_follow_task_keeps_gpu_refresh_on_one_terminal_row(tmp_path, monkeypatch
     log.write_text("run started\n", encoding="utf-8")
     output = io.StringIO()
     output.isatty = lambda: True
-    monkeypatch.setattr(commands.sys, "stdout", output)
-    monkeypatch.setattr(shutil, "get_terminal_size", lambda: os.terminal_size((48, 24)))
+    monkeypatch.setattr(commands, "sys", SimpleNamespace(stdout=output))
+    monkeypatch.setattr(
+        commands, "shutil", SimpleNamespace(get_terminal_size=lambda: os.terminal_size((48, 24))),
+    )
     statuses = iter(["queued", "queued", "completed"])
 
     def record(_task, _identity):
@@ -1354,7 +1356,7 @@ def test_follow_task_keeps_gpu_refresh_on_one_terminal_row(tmp_path, monkeypatch
             str(queue if run_index is None else log), run_index, "queue" if run_index is None else "run",
         ),
     )
-    monkeypatch.setattr(commands.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(commands, "time", SimpleNamespace(sleep=lambda _seconds: None, monotonic=time.monotonic))
 
     result = commands._follow_task(
         {}, identity=commands._TaskRunIdentity(run_index=1, runner_id="host:1:token"),
