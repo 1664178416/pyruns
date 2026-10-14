@@ -2024,7 +2024,7 @@ export default function MonitorPage() {
           </div>
         )}
 
-        {selectedTask?.status === 'queued' && (
+        {selectedTask?.status === 'queued' && selectedTask.gpu_wait && (
           <GPUWaitPanel wait={selectedTask.gpu_wait ?? null} />
         )}
 

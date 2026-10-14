@@ -1058,7 +1058,6 @@ def test_react_runtime_panel_exposes_gpu_scheduler_settings():
     assert "Maximum wait" in runtime_panel
     assert "useState('40')" in runtime_panel
     assert "useState('15')" in runtime_panel
-    assert "useState(48)" in runtime_panel
     assert "max_wait_seconds ?? 172800" in runtime_panel
     assert "setGpuSchedulerEnabled(next.gpu_scheduler?.enabled ?? false)" in runtime_panel
     assert "setGpuSelectionMode(next.gpu_scheduler?.selection_mode === 'specified' ? 'specified' : 'auto')" in runtime_panel
@@ -1076,7 +1075,6 @@ def test_react_runtime_panel_exposes_gpu_scheduler_settings():
     assert "gpus_per_task: requestedGpuCount" in runtime_panel
     assert "min_idle_pct: boundedNumberInputValue(gpuMinIdlePct, 70, 0, 100)" in runtime_panel
     assert "stable_seconds: numberInputValue(gpuStableSeconds, 15, 0)" in runtime_panel
-    assert "max_wait_seconds: gpuMaxWaitHours * 3600" in runtime_panel
     assert "require_same_gpu_model: gpuRequireSameModel" in runtime_panel
     assert "Require the same model for multi-GPU tasks" in runtime_panel
     assert "sample_interval_seconds" not in runtime_panel

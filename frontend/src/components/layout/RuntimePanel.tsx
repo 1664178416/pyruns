@@ -144,6 +144,9 @@ function boundedNumberInputValue(value: string, fallback: number, minimum: numbe
 }
 
 function settingNumber(value: unknown, fallback: number, minimum = 0, maximum = Number.POSITIVE_INFINITY) {
+  if (value == null || (typeof value === 'string' && !value.trim())) {
+    return fallback
+  }
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) {
     return fallback
@@ -258,7 +261,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
   const [gpuMinFreeMemoryGb, setGpuMinFreeMemoryGb] = useState('40')
   const [gpuMinIdlePct, setGpuMinIdlePct] = useState('70')
   const [gpuStableSeconds, setGpuStableSeconds] = useState('15')
-  const [gpuMaxWaitHours, setGpuMaxWaitHours] = useState(48)
+  const [gpuMaxWaitHours, setGpuMaxWaitHours] = useState('48')
   const [gpuRespectCudaVisibleDevices, setGpuRespectCudaVisibleDevices] = useState(true)
   const [gpuRequireSameModel, setGpuRequireSameModel] = useState(false)
   const [showCondaAdvanced, setShowCondaAdvanced] = useState(false)
@@ -343,6 +346,17 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     }))
   }, [candidateGpus, gpuMinIdlePct, gpuMinFreeMemoryGb])
   const passingGpuCount = gpuPreviewRows.filter(row => row.reasons.length === 0).length
+  const passingSameModelCount = useMemo(() => {
+    const models = new Map<string, number>()
+    for (const { gpu, reasons } of gpuPreviewRows) {
+      if (reasons.length) continue
+      const model = gpu.name?.trim() || 'GPU'
+      models.set(model, (models.get(model) || 0) + 1)
+    }
+    return Math.max(0, ...models.values())
+  }, [gpuPreviewRows])
+  const sameModelInsufficient = gpuRequireSameModel && requestedGpuCount > 1
+    && passingGpuCount >= requestedGpuCount && passingSameModelCount < requestedGpuCount
   const gpuValidationIssues = useMemo(() => {
     if (!gpuSchedulerEnabled) {
       return []
@@ -368,7 +382,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     if (!gpuStableSeconds.trim() || !Number.isFinite(rawStableSeconds) || rawStableSeconds < 0) {
       issues.push('Stability window must be 0 seconds or more.')
     }
-    if (!Number.isFinite(rawWaitHours) || rawWaitHours < 0) {
+    if (!gpuMaxWaitHours.trim() || !Number.isFinite(rawWaitHours) || rawWaitHours < 0) {
       issues.push('Maximum wait must be 0 hours or more (0 means unlimited).')
     }
     if (gpuSelectionMode === 'specified') {
@@ -419,7 +433,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
   const gpuReadinessUnavailable = gpuSchedulerEnabled && !!gpuMetricsError && !gpuMetrics
   const gpuWaitingNow = gpuSchedulerEnabled
     && !!gpuMetrics
-    && passingGpuCount < requestedGpuCount
+    && (passingGpuCount < requestedGpuCount || sameModelInsufficient)
 
   const applyPythonRuntimeState = (next: RuntimeInfo) => {
     setPythonPath(next.python_executable)
@@ -440,7 +454,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     setGpuMinFreeMemoryGb(String(next.gpu_scheduler?.min_free_memory_gb ?? 40))
     setGpuMinIdlePct(String(next.gpu_scheduler?.min_idle_pct ?? 70))
     setGpuStableSeconds(String(next.gpu_scheduler?.stable_seconds ?? 15))
-    setGpuMaxWaitHours(Math.max(0, (next.gpu_scheduler?.max_wait_seconds ?? 172800) / 3600))
+    setGpuMaxWaitHours(String(Math.max(0, (next.gpu_scheduler?.max_wait_seconds ?? 172800) / 3600)))
     setGpuRespectCudaVisibleDevices(next.gpu_scheduler?.respect_cuda_visible_devices ?? true)
     setGpuRequireSameModel(next.gpu_scheduler?.require_same_gpu_model ?? false)
   }
@@ -463,6 +477,22 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     clearAllRuntimeDirty()
   }
 
+  const applyGpuWorkspaceSettings = (settings?: Record<string, any>) => {
+    setGpuSchedulerEnabled(settingBool(settings?.gpu_scheduler_enabled, false))
+    setGpuSelectionMode(['specified', 'fixed', 'manual'].includes(cleanSettingText(settings?.gpu_scheduler_selection_mode).toLowerCase()) ? 'specified' : 'auto')
+    setGpuCount(String(cleanSettingText(settings?.gpu_scheduler_task_mode).toLowerCase() === 'multi'
+      ? settingNumber(settings?.gpu_scheduler_gpus_per_task, 1, 1) : 1))
+    setGpuDeviceIds(formatDeviceIdsSetting(settings?.gpu_scheduler_device_ids))
+    setGpuMinFreeMemoryGb(String(settingNumber(settings?.gpu_scheduler_min_free_memory_gb, 40, 0)))
+    setGpuMinIdlePct(String(Object.prototype.hasOwnProperty.call(settings || {}, 'gpu_scheduler_min_idle_pct')
+      ? settingNumber(settings?.gpu_scheduler_min_idle_pct, 70, 0, 100)
+      : 100 - settingNumber(settings?.gpu_scheduler_compute_used_pct, 30, 0, 100)))
+    setGpuStableSeconds(String(settingNumber(settings?.gpu_scheduler_stable_seconds, 15, 0)))
+    setGpuMaxWaitHours(String(settingNumber(settings?.gpu_scheduler_max_wait_seconds, 172800, 0) / 3600))
+    setGpuRespectCudaVisibleDevices(settingBool(settings?.gpu_scheduler_respect_cuda_visible_devices, true))
+    setGpuRequireSameModel(settingBool(settings?.gpu_scheduler_require_same_gpu_model, false))
+  }
+
   const applyWorkspaceRuntimeSettings = (settings?: Record<string, any>) => {
     setRuntime(null)
     setEnvText(formatEnv(settings?.global_env || {}))
@@ -470,17 +500,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     setCondaEnv(cleanSettingText(settings?.conda_env))
     setCondaExecutable(cleanSettingText(settings?.conda_executable) || 'conda')
     setRuntimeMode(modeFromSettings(settings))
-    setGpuSchedulerEnabled(settingBool(settings?.gpu_scheduler_enabled, false))
-    setGpuSelectionMode(cleanSettingText(settings?.gpu_scheduler_selection_mode) === 'specified' ? 'specified' : 'auto')
-    setGpuCount(String(cleanSettingText(settings?.gpu_scheduler_task_mode) === 'multi'
-      ? settingNumber(settings?.gpu_scheduler_gpus_per_task, 1, 1) : 1))
-    setGpuDeviceIds(formatDeviceIdsSetting(settings?.gpu_scheduler_device_ids))
-    setGpuMinFreeMemoryGb(String(settingNumber(settings?.gpu_scheduler_min_free_memory_gb, 40, 0)))
-    setGpuMinIdlePct(String(settingNumber(settings?.gpu_scheduler_min_idle_pct, 70, 0, 100)))
-    setGpuStableSeconds(String(settingNumber(settings?.gpu_scheduler_stable_seconds, 15, 0)))
-    setGpuMaxWaitHours(settingNumber(settings?.gpu_scheduler_max_wait_seconds, 172800, 0) / 3600)
-    setGpuRespectCudaVisibleDevices(settingBool(settings?.gpu_scheduler_respect_cuda_visible_devices, true))
-    setGpuRequireSameModel(settingBool(settings?.gpu_scheduler_require_same_gpu_model, false))
+    applyGpuWorkspaceSettings(settings)
     clearAllRuntimeDirty()
   }
 
@@ -797,11 +817,11 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
         task_mode: requestedGpuCount > 1 ? 'multi' : 'single',
         selection_mode: gpuSelectionMode,
         gpus_per_task: requestedGpuCount,
-        device_ids: selectedGpuIds,
+        device_ids: gpuSelectionMode === 'specified' ? selectedGpuIds : [],
         min_free_memory_gb: numberInputValue(gpuMinFreeMemoryGb, 40, 0),
         min_idle_pct: boundedNumberInputValue(gpuMinIdlePct, 70, 0, 100),
         stable_seconds: numberInputValue(gpuStableSeconds, 15, 0),
-        max_wait_seconds: gpuMaxWaitHours * 3600,
+        max_wait_seconds: Number(gpuMaxWaitHours) * 3600,
         respect_cuda_visible_devices: gpuRespectCudaVisibleDevices,
         require_same_gpu_model: gpuRequireSameModel,
       },
@@ -814,17 +834,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     if (runtime) {
       applyGpuRuntimeState(runtime)
     } else {
-      setGpuSchedulerEnabled(settingBool(workspaceSettings?.gpu_scheduler_enabled, false))
-      setGpuSelectionMode(cleanSettingText(workspaceSettings?.gpu_scheduler_selection_mode) === 'specified' ? 'specified' : 'auto')
-      setGpuCount(String(cleanSettingText(workspaceSettings?.gpu_scheduler_task_mode) === 'multi'
-        ? settingNumber(workspaceSettings?.gpu_scheduler_gpus_per_task, 1, 1) : 1))
-      setGpuDeviceIds(formatDeviceIdsSetting(workspaceSettings?.gpu_scheduler_device_ids))
-      setGpuMinFreeMemoryGb(String(settingNumber(workspaceSettings?.gpu_scheduler_min_free_memory_gb, 40, 0)))
-      setGpuMinIdlePct(String(settingNumber(workspaceSettings?.gpu_scheduler_min_idle_pct, 70, 0, 100)))
-      setGpuStableSeconds(String(settingNumber(workspaceSettings?.gpu_scheduler_stable_seconds, 15, 0)))
-      setGpuMaxWaitHours(settingNumber(workspaceSettings?.gpu_scheduler_max_wait_seconds, 172800, 0) / 3600)
-      setGpuRespectCudaVisibleDevices(settingBool(workspaceSettings?.gpu_scheduler_respect_cuda_visible_devices, true))
-      setGpuRequireSameModel(settingBool(workspaceSettings?.gpu_scheduler_require_same_gpu_model, false))
+      applyGpuWorkspaceSettings(workspaceSettings)
     }
     clearRuntimeDirtyPage('gpu')
   }
@@ -1134,7 +1144,9 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
             {gpuWaitingNow && !gpuValidationMessage && (
               <div className="flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
-                <span>Too few GPUs pass the live thresholds. New tasks will wait visibly in Monitor.</span>
+                <span>{sameModelInsufficient
+                  ? `Need ${requestedGpuCount} ready GPUs of the same model; the largest group has ${passingSameModelCount}.`
+                  : 'Too few GPUs pass the memory and idle thresholds. New tasks will wait visibly in Monitor.'}</span>
               </div>
             )}
 
@@ -1147,7 +1159,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                     ? 'Checking live GPU thresholds…'
                     : gpuMetricsError && !gpuMetrics
                       ? 'Threshold preview unavailable'
-                      : `${passingGpuCount} of ${candidateGpus.length} pass live thresholds`}
+                      : `${passingGpuCount} of ${candidateGpus.length} pass memory and idle thresholds`}
               </span>
               <span className="hidden h-4 w-px bg-border sm:block" />
               <span className={clsx('text-2xs', gpuValidationIssues.length ? 'text-rose-700 dark:text-rose-300' : 'text-txt-tertiary')}>
@@ -1159,7 +1171,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                       ? 'Checking current GPUs'
                       : gpuWaitingNow
                         ? 'Tasks would wait'
-                        : gpuSchedulerEnabled ? 'Meets current thresholds' : 'No GPU admission checks'}
+                        : gpuSchedulerEnabled ? 'Candidate GPUs ready' : 'No GPU admission checks'}
               </span>
             </div>
 
@@ -1205,14 +1217,20 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
               <CompactNumberField label="Stable for" value={gpuStableSeconds} suffix="sec" min={0} disabled={!gpuSchedulerEnabled} onChange={value => { setGpuStableSeconds(value); markRuntimeDirty('gpu') }} />
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-txt-secondary">Maximum wait</span>
-                <div className="touch-input flex h-11 overflow-hidden rounded-md border border-border-subtle bg-surface-raised focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15 sm:h-9">
+                <div className={clsx(
+                  'touch-input flex h-11 overflow-hidden rounded-md border bg-surface-raised focus-within:ring-2 sm:h-9',
+                  gpuValidationIssues.some(issue => issue.includes('Maximum wait'))
+                    ? 'border-rose-500 focus-within:border-rose-500 focus-within:ring-rose-500/15'
+                    : 'border-border-subtle focus-within:border-accent focus-within:ring-accent/15',
+                )}>
                   <input
                     type="number"
                     min={0}
                     step="any"
                     value={gpuMaxWaitHours}
                     disabled={!gpuSchedulerEnabled}
-                    onChange={event => { setGpuMaxWaitHours(numberInputValue(event.target.value, 48, 0)); markRuntimeDirty('gpu') }}
+                    onChange={event => { setGpuMaxWaitHours(event.target.value); markRuntimeDirty('gpu') }}
+                    aria-invalid={gpuValidationIssues.some(issue => issue.includes('Maximum wait'))}
                     className="min-w-0 flex-1 bg-transparent px-2.5 text-sm text-txt-primary outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <span className="flex w-11 items-center justify-center border-l border-border-subtle text-xs text-txt-tertiary">hr</span>
@@ -1221,6 +1239,9 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
             </div>
             <p className="text-2xs leading-5 text-txt-tertiary">
               GPU idle is 100% minus utilization. Stable for 0 starts immediately; maximum wait 0 waits indefinitely.
+            </p>
+            <p className="text-2xs leading-5 text-txt-tertiary">
+              Preview checks memory, idle and model. At launch, task CUDA_VISIBLE_DEVICES, reservations and stability also apply.
             </p>
 
             {gpuMetricsError && (
@@ -1279,8 +1300,8 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                             {reasons.length
                               ? reasons.map(reason => <div key={reason}>• {reason}</div>)
                               : !gpuSchedulerEnabled
-                                ? <div>Current metrics pass the saved thresholds. Scheduling is off.</div>
-                                : <div>All current thresholds pass. The stability window still applies before launch.</div>}
+                                ? <div>Memory and idle thresholds pass. Scheduling is off.</div>
+                                : <div>Memory and idle thresholds pass. All requested GPUs must pass the launch checks.</div>}
                           </div>
                         )}
                       </div>
@@ -1335,10 +1356,6 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                     />
                   </label>
                 )}
-
-                <p className="text-2xs leading-5 text-txt-tertiary">
-                  The preview checks live thresholds. The stability window is enforced when a task enters the queue.
-                </p>
 
                 <label className="touch-target flex items-start gap-2 text-xs text-txt-secondary">
                   <input
