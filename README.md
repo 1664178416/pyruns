@@ -177,6 +177,10 @@ pyr exec -n pipeline -c "python preprocess.py && python train.py | tee train.log
 旧写法 `-c echo hello` 会将后续文本合并成 `echo hello`，此时所有 Pyruns 选项应放在 `-c` 前。
 推荐始终引用完整命令，并遵循调用端 Shell 的引用规则，避免表达式被提前拆分或展开。
 
+脚本语法取决于实际 Shell：Windows PowerShell 5.1 不支持 `&&`，PowerShell 的多行
+输入应使用管道/here-string；下文的重定向和 heredoc 是 Bash 用法。详见
+`pyr exec --help` 或[跨平台差异](docs/cli-guide.md#exec-platform-notes)。
+
 需要完整记录已有长脚本时，在 Bash 中运行：
 
 ```bash

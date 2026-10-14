@@ -15,7 +15,7 @@ pyr exec --help
 
 Pyruns 同时安装 `pyr` 与 `pyruns` 两个完全等价的正式命令。本文使用更短的 `pyr`；任何示例都可以原样换成 `pyruns`。裸命令、`pyr help` 与 `--help` 列出全部命令及用途，参数、示例和注意事项统一使用 `pyr COMMAND --help` 查看。这些帮助命令都不会创建工作区或启动 Web 服务。
 
-当你不确定应该使用 `--`、`-c`、脚本直传、`-e` 还是 `--env-file` 时，直接运行
+当你不确定应该使用 `-c`、`--stdin`、`-e` 还是 `--env-file` 时，直接运行
 `pyr exec --help`；它按常见场景给出选择规则和后续查看日志、等待、重跑的命令。
 
 ## 2. 第一个 shell 任务
@@ -49,7 +49,10 @@ pyr exec -nt smoke -c "python -V"  # smoke_YYYY-MM-DD_HH-MM-SS
 `-n NAME` 是精确名称，`-nt PREFIX` 是自动名称，两者不能同时使用。同一秒发生名称冲突时，
 Pyruns 仍会使用现有的安全去重后缀，避免覆盖任务。
 
-`--` 是“Pyruns 参数到此结束”的分隔符，后面是目标程序的精确参数向量。它本身不启用 shell；即使命令自身带 `--epochs`、`-p` 等选项，也不会与 Pyruns 参数混淆。
+目标程序的参数放在 `-c "完整命令"` 的引号内，Pyruns 选项放在字符串外；多行脚本用
+`--stdin` 保存正文。脚本语法遵循实际 Shell：下文的 Bash 示例与 PowerShell/cmd 的
+变量、续行和标准输入写法不同，详见 `pyr exec --help` 或
+[跨平台差异](cli-guide.md#exec-platform-notes)。
 
 只预览计划、不创建 workspace/task 也不运行命令：
 

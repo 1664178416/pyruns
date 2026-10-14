@@ -171,6 +171,10 @@ For the legacy unquoted form `-c echo hello`, place Pyruns options before `-c`.
 Follow the calling shell's quoting rules to preserve variables and shell syntax. Use `--stdin`
 for complex or multiline scripts.
 
+Script syntax follows the selected shell: Windows PowerShell 5.1 does not support `&&`.
+Use a pipe or here-string for PowerShell multiline input; the redirects and heredocs below
+are Bash examples. Run `pyr exec --help` for platform notes, paths, and input examples.
+
 To record a complete existing script, run this in Bash:
 
 ```bash
@@ -192,7 +196,7 @@ BASH
 The complete UTF-8 script is saved with the task, so reruns use the captured text. `--stdin` must
 receive redirected input and cannot be combined with `-c`.
 
-Shell tasks preserve terminal colors through a cross-platform pseudoterminal: Linux and macOS use the system PTY, while Windows explicitly uses native ConPTY without creating a visible console window. SGR colors are stored and replayed; screen clearing, cursor positioning, and window-title controls are filtered. Pyruns falls back to ordinary stdout/stderr pipes only when terminal capture is unavailable.
+Shell tasks preserve terminal colors through a cross-platform pseudoterminal: Linux and macOS use the system PTY; Windows uses native ConPTY when a console is already attached. Without an attached Windows console, Pyruns uses hidden stdout/stderr pipes to avoid opening a console window; colors may be lost. Captured SGR colors are stored and replayed; screen clearing, cursor positioning, and window-title controls are filtered.
 
 `exec` always uses `<current-directory>/_pyruns_/_shell_`; it does not reuse a parent directory's shell workspace. The start banner and source state are written before command output is copied into the log. Source collection runs concurrently with the child process; stdout/stderr is continuously drained into a disk-backed buffer without sleeps or child-process blocking.
 

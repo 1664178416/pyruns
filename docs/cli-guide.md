@@ -204,6 +204,28 @@ pyr exec -c "python train.py --epochs 10" -n train -d
 调用端解析；反引号在 Bash 中执行命令替换，在 PowerShell 中用于转义，不是跨平台的
 脚本包裹符。复杂或多行命令使用 `--stdin`。
 
+### Windows、Linux 与 WSL 的差异 {#exec-platform-notes}
+
+Pyruns 的选项相同，脚本语法由实际执行的 Shell 决定。默认跟随调用端 Shell；Windows
+可以使用 PowerShell、cmd 或已安装的 Bash，Linux 也不一定使用 Bash。WSL 使用 Linux
+环境，Pyruns 不会把 Bash 脚本改写成 PowerShell/cmd 脚本。
+
+| 写法 | Bash | PowerShell | cmd |
+| --- | --- | --- | --- |
+| 读取环境变量 | `$NAME` | `$env:NAME` | `%NAME%` |
+| 将完整命令作为一个参数传给 `-c` | 单引号或双引号 | 单引号或双引号 | 双引号；单引号是普通字符 |
+| 行末续行符 | `\` | 反引号 | `^` |
+| 成功后执行下一条命令 | `&&` | PowerShell 7+ 支持 `&&`，Windows PowerShell 5.1 不支持 | `&&` |
+
+下文的 `< pipeline.sh` 和 heredoc 是 Bash 用法；PowerShell 使用文件管道或 here-string。
+路径和程序应在执行环境内可用，例如 Windows 的 `D:\data` 在 WSL 默认挂载下通常是
+`/mnt/d/data`。含空格的路径仍须按对应 Shell 的规则引用。
+
+多步脚本需自行控制遇错停止，否则前面失败、后面成功时，任务仍可能显示成功。Bash
+示例使用 `set -euo pipefail`；PowerShell 可用 `$ErrorActionPreference = 'Stop'` 控制
+cmdlet 错误，并在外部程序后检查 `$LASTEXITCODE`、非零时 `exit $LASTEXITCODE`；cmd
+需检查 `errorlevel` 并退出。Pyruns 按最终进程退出码判断任务结果。
+
 ### 通过标准输入提交多行脚本
 
 需要把长脚本的全部正文记录成一个任务时，推荐先保存为 `pipeline.sh`，然后在 Bash
