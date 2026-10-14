@@ -502,6 +502,7 @@ def _selected_run_record(
         "exit_code": value_at("exit_codes"),
         "source_state": value_at("source_states") or None,
         "environment": value_at("run_environments") or None,
+        "gpu_wait": (current_info.get("gpu_wait_runs", {}) or {}).get(str(run_index)),
         "record": value_at("records") or {},
         "track": value_at("tracks") or {},
         "log": (
@@ -599,6 +600,8 @@ def _task_record(
         "payload": _normalized_path(payload_path) if payload_path else None,
         "latest_log": _normalized_path(latest_log) if latest_log and os.path.isfile(latest_log) else None,
         "load_error": task.get("_load_error"),
+        "gpu_wait_rule": info.get("gpu_wait_rule", task.get("gpu_wait_rule")),
+        "gpu_wait": TaskManager._serialized_gpu_wait(info),
     }
     if detailed:
         command_argv = info.get("cmd", task.get("cmd"))
@@ -620,6 +623,7 @@ def _task_record(
                 "exit_codes": info.get("exit_codes", task.get("exit_codes", [])) or [],
                 "source_states": info.get("source_states", task.get("source_states", [])) or [],
                 "run_environments": info.get("run_environments", task.get("run_environments", [])) or [],
+                "gpu_wait_runs": info.get("gpu_wait_runs", {}) or {},
                 "records": info.get("records", task.get("records", [])) or [],
                 "tracks": info.get("tracks", task.get("tracks", [])) or [],
                 "env": info.get("env", task.get("env", {})) or {},
@@ -1171,6 +1175,7 @@ def _submit_and_wait(
     *,
     workers: int,
     detach: bool,
+    gpu_wait_rule: str | None = None,
 ) -> int:
     active = [task["name"] for task in tasks if str(task.get("status", "")) in _ACTIVE_STATUSES]
     if active:
@@ -1204,6 +1209,7 @@ def _submit_and_wait(
             names,
             expected_runs=expected_runs,
             max_workers=min(max(1, workers), len(tasks)),
+            **({"gpu_wait_rule": gpu_wait_rule} if gpu_wait_rule is not None else {}),
         )
     except SubmissionInterrupted as exc:
         if exc.result.status == "unresolved":
@@ -1559,6 +1565,8 @@ def cmd_exec(context: Any, args: Any) -> int:
             "env": env,
             "detach": bool(args.detach),
         }
+        if getattr(args, "gpu_wait", None) is not None:
+            payload["gpu_wait_rule"] = args.gpu_wait
         if context.json_output:
             _json_dump(payload)
         else:
@@ -1573,6 +1581,8 @@ def cmd_exec(context: Any, args: Any) -> int:
             print(f"Mode:       {payload['command_mode']}")
             print(f"Command:    {command_text}")
             print(f"Workdir:    {payload['workdir']}")
+            if payload.get("gpu_wait_rule") is not None:
+                print(f"GPU wait:   {payload['gpu_wait_rule']}")
             print("Result:     nothing was created or run")
         return 0
 
@@ -1595,6 +1605,7 @@ def cmd_exec(context: Any, args: Any) -> int:
                     shell_kind=shell_kind,
                     env=env,
                     script_path=source_script,
+                    gpu_wait_rule=getattr(args, "gpu_wait", None),
                 )
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
@@ -1640,6 +1651,7 @@ def cmd_run(context: Any, args: Any, manager: TaskManager, workspace: str) -> in
             tasks,
             workers=args.jobs,
             detach=bool(args.detach),
+            gpu_wait_rule=getattr(args, "gpu_wait", None),
         )
 
 
@@ -1672,6 +1684,8 @@ def cmd_run_dry_run(context: Any, args: Any, workspace: str) -> int:
         "jobs": min(args.jobs, len(configs)),
         "detach": bool(args.detach),
     }
+    if getattr(args, "gpu_wait", None) is not None:
+        payload["gpu_wait_rule"] = args.gpu_wait
     if context.json_output:
         _json_dump(payload)
     else:
@@ -1685,6 +1699,8 @@ def cmd_run_dry_run(context: Any, args: Any, workspace: str) -> int:
             else:
                 print(f"  {task['requested_name']} (a unique suffix will be added)")
         print(f"Concurrency: {payload['jobs']} job(s)")
+        if payload.get("gpu_wait_rule") is not None:
+            print(f"GPU wait:   {payload['gpu_wait_rule']}")
         print("Result:     nothing was created or run")
     return 0
 
@@ -1837,6 +1853,14 @@ def cmd_show(context: Any, args: Any, manager: TaskManager) -> int:
         return 0
     print(f"Name:       {record['name']}")
     print(f"Status:     {record['status']}")
+    if record.get("gpu_wait_rule") is not None:
+        print(f"GPU rule:   {record['gpu_wait_rule']}")
+    if record.get("gpu_wait"):
+        wait = record["gpu_wait"]
+        remaining = wait.get("remaining_seconds")
+        remaining_text = "unlimited" if remaining is None else f"{remaining:.0f}s"
+        print(f"GPU wait:   {wait.get('reason', 'waiting')}")
+        print(f"Wait time:  {wait.get('waited_seconds', 0):.0f}s; remaining {remaining_text}")
     print(f"Kind:       {record['kind']}")
     print(f"Pinned:     {'yes' if record['pinned'] else 'no'}")
     print(f"Created:    {record['created_at']}")
@@ -2285,9 +2309,8 @@ _SETTING_MINIMUMS: dict[str, float] = {
     "monitor_sidebar_width_pct": 1,
     "gpu_scheduler_gpus_per_task": 1,
     "gpu_scheduler_min_free_memory_gb": 0,
-    "gpu_scheduler_stable_seconds": 1,
-    "gpu_scheduler_max_wait_seconds": 1,
-    "gpu_scheduler_max_tasks_per_gpu": 1,
+    "gpu_scheduler_stable_seconds": 0,
+    "gpu_scheduler_max_wait_seconds": 0,
 }
 _SETTING_MAXIMUMS: dict[str, float] = {
     "monitor_chunk_size": MAX_MONITOR_CHUNK_SIZE,
@@ -2296,8 +2319,7 @@ _SETTING_MAXIMUMS: dict[str, float] = {
     "monitor_sidebar_width_pct": 100,
 }
 _SETTING_PERCENTAGES = {
-    "gpu_scheduler_memory_used_pct",
-    "gpu_scheduler_compute_used_pct",
+    "gpu_scheduler_min_idle_pct",
 }
 
 

@@ -2185,7 +2185,7 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
     : null
   const waitedSeconds = Math.max(0, Number(wait?.waited_seconds || 0))
   const maxWaitSeconds = Math.max(0, Number(wait?.max_wait_seconds || 0))
-  const serverRemainingSeconds = Number(wait?.remaining_seconds)
+  const serverRemainingSeconds = wait?.remaining_seconds == null ? NaN : Number(wait.remaining_seconds)
   const remainingSeconds = Number.isFinite(serverRemainingSeconds)
     ? Math.max(0, serverRemainingSeconds)
     : maxWaitSeconds > 0

@@ -307,6 +307,7 @@ def submit_cli_tasks(
     expected_runs: dict[str, int],
     max_workers: int = 1,
     startup_timeout: float | None = None,
+    gpu_wait_rule: str | None = None,
 ) -> SubmissionResult:
     """Start a hidden runner and wait for its exact ownership receipt."""
 
@@ -363,6 +364,7 @@ def submit_cli_tasks(
                 token=submission_token,
                 names=names,
                 run_indices=run_indices,
+                gpu_wait_rule=gpu_wait_rule,
             )
         except (OSError, ValueError):
             remove_control_file(payload_file)

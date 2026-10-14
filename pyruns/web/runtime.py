@@ -105,12 +105,10 @@ _GPU_SCHEDULER_PAYLOAD_KEYS = {
     "selection_mode": "gpu_scheduler_selection_mode",
     "gpus_per_task": "gpu_scheduler_gpus_per_task",
     "device_ids": "gpu_scheduler_device_ids",
-    "memory_used_pct": "gpu_scheduler_memory_used_pct",
     "min_free_memory_gb": "gpu_scheduler_min_free_memory_gb",
-    "compute_used_pct": "gpu_scheduler_compute_used_pct",
+    "min_idle_pct": "gpu_scheduler_min_idle_pct",
     "stable_seconds": "gpu_scheduler_stable_seconds",
     "max_wait_seconds": "gpu_scheduler_max_wait_seconds",
-    "max_tasks_per_gpu": "gpu_scheduler_max_tasks_per_gpu",
     "respect_cuda_visible_devices": "gpu_scheduler_respect_cuda_visible_devices",
     "require_same_gpu_model": "gpu_scheduler_require_same_gpu_model",
 }
@@ -281,6 +279,9 @@ def _coerce_gpu_device_ids_payload(value: Any) -> List[int]:
 
 
 def _clean_gpu_scheduler_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(payload)
+    if "min_idle_pct" not in payload and "compute_used_pct" in payload:
+        payload["min_idle_pct"] = 100.0 - min(100.0, _coerce_float_payload(payload["compute_used_pct"], 30.0))
     clean: Dict[str, Any] = {}
     for key, setting_key in _GPU_SCHEDULER_PAYLOAD_KEYS.items():
         if key not in payload:
@@ -298,24 +299,14 @@ def _clean_gpu_scheduler_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             clean[setting_key] = _coerce_gpu_device_ids_payload(value)
         elif key == "gpus_per_task":
             clean[setting_key] = _coerce_int_payload(value, 1, minimum=1)
-        elif key == "max_tasks_per_gpu":
-            clean[setting_key] = _coerce_int_payload(
-                value,
-                _DEFAULT_GPU_SCHEDULER_CONFIG.max_tasks_per_gpu,
-                minimum=1,
-            )
         elif key == "max_wait_seconds":
             clean[setting_key] = _coerce_float_payload(
                 value,
                 _DEFAULT_GPU_SCHEDULER_CONFIG.max_wait_seconds,
-                minimum=1.0,
+                minimum=0.0,
             )
-        elif key in {"memory_used_pct", "compute_used_pct"}:
-            default = (
-                _DEFAULT_GPU_SCHEDULER_CONFIG.memory_used_pct
-                if key == "memory_used_pct"
-                else _DEFAULT_GPU_SCHEDULER_CONFIG.compute_used_pct
-            )
+        elif key == "min_idle_pct":
+            default = 100.0 - _DEFAULT_GPU_SCHEDULER_CONFIG.compute_used_pct
             clean[setting_key] = min(100.0, _coerce_float_payload(value, default, minimum=0.0))
         elif key == "min_free_memory_gb":
             clean[setting_key] = _coerce_float_payload(
@@ -327,7 +318,7 @@ def _clean_gpu_scheduler_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             clean[setting_key] = _coerce_float_payload(
                 value,
                 _DEFAULT_GPU_SCHEDULER_CONFIG.stable_seconds,
-                minimum=1.0,
+                minimum=0.0,
             )
         else:
             clean[setting_key] = _coerce_float_payload(value, 0.0, minimum=0.0)
@@ -828,14 +819,12 @@ class PyrunsRuntime:
                 "enabled": gpu_config.enabled,
                 "task_mode": "multi" if gpu_config.task_mode == "multi" else "single",
                 "selection_mode": "specified" if gpu_config.uses_specified_devices else "auto",
-                "gpus_per_task": gpu_config.gpus_per_task,
+                "gpus_per_task": gpu_config.required_gpu_count,
                 "device_ids": list(gpu_config.device_ids),
-                "memory_used_pct": gpu_config.memory_used_pct,
                 "min_free_memory_gb": gpu_config.min_free_memory_gb,
-                "compute_used_pct": gpu_config.compute_used_pct,
+                "min_idle_pct": 100.0 - gpu_config.compute_used_pct,
                 "stable_seconds": gpu_config.stable_seconds,
                 "max_wait_seconds": gpu_config.max_wait_seconds,
-                "max_tasks_per_gpu": gpu_config.max_tasks_per_gpu,
                 "respect_cuda_visible_devices": gpu_config.respect_cuda_visible_devices,
                 "require_same_gpu_model": gpu_config.require_same_gpu_model,
             },

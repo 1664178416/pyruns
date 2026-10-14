@@ -773,6 +773,7 @@ class TaskGenerator:
         shell_kind: str | None = None,
         env: Dict[str, str] | None = None,
         script_path: str | None = None,
+        gpu_wait_rule: str | None = None,
     ) -> Dict[str, Any]:
         """Create a single shell task backed by one shell-native payload file."""
 
@@ -791,6 +792,10 @@ class TaskGenerator:
             metadata['shell_kind'] = str(shell_kind)
         if script_path:
             metadata['script'] = os.path.abspath(script_path)
+        if gpu_wait_rule is not None:
+            from pyruns.utils.gpu_wait import parse_gpu_wait_rule
+
+            metadata['gpu_wait_rule'] = parse_gpu_wait_rule(gpu_wait_rule).canonical
 
         return self.create_task(
             name_prefix,

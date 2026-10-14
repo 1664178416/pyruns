@@ -1050,9 +1050,11 @@ def test_react_runtime_panel_exposes_gpu_scheduler_settings():
     assert "Auto pick" in runtime_panel
     assert "Specific indices" in runtime_panel
     assert "GPU indices" in runtime_panel
-    assert "Maximum memory use" in runtime_panel
+    assert "Maximum memory use" not in runtime_panel
+    assert "Tasks per GPU" not in runtime_panel
+    assert "GPUs required" in runtime_panel
     assert "Minimum free memory" in runtime_panel
-    assert "Maximum compute use" in runtime_panel
+    assert "Minimum GPU idle" in runtime_panel
     assert "Maximum wait" in runtime_panel
     assert "useState('40')" in runtime_panel
     assert "useState('15')" in runtime_panel
@@ -1072,9 +1074,8 @@ def test_react_runtime_panel_exposes_gpu_scheduler_settings():
     assert "min={1}" in runtime_panel
     assert "selection_mode: gpuSelectionMode" in runtime_panel
     assert "gpus_per_task: requestedGpuCount" in runtime_panel
-    assert "memory_used_pct: boundedNumberInputValue(gpuMemoryUsedPct, 40, 0, 100)" in runtime_panel
-    assert "compute_used_pct: boundedNumberInputValue(gpuComputeUsedPct, 30, 0, 100)" in runtime_panel
-    assert "stable_seconds: numberInputValue(gpuStableSeconds, 15, 1)" in runtime_panel
+    assert "min_idle_pct: boundedNumberInputValue(gpuMinIdlePct, 70, 0, 100)" in runtime_panel
+    assert "stable_seconds: numberInputValue(gpuStableSeconds, 15, 0)" in runtime_panel
     assert "max_wait_seconds: gpuMaxWaitHours * 3600" in runtime_panel
     assert "require_same_gpu_model: gpuRequireSameModel" in runtime_panel
     assert "Require the same model for multi-GPU tasks" in runtime_panel

@@ -69,12 +69,10 @@ SETTINGS_DEFAULTS: Dict[str, Any] = {
     "gpu_scheduler_selection_mode": "auto",
     "gpu_scheduler_gpus_per_task": 1,
     "gpu_scheduler_device_ids": [],
-    "gpu_scheduler_memory_used_pct": 40,
     "gpu_scheduler_min_free_memory_gb": 40,
-    "gpu_scheduler_compute_used_pct": 30,
+    "gpu_scheduler_min_idle_pct": 70,
     "gpu_scheduler_stable_seconds": 15,
     "gpu_scheduler_max_wait_seconds": 172800,
-    "gpu_scheduler_max_tasks_per_gpu": 1,
     "gpu_scheduler_respect_cuda_visible_devices": True,
     "gpu_scheduler_require_same_gpu_model": False,
 }
@@ -117,12 +115,10 @@ gpu_scheduler_task_mode: {SETTINGS_DEFAULTS.get("gpu_scheduler_task_mode")}     
 gpu_scheduler_selection_mode: {SETTINGS_DEFAULTS.get("gpu_scheduler_selection_mode")} # auto | specified
 gpu_scheduler_gpus_per_task: {SETTINGS_DEFAULTS.get("gpu_scheduler_gpus_per_task")}  # used when task_mode is multi
 gpu_scheduler_device_ids: []             # auto mode: pool; specified mode: exact GPU IDs
-gpu_scheduler_memory_used_pct: {SETTINGS_DEFAULTS.get("gpu_scheduler_memory_used_pct")}      # eligible when memory used is below this percent
 gpu_scheduler_min_free_memory_gb: {SETTINGS_DEFAULTS.get("gpu_scheduler_min_free_memory_gb")} # eligible when free memory is at least this many GiB
-gpu_scheduler_compute_used_pct: {SETTINGS_DEFAULTS.get("gpu_scheduler_compute_used_pct")}     # eligible when GPU compute is below this percent
+gpu_scheduler_min_idle_pct: {SETTINGS_DEFAULTS.get("gpu_scheduler_min_idle_pct")}     # minimum GPU idle percent (100 - utilization)
 gpu_scheduler_stable_seconds: {SETTINGS_DEFAULTS.get("gpu_scheduler_stable_seconds")}         # limits must stay eligible for this long
 gpu_scheduler_max_wait_seconds: {SETTINGS_DEFAULTS.get("gpu_scheduler_max_wait_seconds")}     # default 48h
-gpu_scheduler_max_tasks_per_gpu: {SETTINGS_DEFAULTS.get("gpu_scheduler_max_tasks_per_gpu")}
 gpu_scheduler_respect_cuda_visible_devices: {SETTINGS_DEFAULTS.get("gpu_scheduler_respect_cuda_visible_devices")}
 gpu_scheduler_require_same_gpu_model: {SETTINGS_DEFAULTS.get("gpu_scheduler_require_same_gpu_model")}
 
@@ -380,6 +376,13 @@ def _parse_settings_mapping(
         return {}
     if not isinstance(data, dict):
         raise ValueError(f"Settings file root must be a mapping: {path}")
+    if "gpu_scheduler_min_idle_pct" not in data and "gpu_scheduler_compute_used_pct" in data:
+        try:
+            used = float(data["gpu_scheduler_compute_used_pct"])
+        except (TypeError, ValueError):
+            used = 30.0
+        if math.isfinite(used):
+            data["gpu_scheduler_min_idle_pct"] = min(100.0, max(0.0, 100.0 - used))
     return data
 
 

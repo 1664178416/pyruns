@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyruns.utils.file_io import read_bounded_bytes, regular_file_opener
+from pyruns.utils.gpu_wait import parse_gpu_wait_rule
 
 
 SCHEMA_VERSION = 2
@@ -42,6 +43,7 @@ class SubmissionReceipt:
 class SubmissionPayload:
     names: tuple[str, ...]
     run_indices: tuple[int, ...]
+    gpu_wait_rule: str | None = None
 
 
 def validate_submission_token(token: str) -> str:
@@ -301,6 +303,7 @@ def write_submission_payload(
     token: str,
     names: list[str] | tuple[str, ...],
     run_indices: list[int] | tuple[int, ...],
+    gpu_wait_rule: str | None = None,
 ) -> None:
     """Write one bounded, token-bound task submission payload."""
 
@@ -328,6 +331,8 @@ def write_submission_payload(
             for name, run_index in zip(normalized_names, normalized_run_indices, strict=True)
         ],
     }
+    if gpu_wait_rule is not None:
+        payload["gpu_wait_rule"] = parse_gpu_wait_rule(gpu_wait_rule).canonical
     encoded = json.dumps(
         payload,
         ensure_ascii=True,
@@ -358,7 +363,10 @@ def read_submission_payload(path: str, *, token: str) -> SubmissionPayload:
         raise ValueError("invalid submission payload") from exc
     if (
         not isinstance(payload, dict)
-        or set(payload) != {"schema_version", "submission_token", "submissions"}
+        or set(payload) not in (
+            {"schema_version", "submission_token", "submissions"},
+            {"schema_version", "submission_token", "submissions", "gpu_wait_rule"},
+        )
         or type(payload.get("schema_version")) is not int
         or payload.get("schema_version") != SCHEMA_VERSION
         or payload.get("submission_token") != expected_token
@@ -384,7 +392,10 @@ def read_submission_payload(path: str, *, token: str) -> SubmissionPayload:
         run_indices.append(run_index)
     if not names or len(names) != len(set(names)):
         raise ValueError("invalid submission payload")
-    return SubmissionPayload(tuple(names), tuple(run_indices))
+    rule = None
+    if "gpu_wait_rule" in payload:
+        rule = parse_gpu_wait_rule(payload["gpu_wait_rule"]).canonical
+    return SubmissionPayload(tuple(names), tuple(run_indices), rule)
 
 
 def _is_string_list(value: Any) -> bool:

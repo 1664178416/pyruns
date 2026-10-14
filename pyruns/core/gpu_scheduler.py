@@ -9,6 +9,7 @@ import threading
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from pyruns.core.system_metrics import SystemMonitor
+from pyruns.utils.gpu_wait import parse_gpu_wait_rule
 
 
 CUDA_VISIBLE_DEVICES = "CUDA_VISIBLE_DEVICES"
@@ -120,7 +121,7 @@ class GpuSchedulerConfig:
     selection_mode: str = GPU_SELECTION_AUTO
     gpus_per_task: int = 1
     device_ids: List[int] = field(default_factory=list)
-    memory_used_pct: float = 40.0
+    memory_used_pct: float = 100.0
     min_free_memory_gb: float = 40.0
     compute_used_pct: float = 30.0
     stable_seconds: float = 15.0
@@ -130,7 +131,7 @@ class GpuSchedulerConfig:
     require_same_gpu_model: bool = False
 
     def __post_init__(self) -> None:
-        self.stable_seconds = max(1.0, _coerce_float(self.stable_seconds, 15.0))
+        self.stable_seconds = max(0.0, _coerce_float(self.stable_seconds, 15.0))
         self.selection_mode = _coerce_selection_mode(self.selection_mode)
 
     @classmethod
@@ -143,14 +144,34 @@ class GpuSchedulerConfig:
             selection_mode=_coerce_selection_mode(settings.get("gpu_scheduler_selection_mode", GPU_SELECTION_AUTO)),
             gpus_per_task=max(1, _coerce_int(settings.get("gpu_scheduler_gpus_per_task"), 1)),
             device_ids=_coerce_device_ids(settings.get("gpu_scheduler_device_ids", [])),
-            memory_used_pct=_coerce_pct(settings.get("gpu_scheduler_memory_used_pct"), 40.0),
+            # Admission uses concrete free GiB, not the retired memory-percent limit.
+            memory_used_pct=100.0,
             min_free_memory_gb=max(0.0, _coerce_float(settings.get("gpu_scheduler_min_free_memory_gb"), 40.0)),
-            compute_used_pct=_coerce_pct(settings.get("gpu_scheduler_compute_used_pct"), 30.0),
-            stable_seconds=max(1.0, _coerce_float(settings.get("gpu_scheduler_stable_seconds"), 15.0)),
-            max_wait_seconds=max(1.0, _coerce_float(settings.get("gpu_scheduler_max_wait_seconds"), 172800.0)),
-            max_tasks_per_gpu=max(1, _coerce_int(settings.get("gpu_scheduler_max_tasks_per_gpu"), 1)),
+            compute_used_pct=(
+                100.0 - _coerce_pct(settings.get("gpu_scheduler_min_idle_pct"), 70.0)
+                if "gpu_scheduler_min_idle_pct" in settings
+                else _coerce_pct(settings.get("gpu_scheduler_compute_used_pct"), 30.0)
+            ),
+            stable_seconds=max(0.0, _coerce_float(settings.get("gpu_scheduler_stable_seconds"), 15.0)),
+            max_wait_seconds=max(0.0, _coerce_float(settings.get("gpu_scheduler_max_wait_seconds"), 172800.0)),
+            max_tasks_per_gpu=1,
             respect_cuda_visible_devices=_coerce_bool(settings.get("gpu_scheduler_respect_cuda_visible_devices", True), True),
             require_same_gpu_model=_coerce_bool(settings.get("gpu_scheduler_require_same_gpu_model", False), False),
+        )
+
+    @classmethod
+    def from_wait_rule(cls, value: str) -> "GpuSchedulerConfig":
+        rule = parse_gpu_wait_rule(value)
+        return cls(
+            enabled=rule.enabled,
+            task_mode="multi" if rule.gpu_count > 1 else "single",
+            selection_mode=GPU_SELECTION_SPECIFIED if rule.device_ids else GPU_SELECTION_AUTO,
+            gpus_per_task=rule.gpu_count,
+            device_ids=list(rule.device_ids),
+            min_free_memory_gb=rule.min_free_memory_gb,
+            compute_used_pct=100.0 - rule.min_idle_pct,
+            stable_seconds=rule.stable_seconds,
+            max_wait_seconds=rule.max_wait_seconds,
         )
 
     @property
@@ -216,8 +237,8 @@ class GpuResourceScheduler:
         self.clock = clock or time.monotonic
         self._snapshot: List[GpuDevice] = []
         self._snapshot_at: float = -10**12
-        self._eligible_since: Dict[str, float] = {}
-        self._eligible_last_seen: Dict[str, float] = {}
+        self._eligible_since: Dict[tuple[Any, ...], float] = {}
+        self._eligible_last_seen: Dict[tuple[Any, ...], float] = {}
         self._reservations: Dict[str, List[int]] = {}
         self._lock = threading.RLock()
 
@@ -265,12 +286,16 @@ class GpuResourceScheduler:
             now = self.clock()
             env = {str(k): str(v) for k, v in (task_env or {}).items() if str(k)}
             snapshot = self.snapshot(config, now=now) if refresh_snapshot else list(self._snapshot)
+            if not refresh_snapshot:
+                self._refresh_eligible_since(config, self._snapshot_at)
             device_decisions = self._device_decisions(config, now)
             waited = max(0.0, now - queued_since) if queued_since is not None else 0.0
 
             existing_cuda = str(env.get(CUDA_VISIBLE_DEVICES, "") or "").strip()
             if existing_cuda and not any(part.strip() for part in existing_cuda.split(",")):
                 existing_cuda = ""
+            if config.respect_cuda_visible_devices and CUDA_VISIBLE_DEVICES in env and not existing_cuda:
+                return self._decision(None, "CUDA_VISIBLE_DEVICES exposes no GPUs", snapshot, device_decisions)
             requested_tokens, parse_error = _parse_cuda_visible_devices(existing_cuda) if existing_cuda else ([], "")
             if existing_cuda and config.respect_cuda_visible_devices and parse_error:
                 return self._decision(None, parse_error, snapshot, device_decisions)
@@ -285,6 +310,22 @@ class GpuResourceScheduler:
                 required_ids = requested_ids
                 visible = existing_cuda
                 inject_cuda = False
+                if config.uses_specified_devices:
+                    required_ids, reason = self._configured_fixed_ids(config)
+                    if not required_ids:
+                        return self._decision(None, reason, snapshot, device_decisions)
+                    missing = [gpu_id for gpu_id in required_ids if gpu_id not in requested_ids]
+                    if missing:
+                        return self._decision(
+                            None, f"GPU {missing[0]} outside CUDA_VISIBLE_DEVICES", snapshot, device_decisions,
+                        )
+                elif len(requested_ids) > config.required_gpu_count:
+                    required_ids, reason = self._select_available_group(config, now, allowed_ids=set(requested_ids))
+                    if not required_ids:
+                        return self._decision(None, reason, snapshot, device_decisions)
+                tokens_by_id = dict(zip(requested_ids, requested_tokens, strict=True))
+                visible = ",".join(tokens_by_id[gpu_id] for gpu_id in required_ids)
+                inject_cuda = visible != existing_cuda
             elif config.uses_specified_devices:
                 required_ids, reason = self._configured_fixed_ids(config)
                 if not required_ids:
@@ -338,9 +379,10 @@ class GpuResourceScheduler:
 
     def _refresh_eligible_since(self, config: GpuSchedulerConfig, now: float) -> None:
         candidates = self._candidate_devices(config)
-        visible_keys = {_gpu_stability_key(gpu) for gpu in candidates}
+        limits = self._stability_limits(config)
+        visible_keys = {(*limits, _gpu_stability_key(gpu)) for gpu in candidates}
         for gpu in candidates:
-            key = _gpu_stability_key(gpu)
+            key = (*limits, _gpu_stability_key(gpu))
             if self._meets_static_limits(gpu, config):
                 last_seen = self._eligible_last_seen.get(key)
                 # A long sampling gap means we did not observe every second in the stable window.
@@ -357,11 +399,18 @@ class GpuResourceScheduler:
                 self._eligible_since.pop(key, None)
                 self._eligible_last_seen.pop(key, None)
         for key in list(self._eligible_since):
-            if key not in visible_keys:
+            if key[:-1] == limits and key not in visible_keys:
                 self._eligible_since.pop(key, None)
         for key in list(self._eligible_last_seen):
-            if key not in visible_keys:
+            if key[:-1] == limits and key not in visible_keys:
                 self._eligible_last_seen.pop(key, None)
+
+    @staticmethod
+    def _stability_limits(config: GpuSchedulerConfig) -> tuple[Any, ...]:
+        return (
+            config.memory_used_pct, config.min_free_memory_gb,
+            config.compute_used_pct, tuple(config.device_ids),
+        )
 
     def _candidate_devices(self, config: GpuSchedulerConfig) -> List[GpuDevice]:
         allowed = set(config.device_ids or [])
@@ -374,11 +423,15 @@ class GpuResourceScheduler:
         ))
         return devices
 
-    def _select_available_group(self, config: GpuSchedulerConfig, now: float) -> tuple[List[int], str]:
+    def _select_available_group(
+        self, config: GpuSchedulerConfig, now: float, *, allowed_ids: set[int] | None = None,
+    ) -> tuple[List[int], str]:
         required_count = config.required_gpu_count
         eligible: List[GpuDevice] = []
         blocked: List[str] = []
         for gpu in self._candidate_devices(config):
+            if allowed_ids is not None and gpu.index not in allowed_ids:
+                continue
             reason = self._blocked_reason(gpu, config, now)
             if reason:
                 blocked.append(reason)
@@ -505,8 +558,11 @@ class GpuResourceScheduler:
         compute_util_pct = gpu.compute_util_pct
         assert compute_util_pct is not None
         if compute_util_pct > config.compute_used_pct:
-            return f"GPU {gpu.index} compute {compute_util_pct:.0f}% > {config.compute_used_pct:g}%"
-        since = self._eligible_since.get(_gpu_stability_key(gpu))
+            return (
+                f"GPU {gpu.index} idle {100 - compute_util_pct:.0f}% < {100 - config.compute_used_pct:g}% "
+                f"(compute {compute_util_pct:.0f}% > {config.compute_used_pct:g}%)"
+            )
+        since = self._eligible_since.get((*self._stability_limits(config), _gpu_stability_key(gpu)))
         if since is None or now - since < config.stable_seconds:
             observed = 0.0 if since is None else max(0.0, now - since)
             return f"GPU {gpu.index} stabilizing {observed:.1f}/{config.stable_seconds:g}s"
@@ -567,8 +623,7 @@ def format_gpu_queue_block(title: str, lines: List[str]) -> str:
 
 def format_gpu_rule(config: GpuSchedulerConfig) -> str:
     rule = (
-        f"Rule: memory used <= {config.memory_used_pct:g}%; "
-        f"compute <= {config.compute_used_pct:g}%; "
+        f"Rule: GPU idle >= {100 - config.compute_used_pct:g}%; "
         f"free memory >= {config.min_free_memory_gb:g} GiB; "
         f"stable for {config.stable_seconds:g}s"
     )

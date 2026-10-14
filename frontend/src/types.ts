@@ -20,7 +20,7 @@ export interface GPUWaitStatus {
   started_at?: number | string | null
   deadline_at?: number | string | null
   waited_seconds?: number
-  remaining_seconds?: number
+  remaining_seconds?: number | null
   max_wait_seconds?: number
   requested_gpu_count?: number
   eligible_gpu_count?: number
@@ -179,12 +179,10 @@ export interface GpuSchedulerSettings {
   selection_mode: 'auto' | 'specified'
   gpus_per_task: number
   device_ids: number[]
-  memory_used_pct: number
   min_free_memory_gb: number
-  compute_used_pct: number
+  min_idle_pct: number
   stable_seconds: number
   max_wait_seconds: number
-  max_tasks_per_gpu: number
   respect_cuda_visible_devices: boolean
   require_same_gpu_model: boolean
 }

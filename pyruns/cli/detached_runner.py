@@ -283,6 +283,7 @@ def main() -> int:
                 [name],
                 max_workers=args.jobs,
                 expected_run_indices={name: expected_run_index},
+                **({"gpu_wait_rule": payload.gpu_wait_rule} if payload.gpu_wait_rule is not None else {}),
             )
             if claimed_now != [name]:
                 status = "partial" if claimed else "rejected"

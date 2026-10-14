@@ -2120,19 +2120,18 @@ def test_runtime_update_gpu_scheduler_sanitizes_limits_with_scheduler_defaults(t
     payload = response.json()["gpu_scheduler"]
     assert payload["selection_mode"] == "auto"
     assert payload["device_ids"] == [0, 2]
-    assert payload["memory_used_pct"] == 100.0
-    assert payload["compute_used_pct"] == 0.0
+    assert payload["min_idle_pct"] == 100.0
     assert payload["min_free_memory_gb"] == 40.0
     assert payload["stable_seconds"] == 15.0
     assert payload["max_wait_seconds"] == 172800.0
-    assert payload["max_tasks_per_gpu"] == 1
+    assert not {"memory_used_pct", "compute_used_pct", "max_tasks_per_gpu"}.intersection(payload)
     assert payload["require_same_gpu_model"] is True
     assert "sample_interval_seconds" not in payload
     settings_text = (workspace.parent / "_pyruns_settings.yaml").read_text(encoding="utf-8")
     assert "gpu_scheduler_sample_interval_seconds" not in settings_text
 
 
-def test_runtime_update_gpu_scheduler_clamps_stable_seconds_minimum(tmp_path, monkeypatch):
+def test_runtime_update_gpu_scheduler_allows_immediate_admission(tmp_path, monkeypatch):
     workspace = _make_workspace(tmp_path, "main")
     runtime = _build_runtime(workspace)
     monkeypatch.setattr(runtime, "list_conda_envs", _unavailable_conda_envs)
@@ -2144,9 +2143,9 @@ def test_runtime_update_gpu_scheduler_clamps_stable_seconds_minimum(tmp_path, mo
     )
 
     assert response.status_code == 200
-    assert response.json()["gpu_scheduler"]["stable_seconds"] == 1.0
+    assert response.json()["gpu_scheduler"]["stable_seconds"] == 0.0
     settings_text = (workspace.parent / "_pyruns_settings.yaml").read_text(encoding="utf-8")
-    assert "gpu_scheduler_stable_seconds: 1.0" in settings_text
+    assert "gpu_scheduler_stable_seconds: 0.0" in settings_text
 
 
 def test_runtime_update_gpu_scheduler_rejects_non_finite_numeric_values(tmp_path, monkeypatch):
@@ -2173,12 +2172,11 @@ def test_runtime_update_gpu_scheduler_rejects_non_finite_numeric_values(tmp_path
     assert response.status_code == 200
     payload = response.json()["gpu_scheduler"]
     assert payload["gpus_per_task"] == 1
-    assert payload["memory_used_pct"] == 40.0
     assert payload["min_free_memory_gb"] == 40.0
-    assert payload["compute_used_pct"] == 30.0
+    assert payload["min_idle_pct"] == 70.0
     assert payload["stable_seconds"] == 15.0
     assert payload["max_wait_seconds"] == 172800.0
-    assert payload["max_tasks_per_gpu"] == 1
+    assert not {"memory_used_pct", "compute_used_pct", "max_tasks_per_gpu"}.intersection(payload)
 
 
 def test_runtime_get_task_logs_prefers_queue_log_for_queued_tasks(tmp_path):

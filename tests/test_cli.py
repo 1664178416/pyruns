@@ -65,6 +65,54 @@ def _source_cli(*args: str) -> list[str]:
     return [sys.executable, "-c", code]
 
 
+@pytest.mark.parametrize("rule", ["2-20-70-15-2", "2-20GiB-70%-15SEC-2HR"])
+def test_exec_gpu_wait_preview_uses_fixed_ui_units_without_creating_files(tmp_path, rule):
+    result = _run_cli(
+        tmp_path, "exec", "--gpu-wait", rule, "--dry-run", "--json", "--stdin",
+        input_text="echo preview\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["gpu_wait_rule"] == "2-20-70-15-2"
+    assert not (tmp_path / "_pyruns_").exists()
+
+
+def test_exec_rejects_invalid_gpu_rule_before_creating_workspace(tmp_path):
+    result = _run_cli(tmp_path, "exec", "--gpu-wait", "2-20-70--2", "-c", "echo unused")
+    assert result.returncode == 2
+    assert "TIMEOUT_HOURS" in result.stderr
+    assert not (tmp_path / "_pyruns_").exists()
+
+
+def test_exec_gpu_wait_stdin_detaches_and_reruns_saved_script_with_override(tmp_path):
+    script = "echo gpu-wait-saved-script\n"
+    result = _run_cli(
+        tmp_path, "exec", "-n", "gpu-script", "-d", "--gpu-wait",
+        "device=2147483647-8-70-0-0", "--stdin", input_text=script,
+    )
+    assert result.returncode == 0, result.stderr
+    try:
+        shown = _run_cli(tmp_path, "-w", "shell", "show", "gpu-script", "--json")
+        record = json.loads(shown.stdout)
+        assert record["status"] == "queued"
+        assert record["gpu_wait_rule"] == "device=2147483647-8-70-0-0"
+        assert record["gpu_wait"]["remaining_seconds"] is None
+        assert Path(record["payload"]).read_text(encoding="utf-8") == script
+    finally:
+        stopped = _run_cli(tmp_path, "-w", "shell", "stop", "gpu-script", timeout=30)
+        assert stopped.returncode == 0, stopped.stderr
+    rerun = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script", "--gpu-wait", "OFF")
+    assert rerun.returncode == 0, rerun.stderr
+    assert "gpu-wait-saved-script" in rerun.stdout
+    shown = _run_cli(tmp_path, "-w", "shell", "show", "gpu-script", "--json")
+    record = json.loads(shown.stdout)
+    assert record["status"] == "completed"
+    assert record["gpu_wait_rule"] == "off"
+    assert record["gpu_wait_runs"][str(record["run_index"])]["enabled"] is False
+    again = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script")
+    assert again.returncode == 0, again.stderr
+    assert "gpu-wait-saved-script" in again.stdout
+
+
 def test_cli_app_module_runs_without_duplicate_import_warning():
     result = subprocess.run(
         [sys.executable, "-m", "pyruns.cli.app", "--version"],
@@ -257,7 +305,10 @@ def test_official_entrypoints_render_their_own_complete_help(
     assert f"{program} exec -nt pipeline -d --stdin < pipeline.sh" in command_help.stdout
     assert "Exact argv (recommended for Python and ordinary programs):" in command_help.stdout
     assert "Reruns read the original script path again" in command_help.stdout
-    assert "Shell expression (only for pipes" in command_help.stdout
+    assert "Quoted shell command (-c; also supports pipes" in command_help.stdout
+    assert "--gpu-wait COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS" in command_help.stdout
+    assert "GPU idle percent = 100 - reported GPU utilization" in command_help.stdout
+    assert "timeout 0 waits indefinitely" in command_help.stdout
     assert "Each following token is one program argument" in command_help.stdout
     assert "-c COMMAND_STRING" in command_help.stdout
     assert "--shell" not in command_help.stdout
@@ -3833,9 +3884,9 @@ def test_config_rejects_non_finite_numbers(tmp_path, key, value):
         ("monitor_scrollback", "1000001"),
         ("monitor_line_height", "2.5001"),
         ("shell_mode", "nonsense"),
-        ("gpu_scheduler_memory_used_pct", "101"),
-        ("gpu_scheduler_stable_seconds", "0"),
-        ("gpu_scheduler_max_wait_seconds", "0"),
+        ("gpu_scheduler_min_idle_pct", "101"),
+        ("gpu_scheduler_stable_seconds", "-1"),
+        ("gpu_scheduler_max_wait_seconds", "-1"),
     ],
 )
 def test_config_rejects_out_of_range_and_unknown_choice_values(tmp_path, key, value):

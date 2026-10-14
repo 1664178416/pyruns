@@ -148,7 +148,8 @@ pyr exec -n smoke -- python -V       # 精确名称 smoke
 
 ### 精确 argv 模式
 
-默认使用 `--` 后的参数向量。它最适合普通程序调用，也最适合自动化：
+需要严格保留普通程序的独立参数时，使用 `--` 后的参数向量；短命令也可用 `-c`，
+需要记录完整多行脚本的自动化或 AI agent 推荐使用 `--stdin`：
 
 ```bash
 pyr exec --name smoke -- python -V
@@ -197,14 +198,20 @@ pyr -w shell log setup
 
 ### Shell command string：`-c`
 
-`--` 只是标准参数分隔符。只有需要管道、重定向、变量展开、通配符或 `&&` 等 shell 语法时，才改用与 `sh -c` 习惯一致的 `-c` / `--command`：
+短命令和管道、重定向、变量展开、通配符或 `&&` 等 Shell 表达式，可使用与 `sh -c`
+习惯一致的 `-c` / `--command`：
 
 ```bash
 pyr exec --name report -c "python eval.py > metrics.txt"
 pyr exec --name pipeline -c "python preprocess.py && python train.py | tee train.log"
 ```
 
-`-c` 会消费并合并后续 command text，因此 `-c echo hello` 会作为 `echo hello` 执行。表达式含 `;`、`|`、重定向或变量时，通常仍要按调用端 shell 的规则引用整段，否则调用端会在 Pyruns 启动前先拆分它。表达式由工作区解析到的 shell 执行，引用规则和可用命令可能因 Bash、PowerShell 与 cmd.exe 而不同。普通程序或脚本文件不需要这些能力时，使用 `--` 后的精确 argv。
+`-c` 会消费并合并后续 command text，因此 `-c echo hello` 会作为 `echo hello` 执行。
+Pyruns 的选项应放在 `-c` 前。表达式含 `;`、`|`、重定向或变量时，要按调用端 Shell
+的规则引用整段，否则调用端会在 Pyruns 启动前先拆分它。表达式由工作区解析到的 Shell
+执行，引用规则和可用命令可能因 Bash、PowerShell 与 cmd.exe 而不同。单引号和双引号由
+调用端解析；反引号在 Bash 中执行命令替换，在 PowerShell 中用于转义，不是跨平台的
+脚本包裹符。复杂或多行命令使用 `--stdin`。
 
 ### 通过标准输入提交多行脚本
 
@@ -337,6 +344,46 @@ pyr exec --name smoke -- python smoke.py
 pyr exec --name train --detach -- python train.py --epochs 100
 pyr -w shell wait train
 ```
+
+### 等待 GPU：`--gpu-wait`
+
+`exec` 和 `run` 使用同一条紧凑规则，裸数字的单位与 Web UI 一致：
+
+```text
+卡数-每卡空闲GiB-最低GPU空闲率%-连续满足秒数-最长等待小时
+```
+
+```bash
+pyr exec -nt train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
+pyr exec -nt pipeline -d --gpu-wait 2-20-70-15-2 --stdin < pipeline.sh
+pyr -w shell run pipeline --gpu-wait 1-8
+pyr -w train run --config sweep.yaml --gpu-wait 1-8
+```
+
+`2-20-70-15-2` 表示需要两张卡，每张至少空闲 20 GiB、GPU 空闲率至少 70%，连续满足
+15 秒后开始，最多等待 2 小时。空闲率等于 `100 - GPU 利用率`；70% 空闲对应利用率
+不超过 30%。超时仅限制启动前的排队时间，不限制命令执行时长，也不会自动退回 CPU。
+
+- 可以省略尾项：`1-8` 默认空闲率 70%、持续 15 秒、最多等待 48 小时。
+- 持续时间 `0` 表示一旦满足条件即启动；超时 `0` 表示无限等待。
+- `off` 显式停用此任务的 GPU 等待；`device=0,1-20-70-15-2` 指定两张物理卡的索引。
+- 显式单位不区分大小写：`G/GiB`、`M/MiB` 为二进制，`GB/MB` 为十进制；时间接受
+  `s/sec`、`m/min`、`h/hr`，例如 `2-20480MiB-70%-15SEC-120MIN`。
+- 规则保存到任务，后续 CLI 和 UI 重跑会复用；再次传 `--gpu-wait` 可以更新规则。
+  没有显式或已保存规则时使用项目 GPU 设置；任务规则不会修改项目设置文件。
+- 调度尊重 `CUDA_VISIBLE_DEVICES`，只选择请求的卡数。需要保存可见卡范围时使用 `-e`。
+  每张卡在同一工作区只分配给一个 Pyruns 任务，外部任务通过实时指标检测。
+
+```bash
+pyr -w shell show pipeline --json   # 已保存规则、当前等待原因与时间
+pyr -w shell log pipeline -f        # 跟随排队和执行日志
+pyr metrics                        # 当前 GPU 指标
+pyr ui shell                       # GPU 设置和任务监控面板
+```
+
+UI 使用 `GPUs required`、`Minimum free memory (GiB)`、`Minimum GPU idle (%)`、
+`Stable for (sec)`、`Maximum wait (hr)`。旧配置的最大利用率会迁移为最低空闲率；
+显存占用百分比和每卡任务数已停用。
 
 ## 6. 添加配置任务：`add`
 

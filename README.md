@@ -184,6 +184,8 @@ pyr exec -n pipeline -c "python preprocess.py && python train.py | tee train.log
 
 ```bash
 pyr exec -nt pipeline -d --stdin < pipeline.sh
+# 等待两张 GPU，每卡空闲 20 GiB、空闲率 70%，持续 15 秒，最多等 2 小时
+pyr exec -nt train -d --gpu-wait 2-20-70-15-2 --stdin < train.sh
 ```
 
 这会将全部正文保存为一个带时间戳的任务并后台执行，重跑使用保存的正文。

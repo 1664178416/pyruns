@@ -1370,7 +1370,7 @@ def test_task_manager_gpu_batch_run_waits_each_selected_task(tmp_path, monkeypat
     for task in tasks:
         queue_bytes = (Path(task["dir"]) / RUN_LOGS_DIR / "queue.log").read_bytes()
         assert b"\r[PYRUNS] Run #1 still waiting after " in queue_bytes
-        assert b"blocked: GPU 0 memory" in queue_bytes
+        assert b"blocked: GPU 0 free" in queue_bytes
 
 
 def test_task_manager_gpu_auto_assigns_cuda_env_when_queued_task_is_picked(tmp_path):
@@ -1730,7 +1730,6 @@ def test_task_manager_gpu_independent_submit_does_not_consume_batch_slots(tmp_pa
                 "gpu_scheduler_min_free_memory_gb: 8",
                 "gpu_scheduler_compute_used_pct: 30",
                 "gpu_scheduler_stable_seconds: 1",
-                "gpu_scheduler_max_tasks_per_gpu: 2",
             ]
         )
         + "\n",
@@ -1760,6 +1759,7 @@ def test_task_manager_gpu_independent_submit_does_not_consume_batch_slots(tmp_pa
     manager.gpu_scheduler = GpuResourceScheduler(
         provider=_StaticGpuProvider([
             GpuDevice(0, "A800", "GPU-0", 1024, 40960, 0),
+            GpuDevice(1, "A800", "GPU-1", 1024, 40960, 0),
         ]),
         clock=lambda: now[0],
     )

@@ -220,9 +220,9 @@ def test_gpu_scheduler_respects_existing_cuda_visible_devices_when_parseable():
     )
 
     assert decision.assignment is not None
-    assert decision.assignment.gpu_ids == [1, 2]
-    assert decision.assignment.cuda_visible_devices == "1,2"
-    assert decision.assignment.env == {"PYRUNS_ASSIGNED_GPUS": "1,2"}
+    assert decision.assignment.gpu_ids == [2]
+    assert decision.assignment.cuda_visible_devices == "2"
+    assert decision.assignment.env == {"PYRUNS_ASSIGNED_GPUS": "2", "CUDA_VISIBLE_DEVICES": "2"}
 
 
 def test_gpu_scheduler_resolves_uuid_and_mig_masks_before_reserving():
@@ -676,7 +676,7 @@ def test_gpu_scheduler_reports_fixed_cuda_device_block_reason_when_threshold_fai
     assert decision.reason == "GPU 0 memory 75% > 50%"
 
 
-def test_gpu_scheduler_ignores_blank_cuda_visible_devices_and_assigns_automatically():
+def test_gpu_scheduler_respects_blank_cuda_visible_devices_that_hide_all_gpus():
     now = [62.0]
     provider = SequenceGpuProvider([
         [_gpu(0, used=1024, util=0)],
@@ -695,10 +695,8 @@ def test_gpu_scheduler_ignores_blank_cuda_visible_devices_and_assigns_automatica
 
     decision = scheduler.try_reserve("blank-cuda", 1, config, task_env={"CUDA_VISIBLE_DEVICES": " , "})
 
-    assert decision.assignment is not None
-    assert decision.assignment.gpu_ids == [0]
-    assert decision.assignment.cuda_visible_devices == "0"
-    assert decision.assignment.env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert decision.assignment is None
+    assert decision.reason == "CUDA_VISIBLE_DEVICES exposes no GPUs"
 
 
 def test_gpu_queue_log_block_uses_compact_title_and_final_assignment(tmp_path: Path):
@@ -744,7 +742,7 @@ def test_gpu_scheduler_config_normalizes_setting_variants():
         selection_mode="auto",
         gpus_per_task=1,
         device_ids=[],
-        memory_used_pct=40.0,
+        memory_used_pct=100.0,
         min_free_memory_gb=40.0,
         compute_used_pct=30.0,
         stable_seconds=15.0,
@@ -783,8 +781,8 @@ def test_gpu_scheduler_config_normalizes_setting_variants():
         device_ids=[0, 2],
         gpus_per_task=1,
         min_free_memory_gb=0.0,
-        stable_seconds=1.0,
-        max_wait_seconds=1.0,
+        stable_seconds=0.0,
+        max_wait_seconds=0.0,
         max_tasks_per_gpu=1,
         require_same_gpu_model=True,
     )
@@ -803,7 +801,7 @@ def test_gpu_scheduler_config_normalizes_setting_variants():
             "gpu_scheduler_max_tasks_per_gpu": "Infinity",
         },
         gpus_per_task=1,
-        memory_used_pct=40.0,
+        memory_used_pct=100.0,
         min_free_memory_gb=40.0,
         compute_used_pct=30.0,
         stable_seconds=15.0,
@@ -1008,7 +1006,7 @@ def test_gpu_scheduler_rejects_blank_and_invalid_cuda_visible_devices_safely():
     non_numeric = scheduler.try_reserve("bad", 1, config, task_env={"CUDA_VISIBLE_DEVICES": "0,gpu"})
 
     assert blank.assignment is None
-    assert blank.reason == "no NVIDIA GPU metrics available"
+    assert blank.reason == "CUDA_VISIBLE_DEVICES exposes no GPUs"
     assert non_numeric.assignment is None
     assert non_numeric.reason == "invalid CUDA_VISIBLE_DEVICES entry 'gpu'"
 

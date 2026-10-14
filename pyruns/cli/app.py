@@ -152,6 +152,52 @@ def _example_block(
     return "\n\n".join(sections)
 
 
+def _gpu_wait_argument(value: str) -> str:
+    from pyruns.utils.gpu_wait import parse_gpu_wait_rule
+
+    try:
+        return parse_gpu_wait_rule(value).canonical
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _add_gpu_wait_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--gpu-wait", type=_gpu_wait_argument, metavar="RULE",
+        help="wait for GPUs: COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS; or off",
+    )
+
+
+def _gpu_wait_help(program: str) -> str:
+    return (
+        "GPU waiting:\n"
+        "  --gpu-wait COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS\n"
+        "  Bare numbers use the same units as the Web UI: GPUs, GiB, idle %, seconds, hours.\n"
+        "  Example 2-20-70-15-2: two GPUs, each with >=20 GiB free and >=70% idle,\n"
+        "  continuously eligible for 15 seconds; wait at most 2 hours before starting.\n"
+        "  GPU idle percent = 100 - reported GPU utilization. All thresholds are per GPU.\n"
+        "  Omit trailing fields: 1-8 defaults to 70% idle, 15 seconds stable, 48 hours timeout.\n"
+        "  Stability 0 starts as soon as eligible; timeout 0 waits indefinitely.\n"
+        "  Optional units are case-insensitive: G/GiB, M/MiB (binary); GB/MB (decimal);\n"
+        "  s/sec, m/min, h/hr for time. For example 2-20GiB-70%-15s-2hr.\n"
+        "  Use device=0,1-20-70-15-2 to select exactly GPU indices 0 and 1.\n"
+        "  Use off to disable waiting for this task. Never falls back to CPU while waiting.\n"
+        "  Each GPU is reserved for one Pyruns task in this workspace; other work is detected\n"
+        "  through live metrics. Required GPU count and tasks sharing a GPU are different.\n"
+        "  Rules are saved with the task; reruns reuse them unless --gpu-wait overrides them.\n"
+        "  Without this option or a saved task rule, project GPU settings apply.\n"
+        "  The rule overrides project GPU settings without changing the settings file.\n"
+        "  CUDA_VISIBLE_DEVICES is respected; unavailable devices remain queued until timeout.\n"
+        "  GPU timeout limits queueing only, not the running command's duration.\n"
+        f"  {program} exec -nt train -d --gpu-wait 2-20-70-15-2 --stdin < train.sh\n"
+        f"  {program} exec --gpu-wait 1-8 -c \"python train.py --epochs 10\"\n"
+        f"  {program} -w shell run TASK --gpu-wait off\n"
+        f"  {program} -w shell show TASK --json    saved rule and current GPU wait details\n"
+        f"  {program} metrics                     current GPU readings\n"
+        f"  {program} ui shell                    GPU settings and waiting-task monitor"
+    )
+
+
 def _exec_help_epilog(program: str) -> str:
     """Return the command examples shown by ``pyr exec --help``."""
 
@@ -179,11 +225,15 @@ def _exec_help_epilog(program: str) -> str:
         f"    {program} exec -n setup-cmd -- .\\scripts\\setup.cmd arg1\n"
         "    .sh, .ps1, .cmd, and .bat select their matching interpreter automatically.\n"
         "    Reruns read the original script path again. To save its contents, use --stdin.\n\n"
-        "  Shell expression (only for pipes, redirects, expansion, globs, or chaining):\n"
+        "  Quoted shell command (-c; also supports pipes, redirects, and chaining):\n"
         f"    {program} exec -n report -c \"python eval.py > metrics.txt\"\n"
         f"    {program} exec -n pipeline -c \"python prep.py && python train.py\"\n"
         "    -c consumes the remaining command text and runs it through the stored workspace shell.\n"
         "    Quote expressions containing shell syntax according to the calling shell.\n\n"
+        "    Single and double quotes follow the calling shell's rules. In Bash, single quotes\n"
+        "    preserve $variables; double quotes can expand them before Pyruns receives the text.\n"
+        "    Backticks are not portable quote delimiters: Bash performs command substitution;\n"
+        "    PowerShell uses a backtick for escaping. Use --stdin for complex/multiline scripts.\n\n"
         "  Multiline script (Bash):\n"
         f"    {program} exec -n pipeline -d --stdin <<'BASH'\n"
         "    set -euo pipefail\n"
@@ -242,7 +292,8 @@ def _exec_help_epilog(program: str) -> str:
         "  With -d, exit 0 means accepted; use wait or show to check the task's final status.\n"
         "  Task results follow the launched command; scripts must wait/join their background jobs.\n"
         "  Ctrl+C during foreground exec requests cancellation of the task submitted by this call.\n"
-        "  --dry-run and -d/--detach are mutually exclusive."
+        "  --dry-run and -d/--detach are mutually exclusive.\n\n"
+        + _gpu_wait_help(program)
     )
 
 
@@ -514,10 +565,11 @@ def build_parser(
             "task again; 'run' supports both shell tasks and Python configuration tasks.\n"
             "Omit a name to generate task_<timestamp>, use -nt PREFIX to append the timestamp,\n"
             "or use -n NAME when the task name must be exact.\n"
-            "The default form is '-- PROGRAM ARG ...': -- ends Pyruns option parsing and stores\n"
+            "Use -c with a quoted shell command, or --stdin to save a complete multiline script.\n"
+            "For direct program execution, '-- PROGRAM ARG ...' ends Pyruns option parsing and stores\n"
             "every following item as an exact argv element. It does not enable shell parsing.\n"
-            "Use -c/--command only when the command intentionally needs pipes, redirects, variable\n"
-            "expansion, globs, &&, or other shell syntax. A leading .sh, .ps1, .cmd, or .bat file\n"
+            "-c/--command supports ordinary programs as well as pipes, redirects, variable\n"
+            "expansion, globs, &&, and other shell syntax. A leading .sh, .ps1, .cmd, or .bat file\n"
             "is launched with its matching interpreter while Pyruns records its log and duration.\n"
             "A command is required. For a multiline shell script, use --stdin with a file redirect,\n"
             "pipe, or heredoc; --stdin never opens an interactive input prompt."
@@ -548,6 +600,7 @@ def build_parser(
         help="preview the task and command without creating or running anything",
     )
     execute_source = execute.add_mutually_exclusive_group()
+    _add_gpu_wait_option(execute)
     execute_source.add_argument(
         "-c",
         "--command",
@@ -673,6 +726,8 @@ def build_parser(
         help="maximum number of tasks to run concurrently",
     )
     run.add_argument("-d", "--detach", action="store_true", help="return after the runner accepts all tasks")
+    _add_gpu_wait_option(run)
+    run.epilog = str(run.epilog or "") + "\n\n" + _gpu_wait_help(program)
     run.add_argument(
         "--dry-run",
         action="store_true",

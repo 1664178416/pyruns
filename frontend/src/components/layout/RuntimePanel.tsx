@@ -32,7 +32,6 @@ type RuntimePageRevisions = Record<RuntimePage, number>
 const RUNTIME_PAGES: RuntimePage[] = ['python', 'env', 'gpu']
 const GPU_PREVIEW_TIMEOUT_MS = 10_000
 type PythonRuntimeMode = 'follow' | 'conda' | 'python'
-type GpuTaskMode = 'single' | 'multi'
 type GpuSelectionMode = 'auto' | 'specified'
 
 function quoteEnvValue(value: string) {
@@ -197,8 +196,7 @@ function formatGiB(value: number | null) {
 function gpuRuleReasons(
   gpu: GPUMetric,
   minFreeMemoryGiB: number,
-  maxMemoryUsedPct: number,
-  maxComputeUsedPct: number,
+  minIdlePct: number,
 ) {
   const reasons: string[] = []
   const totalGiB = gpuMemoryGiB(gpu.mem_total)
@@ -213,13 +211,10 @@ function gpuRuleReasons(
   } else if (freeGiB != null && freeGiB < minFreeMemoryGiB) {
     reasons.push(`Free memory ${formatGiB(freeGiB)} is below ${formatGiB(minFreeMemoryGiB)}`)
   }
-  if (memoryUsedPct != null && memoryUsedPct > maxMemoryUsedPct) {
-    reasons.push(`Memory use ${memoryUsedPct.toFixed(0)}% is above ${maxMemoryUsedPct}%`)
-  }
   if (gpu.util == null || !Number.isFinite(gpu.util) || gpu.util < 0 || gpu.util > 100) {
     reasons.push('Compute metrics unavailable; waiting for a valid reading.')
-  } else if (gpu.util > maxComputeUsedPct) {
-    reasons.push(`Compute use ${gpu.util.toFixed(0)}% is above ${maxComputeUsedPct}%`)
+  } else if (100 - gpu.util < minIdlePct) {
+    reasons.push(`GPU idle ${(100 - gpu.util).toFixed(0)}% is below ${minIdlePct}%`)
   }
   return reasons
 }
@@ -257,16 +252,13 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
   const [runtimeMode, setRuntimeMode] = useState<PythonRuntimeMode>('follow')
   const [activePage, setActivePage] = useState<RuntimePage>('python')
   const [gpuSchedulerEnabled, setGpuSchedulerEnabled] = useState(false)
-  const [gpuTaskMode, setGpuTaskMode] = useState<GpuTaskMode>('single')
   const [gpuSelectionMode, setGpuSelectionMode] = useState<GpuSelectionMode>('auto')
   const [gpuCount, setGpuCount] = useState('1')
   const [gpuDeviceIds, setGpuDeviceIds] = useState('')
-  const [gpuMemoryUsedPct, setGpuMemoryUsedPct] = useState('40')
   const [gpuMinFreeMemoryGb, setGpuMinFreeMemoryGb] = useState('40')
-  const [gpuComputeUsedPct, setGpuComputeUsedPct] = useState('30')
+  const [gpuMinIdlePct, setGpuMinIdlePct] = useState('70')
   const [gpuStableSeconds, setGpuStableSeconds] = useState('15')
   const [gpuMaxWaitHours, setGpuMaxWaitHours] = useState(48)
-  const [gpuMaxTasksPerGpu, setGpuMaxTasksPerGpu] = useState('1')
   const [gpuRespectCudaVisibleDevices, setGpuRespectCudaVisibleDevices] = useState(true)
   const [gpuRequireSameModel, setGpuRequireSameModel] = useState(false)
   const [showCondaAdvanced, setShowCondaAdvanced] = useState(false)
@@ -324,9 +316,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     }
     return null
   }, [runtime, condaEnv])
-  const requestedGpuCount = gpuTaskMode === 'multi'
-    ? numberInputValue(gpuCount, 1, 1)
-    : 1
+  const requestedGpuCount = numberInputValue(gpuCount, 1, 1)
   const selectedGpuIds = useMemo(() => parseDeviceIds(gpuDeviceIds), [gpuDeviceIds])
   const candidateGpus = useMemo(() => {
     const allGpus = gpuMetrics?.gpus || []
@@ -346,13 +336,12 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
   }, [gpuMetrics, gpuMetricsError, gpuSelectionMode, selectedGpuIds])
   const gpuPreviewRows = useMemo(() => {
     const minFree = numberInputValue(gpuMinFreeMemoryGb, 0, 0)
-    const memoryLimit = boundedNumberInputValue(gpuMemoryUsedPct, 40, 0, 100)
-    const computeLimit = boundedNumberInputValue(gpuComputeUsedPct, 30, 0, 100)
+    const minIdle = boundedNumberInputValue(gpuMinIdlePct, 70, 0, 100)
     return candidateGpus.map(gpu => ({
       gpu,
-      reasons: gpuRuleReasons(gpu, minFree, memoryLimit, computeLimit),
+      reasons: gpuRuleReasons(gpu, minFree, minIdle),
     }))
-  }, [candidateGpus, gpuComputeUsedPct, gpuMemoryUsedPct, gpuMinFreeMemoryGb])
+  }, [candidateGpus, gpuMinIdlePct, gpuMinFreeMemoryGb])
   const passingGpuCount = gpuPreviewRows.filter(row => row.reasons.length === 0).length
   const gpuValidationIssues = useMemo(() => {
     if (!gpuSchedulerEnabled) {
@@ -361,34 +350,26 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
 
     const issues: string[] = []
     const rawCount = Number(gpuCount)
-    const rawMemoryLimit = Number(gpuMemoryUsedPct)
     const rawFreeMemory = Number(gpuMinFreeMemoryGb)
-    const rawComputeLimit = Number(gpuComputeUsedPct)
+    const rawIdle = Number(gpuMinIdlePct)
     const rawStableSeconds = Number(gpuStableSeconds)
     const rawWaitHours = Number(gpuMaxWaitHours)
-    const rawMaxTasks = Number(gpuMaxTasksPerGpu)
     const rawDeviceTokens = gpuDeviceIds.split(',').map(item => item.trim()).filter(Boolean)
 
     if (!Number.isInteger(rawCount) || rawCount < 1) {
-      issues.push('GPUs per task must be a whole number of at least 1.')
-    }
-    if (!gpuMemoryUsedPct.trim() || !Number.isFinite(rawMemoryLimit) || rawMemoryLimit < 0 || rawMemoryLimit > 100) {
-      issues.push('Maximum memory use must be between 0% and 100%.')
+      issues.push('GPUs required must be a whole number of at least 1.')
     }
     if (!gpuMinFreeMemoryGb.trim() || !Number.isFinite(rawFreeMemory) || rawFreeMemory < 0) {
       issues.push('Minimum free memory must be 0 GiB or more.')
     }
-    if (!gpuComputeUsedPct.trim() || !Number.isFinite(rawComputeLimit) || rawComputeLimit < 0 || rawComputeLimit > 100) {
-      issues.push('Maximum compute use must be between 0% and 100%.')
+    if (!gpuMinIdlePct.trim() || !Number.isFinite(rawIdle) || rawIdle < 0 || rawIdle > 100) {
+      issues.push('Minimum GPU idle must be between 0% and 100%.')
     }
-    if (!gpuStableSeconds.trim() || !Number.isFinite(rawStableSeconds) || rawStableSeconds < 1) {
-      issues.push('Stability window must be at least 1 second.')
+    if (!gpuStableSeconds.trim() || !Number.isFinite(rawStableSeconds) || rawStableSeconds < 0) {
+      issues.push('Stability window must be 0 seconds or more.')
     }
-    if (!Number.isFinite(rawWaitHours) || rawWaitHours < 1) {
-      issues.push('Maximum wait must be at least 1 hour.')
-    }
-    if (!gpuMaxTasksPerGpu.trim() || !Number.isInteger(rawMaxTasks) || rawMaxTasks < 1) {
-      issues.push('Tasks per GPU must be a whole number of at least 1.')
+    if (!Number.isFinite(rawWaitHours) || rawWaitHours < 0) {
+      issues.push('Maximum wait must be 0 hours or more (0 means unlimited).')
     }
     if (gpuSelectionMode === 'specified') {
       if (rawDeviceTokens.some(item => !/^\d+$/.test(item))) {
@@ -424,10 +405,8 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     candidateGpus,
     gpuCount,
     gpuDeviceIds,
-    gpuComputeUsedPct,
+    gpuMinIdlePct,
     gpuMaxWaitHours,
-    gpuMaxTasksPerGpu,
-    gpuMemoryUsedPct,
     gpuMinFreeMemoryGb,
     gpuSchedulerEnabled,
     gpuSelectionMode,
@@ -455,16 +434,13 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
 
   const applyGpuRuntimeState = (next: RuntimeInfo) => {
     setGpuSchedulerEnabled(next.gpu_scheduler?.enabled ?? false)
-    setGpuTaskMode(next.gpu_scheduler?.task_mode === 'multi' ? 'multi' : 'single')
     setGpuSelectionMode(next.gpu_scheduler?.selection_mode === 'specified' ? 'specified' : 'auto')
     setGpuCount(String(next.gpu_scheduler?.gpus_per_task ?? 1))
     setGpuDeviceIds(formatDeviceIds(next.gpu_scheduler?.device_ids))
-    setGpuMemoryUsedPct(String(next.gpu_scheduler?.memory_used_pct ?? 40))
     setGpuMinFreeMemoryGb(String(next.gpu_scheduler?.min_free_memory_gb ?? 40))
-    setGpuComputeUsedPct(String(next.gpu_scheduler?.compute_used_pct ?? 30))
+    setGpuMinIdlePct(String(next.gpu_scheduler?.min_idle_pct ?? 70))
     setGpuStableSeconds(String(next.gpu_scheduler?.stable_seconds ?? 15))
-    setGpuMaxWaitHours(Math.max(1, Math.round((next.gpu_scheduler?.max_wait_seconds ?? 172800) / 3600)))
-    setGpuMaxTasksPerGpu(String(next.gpu_scheduler?.max_tasks_per_gpu ?? 1))
+    setGpuMaxWaitHours(Math.max(0, (next.gpu_scheduler?.max_wait_seconds ?? 172800) / 3600))
     setGpuRespectCudaVisibleDevices(next.gpu_scheduler?.respect_cuda_visible_devices ?? true)
     setGpuRequireSameModel(next.gpu_scheduler?.require_same_gpu_model ?? false)
   }
@@ -495,16 +471,14 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     setCondaExecutable(cleanSettingText(settings?.conda_executable) || 'conda')
     setRuntimeMode(modeFromSettings(settings))
     setGpuSchedulerEnabled(settingBool(settings?.gpu_scheduler_enabled, false))
-    setGpuTaskMode(cleanSettingText(settings?.gpu_scheduler_task_mode) === 'multi' ? 'multi' : 'single')
     setGpuSelectionMode(cleanSettingText(settings?.gpu_scheduler_selection_mode) === 'specified' ? 'specified' : 'auto')
-    setGpuCount(String(settingNumber(settings?.gpu_scheduler_gpus_per_task, 1, 1)))
+    setGpuCount(String(cleanSettingText(settings?.gpu_scheduler_task_mode) === 'multi'
+      ? settingNumber(settings?.gpu_scheduler_gpus_per_task, 1, 1) : 1))
     setGpuDeviceIds(formatDeviceIdsSetting(settings?.gpu_scheduler_device_ids))
-    setGpuMemoryUsedPct(String(settingNumber(settings?.gpu_scheduler_memory_used_pct, 40, 0, 100)))
     setGpuMinFreeMemoryGb(String(settingNumber(settings?.gpu_scheduler_min_free_memory_gb, 40, 0)))
-    setGpuComputeUsedPct(String(settingNumber(settings?.gpu_scheduler_compute_used_pct, 30, 0, 100)))
-    setGpuStableSeconds(String(settingNumber(settings?.gpu_scheduler_stable_seconds, 15, 1)))
-    setGpuMaxWaitHours(Math.max(1, Math.round(settingNumber(settings?.gpu_scheduler_max_wait_seconds, 172800, 1) / 3600)))
-    setGpuMaxTasksPerGpu(String(settingNumber(settings?.gpu_scheduler_max_tasks_per_gpu, 1, 1)))
+    setGpuMinIdlePct(String(settingNumber(settings?.gpu_scheduler_min_idle_pct, 70, 0, 100)))
+    setGpuStableSeconds(String(settingNumber(settings?.gpu_scheduler_stable_seconds, 15, 0)))
+    setGpuMaxWaitHours(settingNumber(settings?.gpu_scheduler_max_wait_seconds, 172800, 0) / 3600)
     setGpuRespectCudaVisibleDevices(settingBool(settings?.gpu_scheduler_respect_cuda_visible_devices, true))
     setGpuRequireSameModel(settingBool(settings?.gpu_scheduler_require_same_gpu_model, false))
     clearAllRuntimeDirty()
@@ -820,16 +794,14 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     void saveRuntime('gpu', {
       gpu_scheduler: {
         enabled: gpuSchedulerEnabled,
-        task_mode: gpuTaskMode,
+        task_mode: requestedGpuCount > 1 ? 'multi' : 'single',
         selection_mode: gpuSelectionMode,
         gpus_per_task: requestedGpuCount,
         device_ids: selectedGpuIds,
-        memory_used_pct: boundedNumberInputValue(gpuMemoryUsedPct, 40, 0, 100),
         min_free_memory_gb: numberInputValue(gpuMinFreeMemoryGb, 40, 0),
-        compute_used_pct: boundedNumberInputValue(gpuComputeUsedPct, 30, 0, 100),
-        stable_seconds: numberInputValue(gpuStableSeconds, 15, 1),
+        min_idle_pct: boundedNumberInputValue(gpuMinIdlePct, 70, 0, 100),
+        stable_seconds: numberInputValue(gpuStableSeconds, 15, 0),
         max_wait_seconds: gpuMaxWaitHours * 3600,
-        max_tasks_per_gpu: numberInputValue(gpuMaxTasksPerGpu, 1, 1),
         respect_cuda_visible_devices: gpuRespectCudaVisibleDevices,
         require_same_gpu_model: gpuRequireSameModel,
       },
@@ -843,16 +815,14 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
       applyGpuRuntimeState(runtime)
     } else {
       setGpuSchedulerEnabled(settingBool(workspaceSettings?.gpu_scheduler_enabled, false))
-      setGpuTaskMode(cleanSettingText(workspaceSettings?.gpu_scheduler_task_mode) === 'multi' ? 'multi' : 'single')
       setGpuSelectionMode(cleanSettingText(workspaceSettings?.gpu_scheduler_selection_mode) === 'specified' ? 'specified' : 'auto')
-      setGpuCount(String(settingNumber(workspaceSettings?.gpu_scheduler_gpus_per_task, 1, 1)))
+      setGpuCount(String(cleanSettingText(workspaceSettings?.gpu_scheduler_task_mode) === 'multi'
+        ? settingNumber(workspaceSettings?.gpu_scheduler_gpus_per_task, 1, 1) : 1))
       setGpuDeviceIds(formatDeviceIdsSetting(workspaceSettings?.gpu_scheduler_device_ids))
-      setGpuMemoryUsedPct(String(settingNumber(workspaceSettings?.gpu_scheduler_memory_used_pct, 40, 0, 100)))
       setGpuMinFreeMemoryGb(String(settingNumber(workspaceSettings?.gpu_scheduler_min_free_memory_gb, 40, 0)))
-      setGpuComputeUsedPct(String(settingNumber(workspaceSettings?.gpu_scheduler_compute_used_pct, 30, 0, 100)))
-      setGpuStableSeconds(String(settingNumber(workspaceSettings?.gpu_scheduler_stable_seconds, 15, 1)))
-      setGpuMaxWaitHours(Math.max(1, Math.round(settingNumber(workspaceSettings?.gpu_scheduler_max_wait_seconds, 172800, 1) / 3600)))
-      setGpuMaxTasksPerGpu(String(settingNumber(workspaceSettings?.gpu_scheduler_max_tasks_per_gpu, 1, 1)))
+      setGpuMinIdlePct(String(settingNumber(workspaceSettings?.gpu_scheduler_min_idle_pct, 70, 0, 100)))
+      setGpuStableSeconds(String(settingNumber(workspaceSettings?.gpu_scheduler_stable_seconds, 15, 0)))
+      setGpuMaxWaitHours(settingNumber(workspaceSettings?.gpu_scheduler_max_wait_seconds, 172800, 0) / 3600)
       setGpuRespectCudaVisibleDevices(settingBool(workspaceSettings?.gpu_scheduler_respect_cuda_visible_devices, true))
       setGpuRequireSameModel(settingBool(workspaceSettings?.gpu_scheduler_require_same_gpu_model, false))
     }
@@ -1195,7 +1165,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
 
             <div className="grid gap-3 sm:grid-cols-3">
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-txt-secondary">GPUs per task</span>
+                <span className="mb-1 block text-xs font-medium text-txt-secondary">GPUs required</span>
                 <input
                   type="number"
                   min={1}
@@ -1205,7 +1175,6 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                   onChange={event => {
                     const value = event.target.value
                     setGpuCount(value)
-                    setGpuTaskMode(Number(value) > 1 ? 'multi' : 'single')
                     markRuntimeDirty('gpu')
                   }}
                   className="touch-input h-11 w-full rounded-md border border-border-subtle bg-surface-raised px-2.5 text-sm text-txt-primary outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
@@ -1222,6 +1191,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                   <input
                     type="number"
                     min={0}
+                    step="any"
                     value={gpuMinFreeMemoryGb}
                     disabled={!gpuSchedulerEnabled}
                     onChange={event => { setGpuMinFreeMemoryGb(event.target.value); markRuntimeDirty('gpu') }}
@@ -1231,21 +1201,27 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                   <span className="flex w-11 items-center justify-center border-l border-border-subtle text-xs text-txt-tertiary">GiB</span>
                 </div>
               </label>
+              <CompactNumberField label="Minimum GPU idle" value={gpuMinIdlePct} suffix="%" min={0} max={100} disabled={!gpuSchedulerEnabled} onChange={value => { setGpuMinIdlePct(value); markRuntimeDirty('gpu') }} />
+              <CompactNumberField label="Stable for" value={gpuStableSeconds} suffix="sec" min={0} disabled={!gpuSchedulerEnabled} onChange={value => { setGpuStableSeconds(value); markRuntimeDirty('gpu') }} />
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-txt-secondary">Maximum wait</span>
                 <div className="touch-input flex h-11 overflow-hidden rounded-md border border-border-subtle bg-surface-raised focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15 sm:h-9">
                   <input
                     type="number"
-                    min={1}
+                    min={0}
+                    step="any"
                     value={gpuMaxWaitHours}
                     disabled={!gpuSchedulerEnabled}
-                    onChange={event => { setGpuMaxWaitHours(numberInputValue(event.target.value, 48, 1)); markRuntimeDirty('gpu') }}
+                    onChange={event => { setGpuMaxWaitHours(numberInputValue(event.target.value, 48, 0)); markRuntimeDirty('gpu') }}
                     className="min-w-0 flex-1 bg-transparent px-2.5 text-sm text-txt-primary outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <span className="flex w-11 items-center justify-center border-l border-border-subtle text-xs text-txt-tertiary">hr</span>
                 </div>
               </label>
             </div>
+            <p className="text-2xs leading-5 text-txt-tertiary">
+              GPU idle is 100% minus utilization. Stable for 0 starts immediately; maximum wait 0 waits indefinitely.
+            </p>
 
             {gpuMetricsError && (
               <div role="alert" className="flex items-start justify-between gap-3 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
@@ -1318,7 +1294,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
               <summary className="touch-target flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-xs font-medium text-txt-primary hover:bg-surface-overlay">
                 <span>Advanced scheduling rules</span>
                 <span className="flex items-center gap-2 text-2xs font-normal text-txt-tertiary">
-                  <span className="hidden sm:inline">Selection, thresholds, stability</span>
+                  <span className="hidden sm:inline">Selection and visibility</span>
                   <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
                 </span>
               </summary>
@@ -1359,13 +1335,6 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
                     />
                   </label>
                 )}
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <CompactNumberField label="Maximum memory use" value={gpuMemoryUsedPct} suffix="%" min={0} max={100} onChange={value => { setGpuMemoryUsedPct(value); markRuntimeDirty('gpu') }} />
-                  <CompactNumberField label="Maximum compute use" value={gpuComputeUsedPct} suffix="%" min={0} max={100} onChange={value => { setGpuComputeUsedPct(value); markRuntimeDirty('gpu') }} />
-                  <CompactNumberField label="Stable for" value={gpuStableSeconds} suffix="sec" min={1} onChange={value => { setGpuStableSeconds(value); markRuntimeDirty('gpu') }} />
-                  <CompactNumberField label="Tasks per GPU" value={gpuMaxTasksPerGpu} suffix="max" min={1} onChange={value => { setGpuMaxTasksPerGpu(value); markRuntimeDirty('gpu') }} />
-                </div>
 
                 <p className="text-2xs leading-5 text-txt-tertiary">
                   The preview checks live thresholds. The stability window is enforced when a task enters the queue.
@@ -1449,6 +1418,7 @@ function CompactNumberField({
   suffix,
   min,
   max,
+  disabled = false,
   onChange,
 }: {
   label: string
@@ -1456,6 +1426,7 @@ function CompactNumberField({
   suffix: string
   min: number
   max?: number
+  disabled?: boolean
   onChange: (value: string) => void
 }) {
   return (
@@ -1466,6 +1437,8 @@ function CompactNumberField({
           type="number"
           min={min}
           max={max}
+          step="any"
+          disabled={disabled}
           value={value}
           onChange={event => onChange(event.target.value)}
           className="min-w-0 flex-1 bg-transparent px-2.5 text-sm text-txt-primary outline-none"
