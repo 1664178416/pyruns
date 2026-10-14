@@ -1339,6 +1339,7 @@ class TaskManager:
             "runner_host": info.get("runner_host"),
             "lease_until": info.get("lease_until"),
             "lease_heartbeat": info.get("lease_heartbeat"),
+            "cancel_requested_at": info.get("cancel_requested_at"),
             "_load_error": load_error,
             "_terminal_write_pending": bool(info.get("_terminal_write_pending")),
             "_mtime": (mtime_ns / 1_000_000_000) if mtime_ns else 0.0,
@@ -2636,12 +2637,13 @@ class TaskManager:
         )
 
     def _process_cancel_requests(self) -> None:
-        """Apply persisted requests only to tasks owned by this runner."""
+        """Confirm cancellation flags discovered by the preceding metadata refresh."""
         with self._lock:
             candidates = [
                 (str(task.get("name", "") or ""), str(task.get("dir", "") or ""))
                 for task in self.tasks
                 if task and str(task.get("status", "") or "") in {"queued", "running"}
+                and task.get("cancel_requested_at") and self._is_current_runner(task)
             ]
         for task_name, task_dir in candidates:
             if not task_name or not task_dir:
@@ -5128,6 +5130,7 @@ class TaskManager:
             task.get("runner_id"),
             task.get("runner_host"),
             task.get("lease_until"),
+            task.get("cancel_requested_at"),
             task.get("queued_at"),
             repr(task.get("gpu_wait")),
         )
@@ -5193,6 +5196,7 @@ class TaskManager:
                 "runner_host": info.get("runner_host"),
                 "lease_until": info.get("lease_until"),
                 "lease_heartbeat": info.get("lease_heartbeat"),
+                "cancel_requested_at": info.get("cancel_requested_at"),
             }
         )
         cls._copy_gpu_schedule_info(task, info)

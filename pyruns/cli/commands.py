@@ -8,15 +8,17 @@ import os
 import re
 import signal
 import shlex
+import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time as datetime_time
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import psutil
 import yaml
@@ -969,7 +971,50 @@ def _wait_for_task_records(
         time.sleep(0.1)
 
 
-def _write_available_log(path: str, offset: int) -> int:
+class _QueueProgressOutput:
+    """Fit carriage-return GPU updates to one terminal row, leaving stored logs intact."""
+
+    def __init__(self) -> None:
+        self.line: str | None = None
+
+    def render(self, content: str) -> str:
+        output = []
+        for part in re.split(r"([\r\n])", content):
+            if part == "\r":
+                self.line = ""
+            elif self.line is None:
+                output.append(part)
+            elif part == "\n":
+                self.line = None
+                output.append(part)
+            elif part:
+                columns = max(1, shutil.get_terminal_size().columns - 1)
+                self.line = (self.line + part)[:columns + 1]
+                characters = [
+                    (char, 0 if unicodedata.combining(char) else
+                     2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1)
+                    for char in self.line if char.isprintable()
+                ]
+                suffix = "." * min(3, columns) if sum(width for _, width in characters) > columns else ""
+                budget = columns - len(suffix)
+                visible = ""
+                width = 0
+                for char, char_width in characters:
+                    if width + char_width > budget:
+                        break
+                    visible += char
+                    width += char_width
+                output.append("\r" + visible + suffix + " " * (columns - width - len(suffix)))
+        return "".join(output)
+
+    def finish(self) -> None:
+        if self.line is not None:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self.line = None
+
+
+def _write_available_log(path: str, offset: int, progress: _QueueProgressOutput | None = None) -> int:
     while True:
         content, next_offset = safe_read_log(path, offset, max_bytes=65536)
         if next_offset < offset:
@@ -981,6 +1026,8 @@ def _write_available_log(path: str, offset: int) -> int:
             offset = next_offset
             continue
         content = content.replace("\r\n", "\n")
+        if progress is not None:
+            content = progress.render(content)
         try:
             sys.stdout.write(content)
         except UnicodeEncodeError:
@@ -996,6 +1043,28 @@ def _follow_task(
     *,
     identity: _TaskRunIdentity,
     initial_queue_offset: int = 0,
+) -> dict[str, Any]:
+    progress = _QueueProgressOutput() if sys.stdout.isatty() else None
+
+    def write_log(path: str, position: int) -> int:
+        if progress is not None:
+            if os.path.basename(path) == QUEUE_LOG_FILENAME:
+                return _write_available_log(path, position, progress)
+            progress.finish()
+        return _write_available_log(path, position)
+
+    try:
+        return _follow_task_logs(task, identity, initial_queue_offset, write_log)
+    finally:
+        if progress is not None:
+            progress.finish()
+
+
+def _follow_task_logs(
+    task: dict[str, Any],
+    identity: _TaskRunIdentity,
+    initial_queue_offset: int,
+    write_log: Callable[[str, int], int],
 ) -> dict[str, Any]:
     current_path = ""
     offset = 0
@@ -1016,12 +1085,12 @@ def _follow_task(
         if next_path != current_path:
             current_path = next_path
             offset = next_offset
-        offset = _write_available_log(current_path, offset)
+        offset = write_log(current_path, offset)
         if latest_record["status"] in _FINAL_STATUSES:
             stable_reads = 0
             deadline = time.monotonic() + 0.5
             while stable_reads < 3 and time.monotonic() < deadline:
-                next_offset = _write_available_log(current_path, offset)
+                next_offset = write_log(current_path, offset)
                 if next_offset == offset:
                     stable_reads += 1
                     time.sleep(0.05)

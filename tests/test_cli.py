@@ -1324,6 +1324,57 @@ def test_write_available_log_does_not_duplicate_crlf_rows(tmp_path, capsys):
     assert capsys.readouterr().out == "first\nsecond\nprogress 1%\rprogress 100%"
 
 
+def test_follow_task_keeps_gpu_refresh_on_one_terminal_row(tmp_path, monkeypatch):
+    import unicodedata
+
+    from pyruns.cli import commands
+
+    queue = tmp_path / QUEUE_LOG_FILENAME
+    log = tmp_path / "run1.log"
+    initial = "GPU WAIT\n\r[PYRUNS] " + "显存不足 e\u0301 " * 30
+    queue.write_text(initial, encoding="utf-8", newline="")
+    log.write_text("run started\n", encoding="utf-8")
+    output = io.StringIO()
+    output.isatty = lambda: True
+    monkeypatch.setattr(commands.sys, "stdout", output)
+    monkeypatch.setattr(shutil, "get_terminal_size", lambda: os.terminal_size((48, 24)))
+    statuses = iter(["queued", "queued", "completed"])
+
+    def record(_task, _identity):
+        status = next(statuses)
+        if status == "queued" and output.getvalue():
+            with queue.open("a", encoding="utf-8", newline="") as handle:
+                handle.write("\rshort wait")
+        return {"status": status}
+
+    monkeypatch.setattr(commands, "_bound_task_record", record)
+    monkeypatch.setattr(
+        commands, "_resolve_log_reference",
+        lambda _task, run_index=None: commands._LogReference(
+            str(queue if run_index is None else log), run_index, "queue" if run_index is None else "run",
+        ),
+    )
+    monkeypatch.setattr(commands.time, "sleep", lambda _seconds: None)
+
+    result = commands._follow_task(
+        {}, identity=commands._TaskRunIdentity(run_index=1, runner_id="host:1:token"),
+    )
+
+    assert result["status"] == "completed"
+    rendered = output.getvalue()
+    assert "..." in rendered
+    assert "\rshort wait" in rendered
+    assert "\nrun started\n" in rendered
+    for update in rendered.split("\r")[1:]:
+        row = update.split("\n", 1)[0]
+        width = sum(
+            0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+            for char in row
+        )
+        assert width < 48
+    assert queue.read_bytes().decode("utf-8") == initial + "\rshort wait"
+
+
 def test_write_available_log_restarts_after_truncation(tmp_path, capsys):
     from pyruns.cli import commands
 

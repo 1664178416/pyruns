@@ -1083,6 +1083,90 @@ def test_gpu_scheduler_can_reuse_one_snapshot_across_a_queue_pass():
     assert provider.calls == 1
 
 
+@pytest.mark.parametrize("stable_seconds", [0, 1])
+def test_gpu_scheduler_rejects_expired_shared_snapshot_before_assignment(stable_seconds):
+    now = [160.0]
+    provider = SequenceGpuProvider([[_gpu(0, used=1024)]])
+    scheduler = GpuResourceScheduler(provider=provider, clock=lambda: now[0])
+    config = GpuSchedulerConfig(enabled=True, min_free_memory_gb=8, stable_seconds=stable_seconds)
+    scheduler.snapshot(config, now=now[0])
+
+    now[0] += 2.0
+    expired = scheduler.try_reserve("expired", 1, config, task_env={}, refresh_snapshot=False)
+
+    assert expired.assignment is None
+    assert expired.eligible_gpu_count == 0
+    assert "fresh" in expired.reason
+    assert provider.calls == 1
+
+    refreshed = scheduler.try_reserve("expired", 1, config, task_env={})
+    if stable_seconds:
+        assert refreshed.assignment is None
+        assert "stabilizing 0.0/1s" in refreshed.reason
+        now[0] += 1.0
+        refreshed = scheduler.try_reserve("expired", 1, config, task_env={})
+    assert refreshed.assignment is not None
+
+
+def test_gpu_scheduler_observes_stability_from_sample_completion():
+    now = [170.0]
+
+    class SlowProvider(SequenceGpuProvider):
+        def sample(self):
+            if self.calls == 0:
+                now[0] += 0.75
+            return super().sample()
+
+    provider = SlowProvider([[_gpu(0, used=1024)]])
+    scheduler = GpuResourceScheduler(provider=provider, clock=lambda: now[0])
+    config = GpuSchedulerConfig(enabled=True, min_free_memory_gb=8, stable_seconds=0.5)
+    scheduler.snapshot(config, now=now[0])
+
+    initial = scheduler.try_reserve("slow", 1, config, task_env={}, refresh_snapshot=False)
+    assert initial.assignment is None
+    assert "stabilizing 0.0/0.5s" in initial.reason
+
+    now[0] += 0.5
+    observed = scheduler.try_reserve("slow", 1, config, task_env={})
+    assert observed.assignment is not None
+    assert provider.calls == 2
+
+
+def test_shared_snapshot_age_does_not_extend_observed_stability():
+    now = [175.0]
+    provider = SequenceGpuProvider([[_gpu(0, used=1024)]])
+    scheduler = GpuResourceScheduler(provider=provider, clock=lambda: now[0])
+    config = GpuSchedulerConfig(enabled=True, min_free_memory_gb=8, stable_seconds=0.5)
+    scheduler.snapshot(config, now=now[0])
+
+    now[0] += 0.75
+    unobserved = scheduler.try_reserve("delayed", 1, config, task_env={}, refresh_snapshot=False)
+    assert unobserved.assignment is None
+    assert "stabilizing 0.0/0.5s" in unobserved.reason
+    assert provider.calls == 1
+
+    observed = scheduler.try_reserve("delayed", 1, config, task_env={})
+    assert observed.assignment is not None
+
+
+@pytest.mark.parametrize("mask", ["0", "GPU-0", "MIG-GPU-0/0/1"])
+def test_gpu_wait_diagnostics_only_count_visible_candidate_devices(mask):
+    provider = SequenceGpuProvider([[
+        _gpu(0, used=1024, util=90),
+        _gpu(1, used=1024),
+        _gpu(2, used=1024),
+    ]])
+    scheduler = GpuResourceScheduler(provider=provider, clock=lambda: 180.0)
+    config = GpuSchedulerConfig.from_wait_rule("2-8-70-0-1")
+
+    decision = scheduler.try_reserve("masked", 1, config, task_env={"CUDA_VISIBLE_DEVICES": mask})
+
+    assert decision.assignment is None
+    assert decision.eligible_gpu_count == 0
+    assert decision.total_gpu_count == 1
+    assert [device.index for device in decision.devices] == [0]
+
+
 def test_gpu_scheduler_keeps_unmappable_mig_uuid_waiting():
     scheduler = GpuResourceScheduler(
         provider=SequenceGpuProvider([[_gpu(0, used=1024, uuid="GPU-parent")]]),

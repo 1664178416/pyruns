@@ -244,8 +244,11 @@ class GpuResourceScheduler:
 
     def snapshot(self, config: GpuSchedulerConfig, *, now: float | None = None) -> List[GpuDevice]:
         with self._lock:
-            sample_at = self.clock() if now is None else now
+            started_at = self.clock()
+            sample_at = started_at if now is None else now
             self._snapshot = self.provider.sample()
+            # GPU queries are not observations of the entire time they take.
+            sample_at += max(0.0, self.clock() - started_at)
             self._snapshot_at = sample_at
             self._refresh_eligible_since(config, sample_at)
             return self._snapshot
@@ -288,23 +291,27 @@ class GpuResourceScheduler:
             snapshot = self.snapshot(config, now=now) if refresh_snapshot else list(self._snapshot)
             if not refresh_snapshot:
                 self._refresh_eligible_since(config, self._snapshot_at)
-            device_decisions = self._device_decisions(config, now)
+            now = self.clock()
             waited = max(0.0, now - queued_since) if queued_since is not None else 0.0
 
             existing_cuda = str(env.get(CUDA_VISIBLE_DEVICES, "") or "").strip()
             if existing_cuda and not any(part.strip() for part in existing_cuda.split(",")):
                 existing_cuda = ""
             if config.respect_cuda_visible_devices and CUDA_VISIBLE_DEVICES in env and not existing_cuda:
-                return self._decision(None, "CUDA_VISIBLE_DEVICES exposes no GPUs", snapshot, device_decisions)
+                return self._decision(None, "CUDA_VISIBLE_DEVICES exposes no GPUs", snapshot, [])
             requested_tokens, parse_error = _parse_cuda_visible_devices(existing_cuda) if existing_cuda else ([], "")
             if existing_cuda and config.respect_cuda_visible_devices and parse_error:
-                return self._decision(None, parse_error, snapshot, device_decisions)
+                return self._decision(None, parse_error, snapshot, [])
 
             requested_ids: List[int] = []
             if requested_tokens and config.respect_cuda_visible_devices:
                 requested_ids, resolve_error = self._resolve_cuda_visible_devices(requested_tokens)
                 if resolve_error:
-                    return self._decision(None, resolve_error, snapshot, device_decisions)
+                    return self._decision(None, resolve_error, snapshot, [])
+
+            device_decisions = self._device_decisions(
+                config, now, allowed_ids=set(requested_ids) if requested_ids else None,
+            )
 
             if requested_ids and config.respect_cuda_visible_devices:
                 required_ids = requested_ids
@@ -543,6 +550,8 @@ class GpuResourceScheduler:
     def _blocked_reason(self, gpu: GpuDevice, config: GpuSchedulerConfig, now: float) -> str:
         if not gpu.metrics_available:
             return f"GPU {gpu.index} metrics unavailable or invalid"
+        if now < self._snapshot_at or now - self._snapshot_at > _STABLE_SAMPLE_MAX_GAP_SECONDS:
+            return f"GPU {gpu.index} metrics expired; waiting for a fresh snapshot"
         reserved = self._reserved_count(gpu.index)
         if reserved >= config.max_tasks_per_gpu:
             return f"GPU {gpu.index} reserved ({reserved}/{config.max_tasks_per_gpu})"
@@ -563,14 +572,18 @@ class GpuResourceScheduler:
                 f"(compute {compute_util_pct:.0f}% > {config.compute_used_pct:g}%)"
             )
         since = self._eligible_since.get((*self._stability_limits(config), _gpu_stability_key(gpu)))
-        if since is None or now - since < config.stable_seconds:
-            observed = 0.0 if since is None else max(0.0, now - since)
+        observed = 0.0 if since is None else max(0.0, self._snapshot_at - since)
+        if since is None or observed < config.stable_seconds:
             return f"GPU {gpu.index} stabilizing {observed:.1f}/{config.stable_seconds:g}s"
         return ""
 
-    def _device_decisions(self, config: GpuSchedulerConfig, now: float) -> List[GpuDeviceDecision]:
+    def _device_decisions(
+        self, config: GpuSchedulerConfig, now: float, *, allowed_ids: set[int] | None = None,
+    ) -> List[GpuDeviceDecision]:
         decisions: List[GpuDeviceDecision] = []
         for gpu in sorted(self._candidate_devices(config), key=lambda item: item.index):
+            if allowed_ids is not None and gpu.index not in allowed_ids:
+                continue
             reason = self._blocked_reason(gpu, config, now)
             decisions.append(
                 GpuDeviceDecision(

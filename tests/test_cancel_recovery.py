@@ -266,6 +266,84 @@ def test_queued_to_running_keeps_the_current_run_cancellation(expired_run):
     assert info["run_index"] == 2
 
 
+def test_refreshed_cross_process_cancel_request_stops_owned_queue(expired_run):
+    manager, task_dir = expired_run
+    update_task_metadata(
+        str(task_dir),
+        lambda info: info.update(
+            status="queued", runner_id=manager.runner_id, lease_until=time.time() + 60,
+        ),
+    )
+    manager.refresh_from_disk(task_ids=["orphan"], force_all=True)
+    requester = TaskManager(
+        tasks_dir=manager.tasks_dir, lazy_scan=False, owns_task_lifecycle=False,
+    )
+    try:
+        assert requester.request_task_cancel("orphan") is True
+        assert manager._tasks_by_name["orphan"].get("cancel_requested_at") is None
+
+        manager.refresh_from_disk()
+        assert manager._tasks_by_name["orphan"]["cancel_requested_at"]
+        manager._process_cancel_requests()
+
+        assert load_task_metadata(str(task_dir))["status"] == "cancelled"
+    finally:
+        requester.shutdown()
+
+
+@pytest.mark.parametrize("change", ["cleared_request", "new_owner"])
+def test_cancel_poll_rechecks_flagged_memory_against_disk(expired_run, monkeypatch, change):
+    manager, task_dir = expired_run
+    update_task_metadata(
+        str(task_dir),
+        lambda info: info.update(
+            status="queued", runner_id=manager.runner_id, lease_until=time.time() + 60,
+            cancel_requested_at="current-request",
+        ),
+    )
+    manager.refresh_from_disk(task_ids=["orphan"], force_all=True)
+
+    def update(info):
+        if change == "cleared_request":
+            info.pop("cancel_requested_at", None)
+        else:
+            info["runner_id"] = "new-runner"
+
+    update_task_metadata(str(task_dir), update)
+    monkeypatch.setattr(
+        manager, "cancel_task",
+        lambda *_args, **_kwargs: pytest.fail("must confirm the current disk request and owner"),
+    )
+    manager._process_cancel_requests()
+    assert load_task_metadata(str(task_dir))["status"] == "queued"
+
+
+def test_cancel_poll_does_not_reread_unflagged_or_foreign_queue(expired_run, monkeypatch):
+    manager, _task_dir = expired_run
+    with manager._lock:
+        manager.tasks = [
+            {
+                "name": f"waiting-{index}", "dir": str(Path(manager.tasks_dir) / f"waiting-{index}"),
+                "status": "queued", "runner_id": manager.runner_id,
+            }
+            for index in range(1000)
+        ] + [{
+            "name": "foreign", "dir": str(Path(manager.tasks_dir) / "foreign"),
+            "status": "queued", "runner_id": "foreign-runner",
+            "cancel_requested_at": "foreign-request",
+        }]
+        manager._rebuild_indexes_locked()
+    loaded = []
+    monkeypatch.setattr(
+        task_manager_module, "load_task_metadata",
+        lambda task_dir: loaded.append(task_dir) or {},
+    )
+
+    for _ in range(3):
+        manager._process_cancel_requests()
+    assert loaded == []
+
+
 def test_expired_local_run_cancellation_stops_real_process_tree(expired_run):
     manager, task_dir = expired_run
     ready = task_dir.parent.parent / "process-ready.json"
