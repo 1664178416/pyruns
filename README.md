@@ -15,6 +15,9 @@ Pyruns 是一个磁盘优先、面向复现实验和终端任务的运行管理�
 
 ## 30 秒开始
 
+命令示例以 Linux/Bash 为主；其他平台请按实际 Shell 调整引用、变量、续行、路径和标准输入
+写法，详见 `pyr exec --help` 或[跨平台差异](docs/cli-guide.md#exec-platform-notes)。
+
 ```bash
 pip install pyruns
 
@@ -152,9 +155,6 @@ pyr exec -n baseline -d -c "python train.py --config baseline.yaml"
 
 ```bash
 pyr exec -n setup -c "bash ./scripts/setup.sh"
-pyr exec -n setup-ps -c "pwsh -NoProfile -File .\scripts\setup.ps1"
-pyr exec -n setup-cmd -c "cmd /c .\scripts\setup.cmd"
-pyr exec -n setup-bat -c "cmd /c .\scripts\setup.bat"
 ```
 
 `exec` 只有两种命令输入：`-c "完整命令"` 和 `--stdin`。前者保存解释器调用和脚本路径，
@@ -176,10 +176,6 @@ pyr exec -n pipeline -c "python preprocess.py && python train.py | tee train.log
 `pyr exec -c "python train.py --epochs 10" -n train -d`；目标程序的参数放在引号内。
 旧写法 `-c echo hello` 会将后续文本合并成 `echo hello`，此时所有 Pyruns 选项应放在 `-c` 前。
 推荐始终引用完整命令，并遵循调用端 Shell 的引用规则，避免表达式被提前拆分或展开。
-
-脚本语法取决于实际 Shell：Windows PowerShell 5.1 不支持 `&&`，PowerShell 的多行
-输入应使用管道/here-string；下文的重定向和 heredoc 是 Bash 用法。详见
-`pyr exec --help` 或[跨平台差异](docs/cli-guide.md#exec-platform-notes)。
 
 需要完整记录已有长脚本时，在 Bash 中运行：
 
@@ -218,8 +214,8 @@ Pyruns 保存收到的脚本文本，后续源文件变化不影响重跑。`--s
 
 普通程序和 Shell 表达式使用带引号的 `-c`，完整脚本使用 `--stdin`。
 
-```powershell
-pyr exec -c '$colors=@("Red","Green"); 1..2 | ForEach-Object { Write-Host $_ -ForegroundColor $colors[$_-1] }'
+```bash
+pyr exec -c 'printf "\033[31mred\033[0m\n\033[32mgreen\033[0m\n"'
 ```
 
 Shell task 使用跨平台伪终端捕获颜色：Linux/macOS 使用系统 PTY，Windows 在已有控制台时使用原生 ConPTY。没有已附着的 Windows 控制台时，会回退到隐藏的 stdout/stderr 管道，避免弹出控制台窗口，此时颜色可能丢失。伪终端捕获的 SGR 颜色序列会写入日志并在前台还原；清屏、光标定位和窗口标题等界面控制序列会被过滤。
@@ -266,7 +262,7 @@ Shell 任务保存在：
 ```text
 <project>/_pyruns_/_shell_/tasks/<task>/
 ├── task_info.json
-├── config.ps1 | config.cmd | config.sh
+├── config.sh | config.ps1 | config.cmd
 └── run_logs/runN.log
 ```
 

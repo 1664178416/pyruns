@@ -2,6 +2,9 @@
 
 本页从安装开始，分别完成一个 shell 任务和一个 Python 配置任务，并说明如何查询、取消、导出和打开 Web UI。
 
+命令示例以 Linux/Bash 为主；其他平台请按实际 Shell 调整引用、变量、续行、路径和标准输入
+写法，详见 `pyr exec --help` 或[跨平台差异](cli-guide.md#exec-platform-notes)。
+
 ## 1. 安装与确认入口
 
 ```bash
@@ -50,9 +53,7 @@ pyr exec -nt smoke -c "python -V"  # smoke_YYYY-MM-DD_HH-MM-SS
 Pyruns 仍会使用现有的安全去重后缀，避免覆盖任务。
 
 目标程序的参数放在 `-c "完整命令"` 的引号内，Pyruns 选项放在字符串外；多行脚本用
-`--stdin` 保存正文。脚本语法遵循实际 Shell：下文的 Bash 示例与 PowerShell/cmd 的
-变量、续行和标准输入写法不同，详见 `pyr exec --help` 或
-[跨平台差异](cli-guide.md#exec-platform-notes)。
+`--stdin` 保存正文。
 
 只预览计划、不创建 workspace/task 也不运行命令：
 
@@ -76,7 +77,7 @@ pyr log smoke
 ```text
 _pyruns_/_shell_/tasks/smoke/
 ├── task_info.json
-├── config.ps1 | config.cmd | config.sh
+├── config.sh | config.ps1 | config.cmd
 └── run_logs/run1.log
 ```
 
@@ -126,10 +127,10 @@ pyr exec -n report -c "python eval.py > metrics.txt"
 pyr exec -n pipeline -c "python preprocess.py && python train.py | tee train.log"
 ```
 
-所有平台都使用相同规则：`-c` 接收完整命令字符串，`--stdin` 接收完整脚本正文。例如 PowerShell：
+所有平台都使用相同规则：`-c` 接收完整命令字符串，`--stdin` 接收完整脚本正文。例如在 Bash 中输出彩色日志：
 
-```powershell
-pyr exec -c '$colors=@("Red","Green"); 1..2 | ForEach-Object { Write-Host $_ -ForegroundColor $colors[$_-1] }'
+```bash
+pyr exec -c 'printf "\033[31mred\033[0m\n\033[32mgreen\033[0m\n"'
 ```
 
 Shell task 使用跨平台伪终端保留颜色：Linux/macOS 使用系统 PTY，Windows 在已有控制台时使用原生 ConPTY。没有已附着的 Windows 控制台时，会回退到隐藏的 stdout/stderr 管道，避免弹出控制台窗口，此时颜色可能丢失。伪终端捕获的日志保留 SGR 颜色，但过滤清屏、光标定位和窗口标题等控制序列。
@@ -269,7 +270,7 @@ pyr -w ./_pyruns_/train show quick --run 2
 从另一个目录操作项目可以使用 `-C`：
 
 ```bash
-pyr -C D:/work/my-project -w shell status
+pyr -C /home/user/work/my-project -w shell status
 ```
 
 `-C`、`-w` 等项目上下文参数放在子命令之前；`--json` 只能放在明确支持它的子命令后。

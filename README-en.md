@@ -15,6 +15,10 @@ Pyruns is a disk-first runner for reproducible experiments and terminal workload
 
 ## Start in 30 seconds
 
+Command examples use Linux/Bash. On other platforms, adapt quoting, variables, continuations,
+paths, and stdin syntax to your shell; see `pyr exec --help` or the
+[platform notes](docs/cli-guide.md#exec-platform-notes).
+
 ```bash
 pip install pyruns
 
@@ -152,9 +156,6 @@ Include the interpreter in the complete command when running an existing script:
 
 ```bash
 pyr exec -n setup -c "bash ./scripts/setup.sh"
-pyr exec -n setup-ps -c "pwsh -NoProfile -File .\scripts\setup.ps1"
-pyr exec -n setup-cmd -c "cmd /c .\scripts\setup.cmd"
-pyr exec -n setup-bat -c "cmd /c .\scripts\setup.bat"
 ```
 
 `exec` accepts two inputs: `-c "COMPLETE COMMAND"` and `--stdin`. The first saves the command
@@ -170,10 +171,6 @@ pyr exec -n report -c "python eval.py > metrics.txt"
 For the legacy unquoted form `-c echo hello`, place Pyruns options before `-c`.
 Follow the calling shell's quoting rules to preserve variables and shell syntax. Use `--stdin`
 for complex or multiline scripts.
-
-Script syntax follows the selected shell: Windows PowerShell 5.1 does not support `&&`.
-Use a pipe or here-string for PowerShell multiline input; the redirects and heredocs below
-are Bash examples. Run `pyr exec --help` for platform notes, paths, and input examples.
 
 To record a complete existing script, run this in Bash:
 
@@ -225,7 +222,7 @@ The preview does not create `_pyruns_`, tasks, or settings files, and it does no
 ```text
 <project>/_pyruns_/_shell_/tasks/<task>/
 ├── task_info.json
-├── config.ps1 | config.cmd | config.sh
+├── config.sh | config.ps1 | config.cmd
 └── run_logs/runN.log
 ```
 

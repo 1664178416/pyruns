@@ -12,6 +12,9 @@ pyr -w WORKSPACE COMMAND [OPTIONS]
 
 `pyr` 与 `pyruns` 都是正式入口，命令、选项、输出和退出码完全一致。本文为简洁统一使用 `pyr`。任务必须使用精确名称，不支持序号、模糊匹配、旧命令或隐式别名。
 
+命令示例以 Linux/Bash 为主；其他平台请按实际 Shell 调整引用、变量、续行、路径和标准输入
+写法，见[跨平台差异](#exec-platform-notes)。
+
 ## 1. 设计约定
 
 ### 一次调用，一次操作
@@ -49,7 +52,7 @@ pyr -w WORKSPACE COMMAND [OPTIONS]
 
 ```bash
 pyr -w train ls --json
-pyr -C D:/work/project -w shell status
+pyr -C /home/user/work/project -w shell status
 ```
 
 每个子命令都有独立帮助：
@@ -166,8 +169,6 @@ pyr exec --dry-run --name smoke --json -c "python -V"
 
 ```bash
 pyr exec --name setup -c "bash ./scripts/setup.sh"
-pyr exec --name setup-ps -c "pwsh -NoProfile -File .\scripts\setup.ps1"
-pyr exec --name setup-cmd -c "cmd /c .\scripts\setup.cmd"
 ```
 
 路径中的空格应按工作区 Shell 规则引用；脚本自己的参数也放在命令字符串内。
@@ -203,28 +204,6 @@ pyr exec -c "python train.py --epochs 10" -n train -d
 执行，引用规则和可用命令可能因 Bash、PowerShell 与 cmd.exe 而不同。单引号和双引号由
 调用端解析；反引号在 Bash 中执行命令替换，在 PowerShell 中用于转义，不是跨平台的
 脚本包裹符。复杂或多行命令使用 `--stdin`。
-
-### Windows、Linux 与 WSL 的差异 {#exec-platform-notes}
-
-Pyruns 的选项相同，脚本语法由实际执行的 Shell 决定。默认跟随调用端 Shell；Windows
-可以使用 PowerShell、cmd 或已安装的 Bash，Linux 也不一定使用 Bash。WSL 使用 Linux
-环境，Pyruns 不会把 Bash 脚本改写成 PowerShell/cmd 脚本。
-
-| 写法 | Bash | PowerShell | cmd |
-| --- | --- | --- | --- |
-| 读取环境变量 | `$NAME` | `$env:NAME` | `%NAME%` |
-| 将完整命令作为一个参数传给 `-c` | 单引号或双引号 | 单引号或双引号 | 双引号；单引号是普通字符 |
-| 行末续行符 | `\` | 反引号 | `^` |
-| 成功后执行下一条命令 | `&&` | PowerShell 7+ 支持 `&&`，Windows PowerShell 5.1 不支持 | `&&` |
-
-下文的 `< pipeline.sh` 和 heredoc 是 Bash 用法；PowerShell 使用文件管道或 here-string。
-路径和程序应在执行环境内可用，例如 Windows 的 `D:\data` 在 WSL 默认挂载下通常是
-`/mnt/d/data`。含空格的路径仍须按对应 Shell 的规则引用。
-
-多步脚本需自行控制遇错停止，否则前面失败、后面成功时，任务仍可能显示成功。Bash
-示例使用 `set -euo pipefail`；PowerShell 可用 `$ErrorActionPreference = 'Stop'` 控制
-cmdlet 错误，并在外部程序后检查 `$LASTEXITCODE`、非零时 `exit $LASTEXITCODE`；cmd
-需检查 `errorlevel` 并退出。Pyruns 按最终进程退出码判断任务结果。
 
 ### 通过标准输入提交多行脚本
 
@@ -267,27 +246,6 @@ Pyruns 先读取完整的 UTF-8 文本，再保存为任务 Shell 脚本并交�
 为 4 MiB。`--stdin` 不能与 `-c` 同用，且在终端直接运行时会
 报错，必须提供重定向、管道或 heredoc。任务进程不继承调用端的标准输入。
 
-PowerShell 可使用单引号 here-string：
-
-```powershell
-@'
-$message = 'first step'
-Write-Output $message
-Write-Output 'second step'
-'@ | pyr exec -n pipeline --stdin
-```
-
-管道输入必须使用 UTF-8；Windows PowerShell 5.1 需要先设置
-`$OutputEncoding = [System.Text.UTF8Encoding]::new($false)`。可配合 `--dry-run` 预览正文，
-或配合 `-d` 后台执行；输入会在创建任务前读完。任务进程不继承调用端的标准输入。
-
-记录已有 PowerShell 脚本时，用管道读取整个 UTF-8 文件：
-
-```powershell
-Get-Content -Raw -Encoding UTF8 .\pipeline.ps1 |
-  pyr exec -nt pipeline -d --stdin
-```
-
 标准输入是常见的 CLI 约定：[Git `commit --file -`](https://git-scm.com/docs/git-commit)
 从 stdin 读取提交正文；[Docker build](https://docs.docker.com/build/building/context/#empty-context)
 支持从重定向或 heredoc 读取 Dockerfile。Pyruns 的 `--stdin` 使用同一输入方式，额外将
@@ -298,13 +256,7 @@ Get-Content -Raw -Encoding UTF8 .\pipeline.ps1 |
 所有平台都遵循同一命令契约：普通程序、变量、管道、分号、重定向、通配符和命令链
 放在一个引用后的 `-c` 字符串中，或通过 `--stdin` 提交完整脚本。
 
-PowerShell 示例：
-
-```powershell
-pyr exec -c '$colors=@("Red","Green"); 1..2 | ForEach-Object { Write-Host $_ -ForegroundColor $colors[$_-1] }'
-```
-
-Bash、Zsh 或 Fish 示例：
+Bash 示例：
 
 ```bash
 pyr exec -c 'printf "%s\n" "$HOME" | sed "s/home/HOME/"'
@@ -312,8 +264,36 @@ pyr exec -c 'printf "%s\n" "$HOME" | sed "s/home/HOME/"'
 
 这是调用端 shell 的固有限制：它会在启动 `pyr` 前解析自己的控制符，因此外部 CLI 无法在启动后找回未引用的剩余文本。颜色捕获使用伪终端：Linux/macOS 通过系统 PTY，Windows 在已有控制台时通过原生 ConPTY。没有已附着的 Windows 控制台时，会回退到隐藏管道，避免弹出控制台窗口，此时颜色可能丢失。伪终端捕获的 SGR 颜色进入 `runN.log`，清屏、光标定位和窗口标题等界面控制序列会被过滤。
 
-命令由工作区 Shell 执行，PowerShell 的 `ls` 等 alias 或 shell builtin 可以直接使用。
-命令失败时保留 PowerShell、Bash 或 cmd 自己产生的完整错误。
+命令由工作区 Shell 执行，可直接使用该 Shell 的内建命令。
+命令失败时保留 Bash、PowerShell 或 cmd 自己产生的完整错误。
+
+### 其他平台的操作差异 {#exec-platform-notes}
+
+Pyruns 的选项相同，脚本语法由实际执行的 Shell 决定；默认跟随调用端 Shell。
+其他平台应选择与脚本匹配的解释器，并按该 Shell 的规则引用命令和路径。
+
+| 写法 | Bash | PowerShell | cmd |
+| --- | --- | --- | --- |
+| 读取环境变量 | `$NAME` | `$env:NAME` | `%NAME%` |
+| 将完整命令作为一个参数传给 `-c` | 单引号或双引号 | 单引号或双引号 | 双引号；单引号是普通字符 |
+| 行末续行符 | `\` | 反引号 | `^` |
+| 成功后执行下一条命令 | `&&` | PowerShell 7+ 支持 `&&`，Windows PowerShell 5.1 不支持 | `&&` |
+
+`< pipeline.sh` 和 heredoc 是 Bash 用法。PowerShell 使用管道或单引号 here-string；
+记录已有脚本可读取整个 UTF-8 文件：
+
+```powershell
+Get-Content -Raw -Encoding UTF8 .\pipeline.ps1 |
+  pyr exec -nt pipeline -d --stdin
+```
+
+Windows PowerShell 5.1 提交前需设置 UTF-8 管道编码：
+`$OutputEncoding = [System.Text.UTF8Encoding]::new($false)`。
+WSL 使用 Linux 路径和程序，例如 Windows 的 `D:\data` 在默认挂载下通常是 `/mnt/d/data`。
+
+多步脚本需自行控制遇错停止；Pyruns 按最终进程退出码判断结果。Bash 示例使用
+`set -euo pipefail`；PowerShell 可用 `$ErrorActionPreference = 'Stop'` 控制 cmdlet 错误，
+外部程序失败时检查 `$LASTEXITCODE` 并 `exit $LASTEXITCODE`；cmd 需检查 `errorlevel` 并退出。
 
 ### 环境变量
 
@@ -675,7 +655,7 @@ pyr -w shell log smoke
 │   ├── script_info.json
 │   └── tasks/<task>/
 │       ├── task_info.json
-│       ├── config.ps1 | config.cmd | config.sh
+│       ├── config.sh | config.ps1 | config.cmd
 │       └── run_logs/runN.log
 └── <script>/
     ├── script_info.json
