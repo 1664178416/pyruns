@@ -98,6 +98,7 @@ MAX_MONITOR_LOG_TAIL_BYTES = _cfg.MAX_MONITOR_CHUNK_SIZE
 # Keep the first task small for fast initial results; amortize ripgrep startup
 # across later tasks without making one slow filesystem listing too large.
 _LOG_SEARCH_TASK_BATCH_SIZE = 128
+_STREAM_LOG_SEARCH_TASK_BATCH_SIZE = 32
 TaskManagerFactory = Callable[[str], TaskManager]
 TaskGeneratorFactory = Callable[[str], TaskGenerator]
 MetricsFactory = Callable[[], SystemMonitor]
@@ -1293,8 +1294,12 @@ class PyrunsRuntime:
 
             # Stream matches within each batch while amortizing ripgrep launches.
             cursor = 0
+            batch_size = (
+                _STREAM_LOG_SEARCH_TASK_BATCH_SIZE
+                if on_progress is not None else _LOG_SEARCH_TASK_BATCH_SIZE
+            )
             while cursor < len(ordered) and not budget.limit_hit:
-                batch = ordered[cursor:cursor + (_LOG_SEARCH_TASK_BATCH_SIZE if cursor else 1)]
+                batch = ordered[cursor:cursor + (batch_size if cursor else 1)]
                 contexts = {}
                 for task in batch:
                     if cancelled.is_set():
