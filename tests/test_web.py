@@ -3120,6 +3120,38 @@ def test_search_limit_is_shared_across_fields_and_stream_reports_truncation(tmp_
         assert error["type"] == "error" and error["status"] == 422
 
 
+def test_mixed_search_limit_is_consistent_for_normal_and_streaming_responses(tmp_path):
+    workspace = _make_workspace(tmp_path, "main")
+    names = [f"needle-{index:03d}" for index in range(70)]
+    for name in names:
+        _add_task(workspace, name, log_text="needle\n")
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    with TestClient(create_app(runtime)) as client:
+        params = {"query": "needle", "include_logs": True, "sort": "name_asc", "refresh": False,
+                  "max_results": 66, "limit": 70, "summary": True}
+        expected = None
+        # Check both response transports before and after the log cache warms.
+        for stream in (False, True, False, True):
+            response = client.get("/api/tasks", params={**params, "stream": stream})
+            assert response.status_code == 200
+            if stream:
+                event = json.loads(response.text.splitlines()[-1])
+                assert event["type"] == "complete"
+                page = event["page"]
+            else:
+                page = response.json()
+            assert page["total"] == 33
+            assert [task["name"] for task in page["items"]] == names[:33]
+            assert all(task["search_match_count"] == 2 for task in page["items"])
+            assert all({match["field"] for match in task["search_matches"]} == {"name", "log"}
+                       for task in page["items"])
+            assert page["search_limit_hit"] and not page["search_complete"]
+            assert not page["search_errors"]
+            if expected is None:
+                expected = page
+            assert page == expected
+
+
 @pytest.mark.parametrize("cancel", [False, True])
 def test_search_publishes_matches_before_file_finishes_and_can_cancel(tmp_path, monkeypatch, cancel):
     from concurrent.futures import CancelledError, ThreadPoolExecutor

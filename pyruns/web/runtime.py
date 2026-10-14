@@ -95,8 +95,9 @@ from pyruns.utils.task_files import (
 
 _DEFAULT_GPU_SCHEDULER_CONFIG = GpuSchedulerConfig.from_settings({})
 MAX_MONITOR_LOG_TAIL_BYTES = _cfg.MAX_MONITOR_CHUNK_SIZE
-# Keep the first task small for fast initial results; amortize ripgrep startup
-# across later tasks without making one slow filesystem listing too large.
+# Larger batches reduce ripgrep startup costs for log-only requests.
+# Streaming and mixed-field searches use smaller batches for early results
+# and consistent metadata/log match limits across response transports.
 _LOG_SEARCH_TASK_BATCH_SIZE = 128
 _STREAM_LOG_SEARCH_TASK_BATCH_SIZE = 32
 TaskManagerFactory = Callable[[str], TaskManager]
@@ -1296,7 +1297,8 @@ class PyrunsRuntime:
             cursor = 0
             batch_size = (
                 _STREAM_LOG_SEARCH_TASK_BATCH_SIZE
-                if on_progress is not None else _LOG_SEARCH_TASK_BATCH_SIZE
+                if on_progress is not None or (search_logs and search_field == "all")
+                else _LOG_SEARCH_TASK_BATCH_SIZE
             )
             while cursor < len(ordered) and not budget.limit_hit:
                 batch = ordered[cursor:cursor + (batch_size if cursor else 1)]
