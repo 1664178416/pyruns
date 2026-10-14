@@ -634,6 +634,10 @@ test('runtime GPU preview cancels hidden requests and recovers from timeout', as
   await page.goto('/manager?token=pyruns-e2e-access-token')
   await page.getByRole('button', { name: 'Runtime', exact: true }).click()
   const panel = page.getByRole('dialog', { name: 'Runtime settings' })
+  // Rule validation may remain visible after the preview request recovers.
+  const previewAlert = panel.getByRole('alert').filter({
+    has: page.getByRole('button', { name: 'Retry', exact: true }),
+  })
   const previewState = () => page.evaluate(() => (window as typeof window & {
     gpuPreviewTest: { requests: number; aborts: number; stall: boolean }
   }).gpuPreviewTest)
@@ -645,14 +649,14 @@ test('runtime GPU preview cancels hidden requests and recovers from timeout', as
   await panel.getByRole('tab', { name: 'GPU', exact: true }).click()
   await expect.poll(async () => (await previewState()).requests).toBe(2)
   await page.clock.fastForward(10_001)
-  await expect(panel.getByRole('alert')).toContainText('GPU preview timed out.')
+  await expect(previewAlert).toContainText('GPU preview timed out.')
   await page.evaluate(() => { (window as typeof window & { gpuPreviewTest: { stall: boolean } }).gpuPreviewTest.stall = false })
-  await panel.getByRole('button', { name: 'Retry', exact: true }).click()
-  await expect(panel.getByRole('alert')).toBeHidden()
+  await previewAlert.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(previewAlert).toBeHidden()
   await expect(panel.getByRole('button', { name: /GPU 0 · Test GPU/ })).toBeVisible()
   await page.route('**/api/system/metrics**', route => route.fulfill({ status: 503, json: { detail: 'Preview unavailable' } }))
   await panel.getByRole('button', { name: 'Reload runtime' }).click()
-  await expect(panel.getByRole('alert')).toContainText('Showing the last available GPU values.')
+  await expect(previewAlert).toContainText('Showing the last available GPU values.')
   await expect(panel.getByRole('button', { name: /GPU 0 · Test GPU/ })).toBeVisible()
 })
 

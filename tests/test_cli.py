@@ -303,11 +303,17 @@ def test_official_entrypoints_render_their_own_complete_help(
     assert "--env-file" in command_help.stdout
     assert "-e CUDA_VISIBLE_DEVICES=0 SEED=42 -- python train.py" in command_help.stdout
     assert f"{program} exec -nt pipeline -d --stdin < pipeline.sh" in command_help.stdout
+    help_content = " ".join(command_help.stdout.split())
+    assert "Prefer --stdin to record a complete script" in help_content
+    assert "explicit parameters, especially for long commands and AI agents" in help_content
+    assert "does not capture runtime-expanded argument values or external file contents" in help_content
+    assert "Set/export required variables in the script" in help_content
     assert "Exact argv (recommended for Python and ordinary programs):" in command_help.stdout
     assert "Reruns read the original script path again" in command_help.stdout
     assert "Quoted shell command (-c; also supports pipes" in command_help.stdout
     assert "--gpu-wait COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS" in command_help.stdout
     assert "GPU idle percent = 100 - reported GPU utilization" in command_help.stdout
+    assert "All requested GPUs must qualify together" in command_help.stdout
     assert "timeout 0 waits indefinitely" in command_help.stdout
     assert "Each following token is one program argument" in command_help.stdout
     assert "-c COMMAND_STRING" in command_help.stdout

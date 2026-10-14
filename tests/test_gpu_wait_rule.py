@@ -93,6 +93,34 @@ def test_different_idle_rules_observe_separate_continuous_stability_windows():
             scheduler.release(name)
 
 
+@pytest.mark.parametrize("selection", ["2", "device=0,1"])
+@pytest.mark.parametrize(("blocked_memory", "blocked_util"), [(8192, 10), (1024, 80)])
+def test_multi_gpu_wait_requires_every_card_to_remain_eligible(selection, blocked_memory, blocked_util):
+    now = [0.0]
+    provider = _GpuProvider([])
+    scheduler = GpuResourceScheduler(provider=provider, clock=lambda: now[0])
+    config = GpuSchedulerConfig.from_wait_rule(f"{selection}-20-70-2-1")
+
+    # GPU 0 stays ready. GPU 1 briefly recovers at t=2, then loses its stable window.
+    for timestamp, second_ready in enumerate([False, False, True, False, True, True, True]):
+        now[0] = float(timestamp)
+        provider.devices = [
+            GpuDevice(0, "GPU", "GPU-0", 1024, 24576, 10),
+            GpuDevice(
+                1, "GPU", "GPU-1",
+                1024 if second_ready else blocked_memory, 24576,
+                10 if second_ready else blocked_util,
+            ),
+        ]
+        decision = scheduler.try_reserve("two-cards", 1, config, task_env={})
+        if timestamp < 6:
+            assert decision.assignment is None
+        else:
+            assert decision.assignment is not None
+            assert decision.assignment.gpu_ids == [0, 1]
+            assert decision.assignment.env["CUDA_VISIBLE_DEVICES"] == "0,1"
+
+
 def test_gpu_count_and_explicit_devices_are_respected_inside_visibility_mask():
     provider = _GpuProvider([
         GpuDevice(0, "GPU", "GPU-0", 1024, 24576, 90),

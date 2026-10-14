@@ -176,6 +176,7 @@ def _gpu_wait_help(program: str) -> str:
         "  Example 2-20-70-15-2: two GPUs, each with >=20 GiB free and >=70% idle,\n"
         "  continuously eligible for 15 seconds; wait at most 2 hours before starting.\n"
         "  GPU idle percent = 100 - reported GPU utilization. All thresholds are per GPU.\n"
+        "  All requested GPUs must qualify together; one eligible GPU is insufficient for two.\n"
         "  Omit trailing fields: 1-8 defaults to 70% idle, 15 seconds stable, 48 hours timeout.\n"
         "  Stability 0 starts as soon as eligible; timeout 0 waits indefinitely.\n"
         "  Optional units are case-insensitive: G/GiB, M/MiB (binary); GB/MB (decimal);\n"
@@ -203,9 +204,11 @@ def _exec_help_epilog(program: str) -> str:
 
     return (
         "Examples:\n"
-        "  Record a complete script (Bash):\n"
+        "  Record complete commands and parameters (Bash):\n"
         f"    {program} exec -nt pipeline -d --stdin < pipeline.sh\n"
-        "    --stdin saves the entire file as one task; reruns use this saved text.\n"
+        "    --stdin preserves commands, explicit parameters, variable assignments, quoting,\n"
+        "    line continuations, and newlines. Reruns use the saved script text.\n"
+        "    It does not capture runtime-expanded argument values or external file contents.\n"
         "    -d returns after submission. Omit -d to follow logs and wait for the result.\n\n"
         "  Task naming:\n"
         f"    {program} exec -- python -V                         auto-name as task_<timestamp>\n"
@@ -278,6 +281,7 @@ def _exec_help_epilog(program: str) -> str:
         f"  {program} exec -n gpu0 --env-file .env.train -e SEED=42 -- python train.py\n"
         "  One -e accepts multiple KEY=VALUE entries; repeating -e is optional.\n"
         "  -e and --env-file are saved with the task for CLI and Web UI reruns.\n"
+        "  Set/export required variables in the script, or persist them with -e/--env-file.\n"
         "  Variables inherited from the invoking terminal affect this run but are not saved.\n"
         "  PYTHONUNBUFFERED=1, PYTHONIOENCODING=utf-8, and PYTHONUTF8=1 are automatic.\n"
         "  Persisted environment values are visible in task_info.json and 'show'; do not store secrets.\n\n"
@@ -565,7 +569,8 @@ def build_parser(
             "task again; 'run' supports both shell tasks and Python configuration tasks.\n"
             "Omit a name to generate task_<timestamp>, use -nt PREFIX to append the timestamp,\n"
             "or use -n NAME when the task name must be exact.\n"
-            "Use -c with a quoted shell command, or --stdin to save a complete multiline script.\n"
+            "Use -c for quoted shell commands. Prefer --stdin to record a complete script and its\n"
+            "explicit parameters, especially for long commands and AI agents.\n"
             "For direct program execution, '-- PROGRAM ARG ...' ends Pyruns option parsing and stores\n"
             "every following item as an exact argv element. It does not enable shell parsing.\n"
             "-c/--command supports ordinary programs as well as pipes, redirects, variable\n"
@@ -612,7 +617,7 @@ def build_parser(
     execute_source.add_argument(
         "--stdin",
         action="store_true",
-        help="read a complete UTF-8 shell script from stdin and save it for reruns",
+        help="read and save a complete UTF-8 script; preferred for full command/parameter records",
     )
     execute.add_argument(
         "-e",
