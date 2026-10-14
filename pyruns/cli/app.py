@@ -215,7 +215,7 @@ def _exec_help_epilog(program: str) -> str:
         f"    {program} exec -nt smoke -- python -V               name as smoke_<timestamp>\n"
         f"    {program} exec -n smoke -- python -V                 use the exact name smoke\n"
         "    -n/--name and -nt/--name-timestamp are mutually exclusive.\n\n"
-        "  Exact argv (recommended for Python and ordinary programs):\n"
+        "  Exact argv (preserve individual program arguments):\n"
         f"    {program} exec -n smoke -- python -V\n"
         f"    {program} exec -n train -- python train.py --epochs 10\n"
         f"    {program} exec -n tests -- python -m pytest -q\n"
@@ -231,7 +231,10 @@ def _exec_help_epilog(program: str) -> str:
         "  Quoted shell command (-c; also supports pipes, redirects, and chaining):\n"
         f"    {program} exec -n report -c \"python eval.py > metrics.txt\"\n"
         f"    {program} exec -n pipeline -c \"python prep.py && python train.py\"\n"
-        "    -c consumes the remaining command text and runs it through the stored workspace shell.\n"
+        f"    {program} exec -c \"python train.py --epochs 10\" -n train -d\n"
+        "    -c accepts one quoted command string; Pyruns options can come before or after it.\n"
+        "    Keep the program's options inside the quotes. For legacy unquoted '-c echo hello',\n"
+        "    put Pyruns options before -c; the remaining tokens are joined as command text.\n"
         "    Quote expressions containing shell syntax according to the calling shell.\n\n"
         "    Single and double quotes follow the calling shell's rules. In Bash, single quotes\n"
         "    preserve $variables; double quotes can expand them before Pyruns receives the text.\n"
@@ -612,7 +615,7 @@ def build_parser(
         dest="shell_command",
         type=_non_empty,
         metavar="COMMAND_STRING",
-        help="run the remaining command text through the workspace shell",
+        help="run a quoted command string through the workspace shell",
     )
     execute_source.add_argument(
         "--stdin",

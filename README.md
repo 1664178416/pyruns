@@ -171,14 +171,17 @@ pyr exec -n preprocess -- ./scripts/preprocess.sh "dataset A" --fast
 pyr exec -n train -- python train.py --lr 0.001
 ```
 
-当命令确实依赖管道、重定向、变量展开、通配符或 `&&` 时，使用 `-c`：
+短命令及包含管道、重定向、变量展开、通配符或 `&&` 的 Shell 表达式都可以使用 `-c`：
 
 ```bash
 pyr exec -n report -c "python eval.py > metrics.txt"
 pyr exec -n pipeline -c "python preprocess.py && python train.py | tee train.log"
 ```
 
-`-c echo hello` 会把剩余文本合并成 `echo hello`。命令含 `;`、`|`、重定向或变量时，必须按调用端 shell 的规则引用整段表达式，避免调用端在 Pyruns 启动前将它拆开。
+将完整命令引用为一个字符串时，Pyruns 选项可以放在 `-c "命令"` 前面或后面，例如
+`pyr exec -c "python train.py --epochs 10" -n train -d`；目标程序的参数放在引号内。
+旧写法 `-c echo hello` 会将后续文本合并成 `echo hello`，此时所有 Pyruns 选项应放在 `-c` 前。
+推荐始终引用完整命令，并遵循调用端 Shell 的引用规则，避免表达式被提前拆分或展开。
 
 需要完整记录已有长脚本时，在 Bash 中运行：
 

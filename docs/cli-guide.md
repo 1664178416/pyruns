@@ -198,16 +198,19 @@ pyr -w shell log setup
 
 ### Shell command string：`-c`
 
-短命令和管道、重定向、变量展开、通配符或 `&&` 等 Shell 表达式，可使用与 `sh -c`
-习惯一致的 `-c` / `--command`：
+短命令和管道、重定向、变量展开、通配符或 `&&` 等 Shell 表达式，可使用
+`-c` / `--command`，将完整命令作为一个带引号的参数传入：
 
 ```bash
 pyr exec --name report -c "python eval.py > metrics.txt"
 pyr exec --name pipeline -c "python preprocess.py && python train.py | tee train.log"
+pyr exec -c "python train.py --epochs 10" -n train -d
 ```
 
-`-c` 会消费并合并后续 command text，因此 `-c echo hello` 会作为 `echo hello` 执行。
-Pyruns 的选项应放在 `-c` 前。表达式含 `;`、`|`、重定向或变量时，要按调用端 Shell
+命令被完整引用为一个字符串时，Pyruns 选项可以放在 `-c "命令"` 前面或后面；目标程序
+的选项放在引号内。`-c` 是 `exec` 的选项，因此仍需写在 `exec` 后面。
+为兼容旧用法，`-c echo hello` 会将后续文本合并成 `echo hello`，此时所有 Pyruns 选项
+应放在 `-c` 前。推荐始终引用完整命令。表达式含 `;`、`|`、重定向或变量时，要按调用端 Shell
 的规则引用整段，否则调用端会在 Pyruns 启动前先拆分它。表达式由工作区解析到的 Shell
 执行，引用规则和可用命令可能因 Bash、PowerShell 与 cmd.exe 而不同。单引号和双引号由
 调用端解析；反引号在 Bash 中执行命令替换，在 PowerShell 中用于转义，不是跨平台的

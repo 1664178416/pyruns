@@ -308,7 +308,8 @@ def test_official_entrypoints_render_their_own_complete_help(
     assert "explicit parameters, especially for long commands and AI agents" in help_content
     assert "does not capture runtime-expanded argument values or external file contents" in help_content
     assert "Set/export required variables in the script" in help_content
-    assert "Exact argv (recommended for Python and ordinary programs):" in command_help.stdout
+    assert "Exact argv (preserve individual program arguments):" in command_help.stdout
+    assert "Pyruns options can come before or after it" in help_content
     assert "Reruns read the original script path again" in command_help.stdout
     assert "Quoted shell command (-c; also supports pipes" in command_help.stdout
     assert "--gpu-wait COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS" in command_help.stdout
@@ -1150,20 +1151,26 @@ def test_exec_dry_run_appends_timestamp_to_requested_prefix(tmp_path):
     assert not (tmp_path / "_pyruns_").exists()
 
 
-def test_exec_command_string_dry_run_does_not_evaluate_the_expression(tmp_path):
+@pytest.mark.parametrize("command_first", [False, True])
+def test_exec_command_string_dry_run_does_not_evaluate_the_expression(tmp_path, command_first):
     marker = tmp_path / "must-not-exist.txt"
-    expression = f'echo touched > "{marker}"'
+    expression = f'echo touched -n child > "{marker}"'
+    command = ["-c", expression]
+    options = ["--dry-run", "--name", "preview"]
+    arguments = [*command, *options] if command_first else [*options, *command]
 
     result = _run_cli(
         tmp_path,
         "exec",
-        "--dry-run",
-        "-c",
-        expression,
+        "--json",
+        *arguments,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "nothing was created or run" in result.stdout
+    plan = json.loads(result.stdout)
+    assert plan["dry_run"] is True
+    assert plan["task"]["planned_name"] == "preview"
+    assert plan["shell_expression"] == expression
     assert not marker.exists()
     assert not (tmp_path / "_pyruns_").exists()
 
