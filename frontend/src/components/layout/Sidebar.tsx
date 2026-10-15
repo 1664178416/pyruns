@@ -2,12 +2,13 @@ import { NavLink, useSearchParams } from 'react-router-dom'
 import { Suspense, lazy, useRef, useState } from 'react'
 import {
   LayoutDashboard, Wand2, ListTodo, Terminal, Rocket,
-  Sun, Moon, ChevronsUpDown, FileCode, SlidersHorizontal, Settings2,
+  Sun, Moon, Languages, ChevronsUpDown, FileCode, SlidersHorizontal, Settings2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useWorkspaceStore, useThemeStore, usePreferencesStore } from '@/store'
 import { getWorkspaceWorkingPath } from '@/utils/workspace'
 import UpdateControl from './UpdateControl'
+import { setLanguage, useTranslation } from '@/i18n'
 
 const RuntimePanel = lazy(() => import('./RuntimePanel'))
 
@@ -24,6 +25,9 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ width = 220, compact = false }: SidebarProps) {
+  const { t, i18n } = useTranslation()
+  const chinese = i18n.resolvedLanguage === 'zh-CN'
+  const languageAction = chinese ? 'Switch to English' : 'Switch to Chinese'
   const workspace = useWorkspaceStore(s => s.workspace)
   const { theme, toggle } = useThemeStore()
   const openPreferences = usePreferencesStore(s => s.open)
@@ -36,21 +40,21 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
   const visibleWorkspacePath = getWorkspaceWorkingPath(workspace)
   const visibleWorkspaceLeaf = visibleWorkspacePath?.split(/[\\/]/).filter(Boolean).pop() || ''
   const workspaceLabel = !workspaceReady
-    ? 'Choose'
+    ? t('Choose')
     : shellWorkspaceActive
       ? (visibleWorkspaceLeaf || '_shell_')
-      : (scriptFileName || 'Choose .py file')
-  const workspaceModeLabel = !workspaceReady ? 'Setup' : shellWorkspaceActive ? 'Shell' : 'Python'
+      : (scriptFileName || t('Choose .py file'))
+  const workspaceModeLabel = !workspaceReady ? t('Setup') : shellWorkspaceActive ? 'Shell' : 'Python'
   const workspacePathHint = !workspaceReady
-    ? 'Workspace needed - Choose workspace'
-    : visibleWorkspacePath || 'Choose a Python script or choose a shell workspace folder'
+    ? t('Workspace needed - Choose workspace')
+    : visibleWorkspacePath || t('Choose a Python script or choose a shell workspace folder')
   const runtimeLabel = workspace?.settings?.python_executable
-    ? 'Python path'
+    ? t('Python path')
     : workspace?.settings?.conda_env
       ? String(workspace.settings.conda_env)
       : workspace?.settings?.global_env && Object.keys(workspace.settings.global_env).length
-        ? 'Workspace Env'
-        : 'Follow'
+        ? t('Workspace Env')
+        : t('Follow')
 
   const openWorkspaceLauncher = (mode: 'python' | 'shell') => {
     const nextParams = new URLSearchParams(searchParams)
@@ -91,8 +95,8 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             key={to}
             to={to}
             end={end}
-            aria-label={label}
-            title={label}
+            aria-label={t(label)}
+            title={t(label)}
             className={({ isActive }) => clsx(
               'flex min-h-11 items-center gap-2.5 rounded-lg py-2 text-sm font-medium transition-colors sm:min-h-10',
               compact ? 'justify-center px-0' : 'pl-2.5 pr-3',
@@ -102,7 +106,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             )}
           >
             <Icon className="h-4 w-4 flex-none" />
-            {!compact && <span>{label}</span>}
+            {!compact && <span>{t(label)}</span>}
           </NavLink>
         ))}
       </nav>
@@ -110,7 +114,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
       <div className={clsx('border-t border-border-subtle', compact ? 'p-2' : 'p-2.5')}>
         {!compact && (
           <div className="mb-2 px-2 text-[11px] font-medium text-txt-tertiary">
-            Workspace
+            {t('Workspace')}
           </div>
         )}
         <button
@@ -152,8 +156,8 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
           ref={runtimeButtonRef}
           type="button"
           onClick={() => setRuntimeOpen(true)}
-          aria-label="Runtime"
-          title="Runtime"
+          aria-label={t('Runtime')}
+          title={t('Runtime')}
           className="touch-target mt-1 min-h-11 w-full rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-accent/25 sm:min-h-10"
         >
           <div className={clsx('flex items-center gap-2', compact && 'justify-center')}>
@@ -161,7 +165,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             {!compact && (
               <>
                 <span className="min-w-0 flex-1 text-sm font-medium text-txt-secondary">
-                  Runtime
+                  {t('Runtime')}
                 </span>
                 <span className="max-w-[112px] truncate rounded-md bg-surface-overlay px-1.5 py-0.5 text-[10px] font-medium text-txt-secondary">
                   {runtimeLabel}
@@ -175,19 +179,30 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
           <button
             type="button"
             onClick={event => openPreferences(event.currentTarget)}
-            aria-label="Preferences"
+            aria-label={t('Preferences')}
             aria-keyshortcuts="Control+, Meta+,"
-            title="Preferences (Ctrl/Cmd+,)"
+            title={t('Preferences (Ctrl/Cmd+,)')}
             className={clsx('touch-target flex min-h-11 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:min-h-9', compact && 'justify-center px-0')}
           >
             <Settings2 aria-hidden="true" className="h-4 w-4 flex-none" />
-            {!compact && <span className="min-w-0 truncate">Preferences</span>}
+            {!compact && <span className="min-w-0 truncate">{t('Preferences')}</span>}
+          </button>
+          <button
+            type="button"
+            onClick={() => void setLanguage(chinese ? 'en' : 'zh-CN')}
+            aria-label={t(languageAction)}
+            title={t(languageAction)}
+            data-testid="language-toggle"
+            className="touch-target flex h-11 w-11 flex-none items-center justify-center rounded-lg text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:h-9 sm:w-9"
+          >
+            <Languages aria-hidden="true" className="h-4 w-4" />
           </button>
           <button
             type="button"
             onClick={toggle}
-            aria-label={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-            title={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            aria-label={t(theme === 'dark' ? 'Light Mode' : 'Dark Mode')}
+            title={t(theme === 'dark' ? 'Light Mode' : 'Dark Mode')}
+            data-testid="theme-toggle"
             className="touch-target flex h-11 w-11 flex-none items-center justify-center rounded-lg text-txt-tertiary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:h-9 sm:w-9"
           >
             {theme === 'dark' ? <Sun aria-hidden="true" className="h-4 w-4" /> : <Moon aria-hidden="true" className="h-4 w-4" />}

@@ -6,8 +6,27 @@ test('Manager coalesces task events, pauses while hidden and reconciles on retur
   const now = new Date()
   await page.clock.install({ time: now })
   await page.clock.pauseAt(new Date(now.getTime() + 100))
+  await page.addInitScript(() => {
+    const events = { ready: 0, changed: 0 }
+    Object.assign(window, { managerRefreshEvents: events })
+    // Observe dispatched mock messages without replacing Playwright's WebSocket.
+    const dispatch = EventTarget.prototype.dispatchEvent
+    EventTarget.prototype.dispatchEvent = function(event) {
+      const result = dispatch.call(this, event)
+      if (this instanceof WebSocket && event instanceof MessageEvent
+        && new URL(this.url).pathname === '/api/tasks/events') {
+        const { type } = JSON.parse(event.data)
+        if (type === 'ready') events.ready++
+        if (type === 'changed') events.changed++
+      }
+      return result
+    }
+  })
+  const eventCounts = () => page.evaluate(() => (window as typeof window & {
+    managerRefreshEvents: { ready: number; changed: number }
+  }).managerRefreshEvents)
   const refreshes: string[] = []
-  const task = { name: 'event-task', dir: '/tmp/event-task', status: 'running', run_index: 1, task_kind: 'shell' }
+  const task = { name: 'event-task', dir: '/tmp/event-task', status: 'pending', run_index: 1, task_kind: 'shell' }
   await page.route('**/api/tasks?*', route => {
     refreshes.push(new URL(route.request().url()).searchParams.get('refresh') || '')
     return route.fulfill({ json: { items: [task], total: 1, offset: 0, limit: 50,
@@ -27,11 +46,22 @@ test('Manager coalesces task events, pauses while hidden and reconciles on retur
   await page.goto('/manager?token=pyruns-e2e-access-token')
   await expect(page.locator('[data-task-card]')).toContainText('event-task')
   await expect.poll(() => connections).toBe(1)
+  await expect.poll(eventCounts).toEqual({ ready: 1, changed: 0 })
+  task.status = 'running'
+  const readyRefresh = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/tasks' && url.searchParams.get('refresh') === 'false'
+  })
   await page.clock.runFor(150)
+  await (await readyRefresh).finished()
+  // A distinct rendered state proves the initial ready refresh has been applied.
+  await expect(page.locator('[data-task-card]')).toContainText('Running')
   await expect.poll(() => refreshes.length).toBe(2)
   expect(refreshes).toEqual(['', 'false'])
   task.status = 'completed'
   for (let index = 0; index < 10; index++) sendEvent()
+  // WebSocket delivery is real async work, independent of the paused browser clock.
+  await expect.poll(eventCounts).toEqual({ ready: 1, changed: 10 })
   await page.clock.runFor(150)
   await expect.poll(() => refreshes.length).toBe(3)
   expect(refreshes.at(-1)).toBe('false')
@@ -41,6 +71,7 @@ test('Manager coalesces task events, pauses while hidden and reconciles on retur
   expect(refreshes).toHaveLength(3)
   await visibility('visible')
   await expect.poll(() => connections).toBe(2)
+  await expect.poll(eventCounts).toEqual({ ready: 2, changed: 10 })
   await page.clock.runFor(200)
   await expect.poll(() => refreshes.length).toBe(4)
   expect(refreshes.at(-1)).toBe('true')

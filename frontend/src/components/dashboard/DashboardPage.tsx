@@ -31,6 +31,7 @@ import { errorMessage } from '@/utils/errors'
 import type { GPUMetric, GPUProcessDetails, GPUProcessInfo, Task, SystemMetrics } from '@/types'
 import type { TaskStatus } from '@/theme/tokens'
 import * as api from '@/api'
+import { t, useTranslation } from '@/i18n'
 
 const STAT_CARDS: { key: string; label: string; icon: ElementType; color: string }[] = [
   { key: 'total', label: 'Total Tasks', icon: Layers, color: 'text-txt-secondary' },
@@ -55,6 +56,7 @@ interface ProcessDetailLoadState {
 }
 
 export default function DashboardPage() {
+  useTranslation()
   const { data, loading, error: dashboardError, fetch } = useDashboardStore()
   const workspace = useWorkspaceStore(s => s.workspace)
   const notify = useToastStore(state => state.notify)
@@ -83,7 +85,7 @@ export default function DashboardPage() {
     const controller = new AbortController()
     dashboardRefreshControllerRef.current = controller
     const timeoutId = window.setTimeout(() => {
-      controller.abort(new DOMException('Dashboard refresh timed out. Check the connection and retry.', 'TimeoutError'))
+      controller.abort(new DOMException(t('Dashboard refresh timed out. Check the connection and retry.'), 'TimeoutError'))
     }, DASHBOARD_REQUEST_TIMEOUT_MS)
     const refreshPromise = Promise.allSettled([
       fetch(controller.signal),
@@ -95,7 +97,7 @@ export default function DashboardPage() {
           setMetrics(nextMetrics)
           setMetricsError('')
         } else {
-          setMetricsError(errorMessage(metricsResult.reason, 'System metrics unavailable.'))
+          setMetricsError(errorMessage(metricsResult.reason, t('System metrics unavailable.')))
         }
       }
       return {
@@ -118,7 +120,7 @@ export default function DashboardPage() {
 
   const openTaskInMonitor = useCallback((task: Task) => {
     void useMonitorStore.getState().selectTask(task.name)
-      .catch(err => notify({ tone: 'error', title: 'Could not load task logs', detail: errorMessage(err) }))
+      .catch(err => notify({ tone: 'error', title: t('Could not load task logs'), detail: errorMessage(err) }))
     navigate('/monitor')
   }, [navigate, notify])
 
@@ -141,7 +143,7 @@ export default function DashboardPage() {
       )
       const matchingGpu = details.gpus.find(item => gpuKey(item) === gpuKey(gpu))
       if (!matchingGpu) {
-        throw new Error('This GPU is no longer available.')
+        throw new Error(t('This GPU is no longer available.'))
       }
       if (requestId !== gpuDetailsRequestSeqRef.current) {
         return
@@ -152,8 +154,8 @@ export default function DashboardPage() {
         return
       }
       setGpuDetailsError(timedOut
-        ? 'GPU process details timed out. Check the connection and retry.'
-        : errorMessage(err, 'GPU process details are unavailable.'))
+        ? t('GPU process details timed out. Check the connection and retry.')
+        : errorMessage(err, t('GPU process details are unavailable.')))
     } finally {
       window.clearTimeout(timeoutId)
       if (gpuDetailsAbortControllerRef.current === controller) {
@@ -193,22 +195,22 @@ export default function DashboardPage() {
       if (result.dashboardOk && result.metricsOk) {
         notify({
           tone: 'success',
-          title: 'Dashboard refreshed',
-          detail: 'Task summary and system metrics are up to date.',
+          title: t('Dashboard refreshed'),
+          detail: t('Task summary and system metrics are up to date.'),
         })
       } else if (result.dashboardOk || result.metricsOk) {
         notify({
           tone: 'info',
-          title: 'Dashboard partially refreshed',
+          title: t('Dashboard partially refreshed'),
           detail: result.dashboardOk
-            ? 'Task summary is current; system metrics are showing the last available values.'
-            : 'System metrics are current; task summary could not be refreshed.',
+            ? t('Task summary is current; system metrics are showing the last available values.')
+            : t('System metrics are current; task summary could not be refreshed.'),
         })
       } else {
-        notify({ tone: 'error', title: 'Could not refresh dashboard', detail: 'Task summary and system metrics are unavailable.' })
+        notify({ tone: 'error', title: t('Could not refresh dashboard'), detail: t('Task summary and system metrics are unavailable.') })
       }
     } catch (err) {
-      notify({ tone: 'error', title: 'Could not refresh dashboard', detail: errorMessage(err) })
+      notify({ tone: 'error', title: t('Could not refresh dashboard'), detail: errorMessage(err) })
     } finally {
       setManualRefreshing(false)
     }
@@ -245,10 +247,10 @@ export default function DashboardPage() {
   const summary = data?.summary
   const workspaceReady = workspace?.workspace_ready === true
   const isShellWorkspace = workspaceReady && workspace?.workspace_kind === 'shell'
-  const workspaceKindLabel = !workspaceReady ? 'Workspace Needed' : isShellWorkspace ? 'Shell Workspace' : 'Script Workspace'
+  const workspaceKindLabel = !workspaceReady ? t('Workspace Needed') : isShellWorkspace ? t('Shell Workspace') : t('Script Workspace')
   const workspaceName = workspaceReady
-    ? (workspace?.script_name || (isShellWorkspace ? '_shell_' : 'Workspace'))
-    : 'Choose a workspace to start'
+    ? (workspace?.script_name || (isShellWorkspace ? '_shell_' : t('Workspace')))
+    : t('Choose a workspace to start')
   const workspaceWorkingPath = getWorkspaceWorkingPath(workspace)
   const gpuCount = metrics?.gpus.length ?? 0
   const {
@@ -277,12 +279,12 @@ export default function DashboardPage() {
           <header className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-b border-border-default pb-3">
             <div className="min-w-0 flex-1 basis-full sm:basis-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="mr-2 text-lg font-semibold text-txt-primary">Dashboard</h1>
+                <h1 className="mr-2 text-lg font-semibold text-txt-primary">{t('Dashboard')}</h1>
                 <span className="inline-flex items-center rounded-md bg-accent/10 px-2 py-1 text-2xs font-medium text-accent">
                   {workspaceKindLabel}
                 </span>
                 <span className="min-w-[12rem] max-w-full truncate font-mono text-2xs text-txt-tertiary sm:max-w-[56rem]" title={workspaceWorkingPath || ''}>
-                  {workspaceWorkingPath || 'Choose a workspace to start'}
+                  {workspaceWorkingPath || t('Choose a workspace to start')}
                 </span>
               </div>
               <div className="mt-1 truncate font-mono text-2xs text-txt-secondary" title={workspaceName}>
@@ -295,11 +297,11 @@ export default function DashboardPage() {
                 onClick={() => void handleManualRefresh()}
                 disabled={manualRefreshing || loading}
                 className="touch-target inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-border-subtle bg-surface-raised px-2 py-2 text-sm font-medium text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10 sm:px-3"
-                aria-label="Refresh dashboard"
-                title="Refresh dashboard now"
+                aria-label={t('Refresh dashboard')}
+                title={t('Refresh dashboard now')}
               >
                 <RefreshCw aria-hidden="true" className={clsx('h-4 w-4', manualRefreshing && 'animate-spin')} />
-                <span className="hidden sm:inline">Refresh</span>
+                <span className="hidden sm:inline">{t('Refresh')}</span>
               </button>
               <button
                 type="button"
@@ -307,7 +309,7 @@ export default function DashboardPage() {
                 className="touch-target inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-md bg-accent px-2 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover sm:min-h-10 sm:px-4"
               >
                 <Wand2 className="h-4 w-4" />
-                <span className="whitespace-nowrap">{workspaceReady ? 'Start New Task' : 'Choose Workspace'}</span>
+                <span className="whitespace-nowrap">{workspaceReady ? t('Start New Task') : t('Choose Workspace')}</span>
               </button>
             </div>
           </header>
@@ -316,9 +318,9 @@ export default function DashboardPage() {
             <div role="alert" className="flex shrink-0 items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-800 dark:border-rose-800 dark:bg-rose-950/45 dark:text-rose-300">
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
               <div className="min-w-0">
-                <div className="font-semibold">{data ? 'Task summary refresh failed' : 'Task summary unavailable'}</div>
+                <div className="font-semibold">{data ? t('Task summary refresh failed') : t('Task summary unavailable')}</div>
                 <div className="mt-0.5 break-words">{dashboardError}</div>
-                {data && <div className="mt-0.5">Showing the last successful values.</div>}
+                {data && <div className="mt-0.5">{t('Showing the last successful values.')}</div>}
               </div>
             </div>
           )}
@@ -326,8 +328,8 @@ export default function DashboardPage() {
           <section className="flex shrink-0 flex-col overflow-hidden rounded-md border border-border-default bg-surface-raised">
             <div className="shrink-0 flex flex-wrap items-start justify-between gap-2 border-b border-border-subtle px-4 py-3">
               <div>
-                <h2 className="text-sm font-medium text-txt-primary">GPU & System</h2>
-                <p className="mt-1 text-2xs text-txt-tertiary">Refreshes every {refreshIntervalSec}s. Process details load on demand.</p>
+                <h2 className="text-sm font-medium text-txt-primary">{t('GPU & System')}</h2>
+                <p className="mt-1 text-2xs text-txt-tertiary">{t('Refreshes every {{seconds}}s. Process details load on demand.', { seconds: refreshIntervalSec })}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-2xs">
                 <SummaryPill>{gpuCount} GPU{gpuCount === 1 ? '' : 's'}</SummaryPill>
@@ -341,14 +343,14 @@ export default function DashboardPage() {
                     <div className="mb-3 flex items-start gap-2 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
                       <span>
-                        GPU rule needs attention: {configuredMinFreeGiB.toFixed(0)} GiB free exceeds this machine&apos;s {largestGpuGiB.toFixed(1)} GiB physical capacity.
+                        {t('GPU rule needs attention: {{required}} GiB free exceeds this machine\'s {{capacity}} GiB physical capacity.', { required: configuredMinFreeGiB.toFixed(0), capacity: largestGpuGiB.toFixed(1) })}
                       </span>
                     </div>
                   )}
                   {metricsError && (
                     <div className="mb-3 flex items-center gap-2 rounded-md bg-amber-500/10 px-3 py-2 text-2xs text-amber-800 dark:text-amber-300">
                       <AlertTriangle className="h-3.5 w-3.5 flex-none" />
-                      <span className="min-w-0 break-words">Metrics refresh failed. Showing last values.</span>
+                      <span className="min-w-0 break-words">{t('Metrics refresh failed. Showing last values.')}</span>
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -358,8 +360,8 @@ export default function DashboardPage() {
                     <ResourceTile label="RAM" value={`${metrics.mem_percent.toFixed(0)}%`}>
                       <MetricBar label="RAM" value={metrics.mem_percent} icon={MemoryStick} compact />
                     </ResourceTile>
-                    <ResourceTile label="GPU Avg" value={formatPercent(averageGpuUtil)} tone="sky" />
-                    <ResourceTile label="GPU VRAM" value={formatPercent(gpuMemoryPct)} tone={(gpuMemoryPct ?? 0) > 85 ? 'amber' : 'slate'} />
+                    <ResourceTile label={t('GPU Avg')} value={formatPercent(averageGpuUtil)} tone="sky" />
+                    <ResourceTile label={t('GPU VRAM')} value={formatPercent(gpuMemoryPct)} tone={(gpuMemoryPct ?? 0) > 85 ? 'amber' : 'slate'} />
                   </div>
                 </>
               ) : (
@@ -370,7 +372,7 @@ export default function DashboardPage() {
                   )}
                 >
                   {metricsError && <AlertTriangle className="h-3.5 w-3.5 flex-none" />}
-                  <span className="min-w-0 break-words">{metricsError || 'Loading system metrics...'}</span>
+                  <span className="min-w-0 break-words">{metricsError || t('Loading system metrics...')}</span>
                 </div>
               )}
             </div>
@@ -392,7 +394,7 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="flex h-full min-h-[10rem] items-center justify-center rounded-md bg-surface-overlay/50 px-3 py-8 text-center text-2xs text-txt-tertiary">
-                  {metricsError && !metrics ? 'System metrics unavailable.' : 'No NVIDIA GPU metrics detected.'}
+                  {metricsError && !metrics ? t('System metrics unavailable.') : t('No NVIDIA GPU metrics detected.')}
                 </div>
               )}
             </div>
@@ -409,18 +411,18 @@ export default function DashboardPage() {
                     <div className="text-lg font-semibold tabular-nums text-txt-primary">
                       {loading && !data ? '--' : (summary as Record<string, number> | undefined)?.[key] ?? 0}
                     </div>
-                    <div className="text-2xs text-txt-tertiary">{label}</div>
+                    <div className="text-2xs text-txt-tertiary">{t(label)}</div>
                   </div>
                 </div>
                 {key === 'running' && (
                   <div className="mt-3 flex flex-wrap gap-1.5 text-2xs">
-                    <SummaryPill>{queuedCount} queued</SummaryPill>
-                    <SummaryPill>{runningCount} executing</SummaryPill>
+                    <SummaryPill>{t('{{count}} queued', { count: queuedCount })}</SummaryPill>
+                    <SummaryPill>{t('{{count}} executing', { count: runningCount })}</SummaryPill>
                   </div>
                 )}
                 {key === 'total' && (
                   <div className="mt-3 text-2xs text-txt-tertiary">
-                    {pendingCount} pending task{pendingCount === 1 ? '' : 's'}
+                    {t('{{count}} pending tasks', { count: pendingCount })}
                   </div>
                 )}
               </div>
@@ -430,26 +432,26 @@ export default function DashboardPage() {
           <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-default bg-surface-raised">
             <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
               <div>
-                <h2 className="text-sm font-medium text-txt-primary">Recent Tasks</h2>
-                <p className="mt-1 text-2xs text-txt-tertiary">Quick status glance.</p>
+                <h2 className="text-sm font-medium text-txt-primary">{t('Recent Tasks')}</h2>
+                <p className="mt-1 text-2xs text-txt-tertiary">{t('Quick status glance.')}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <SummaryPill>{activeCount} active</SummaryPill>
-                <SummaryPill>{pendingCount} pending</SummaryPill>
+                <SummaryPill>{t('{{count}} active', { count: activeCount })}</SummaryPill>
+                <SummaryPill>{t('{{count}} pending', { count: pendingCount })}</SummaryPill>
                 <button
                   type="button"
                   onClick={() => navigate('/manager')}
                   className="touch-target inline-flex min-h-11 items-center gap-1 rounded-md px-2 py-1 text-2xs text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-accent sm:min-h-0"
                 >
-                  View all <ArrowRight className="h-3 w-3" />
+                  {t('View all')}  <ArrowRight className="h-3 w-3" />
                 </button>
               </div>
             </div>
             <div className="min-h-0 flex-1 divide-y divide-border-subtle overflow-y-auto">
               {dashboardError && !data ? (
-                <div className="py-8 text-center text-xs text-rose-700 dark:text-rose-300">Recent tasks could not be loaded.</div>
+                <div className="py-8 text-center text-xs text-rose-700 dark:text-rose-300">{t('Recent tasks could not be loaded.')}</div>
               ) : !data?.recent_tasks?.length ? (
-                <div className="py-8 text-center text-xs text-txt-tertiary">No tasks yet</div>
+                <div className="py-8 text-center text-xs text-txt-tertiary">{t('No tasks yet')}</div>
               ) : (
                 data.recent_tasks.map(task => (
                   <TaskRow key={task.name} task={task} onClick={() => openTaskInMonitor(task)} />
@@ -490,7 +492,7 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
           <span className="rounded-md bg-surface-overlay px-1.5 py-0.5 text-2xs uppercase tracking-[0.14em] text-txt-tertiary">
             {taskKindLabel}
           </span>
-          <span className="font-mono text-2xs text-txt-tertiary">Run #{runIndex}</span>
+          <span className="font-mono text-2xs text-txt-tertiary">{t('Run #{{run}}', { run: runIndex })}</span>
         </div>
         <div className="mt-1 font-mono text-2xs text-txt-tertiary" title={task.created_at}>
           {task.created_at}
@@ -571,7 +573,7 @@ function GpuMetricCard({
     <button
       type="button"
       onClick={event => onClick(event.currentTarget)}
-      aria-label={`View details for GPU ${gpu.index} ${gpu.name}`}
+      aria-label={t('View details for GPU {{index}} {{name}}', { index: gpu.index, name: gpu.name })}
       className={clsx(
         'w-full rounded-md border border-border-subtle bg-surface-raised px-4 py-4 text-left transition-colors hover:border-accent/25 hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
         wide ? 'min-h-[7.5rem]' : 'h-[10.5rem]',
@@ -585,12 +587,12 @@ function GpuMetricCard({
         </div>
         <div className="flex items-center gap-1 rounded-md bg-accent/10 px-2 py-1 text-2xs text-accent">
           <span className="font-medium tabular-nums">{formatPercent(gpu.util)}</span>
-          <span>util</span>
+          <span>{t('util')}</span>
         </div>
       </div>
 
       <div className={clsx('space-y-2', wide ? 'mt-3 sm:mt-0' : 'mt-3')}>
-        <UsageTrack label="Compute" value={gpu.util} tone="util" />
+        <UsageTrack label={t('Compute')} value={gpu.util} tone="util" />
         <UsageTrack label="VRAM" value={memoryPct} tone="memory" />
       </div>
 
@@ -602,7 +604,7 @@ function GpuMetricCard({
           {formatMemory(gpu.mem_used)} / {formatMemory(gpu.mem_total)}
         </span>
         <span className="inline-flex min-h-7 items-center gap-1 whitespace-nowrap rounded-md bg-accent/10 px-2 font-medium text-accent">
-          View details
+          {t('View details')}
           <ChevronRight className="h-3 w-3" />
         </span>
       </div>
@@ -702,8 +704,8 @@ function GpuProcessDialog({
           loading: false,
           data: null,
           error: timedOut
-            ? 'Process details timed out. Check the connection and retry.'
-            : errorMessage(err, 'Process details are unavailable.'),
+            ? t('Process details timed out. Check the connection and retry.')
+            : errorMessage(err, t('Process details are unavailable.')),
         },
       }))
     } finally {
@@ -842,13 +844,13 @@ function GpuProcessDialog({
       >
         <div className="shrink-0 flex items-start justify-between gap-4 border-b border-border-subtle px-4 py-3 sm:px-5 sm:py-4">
           <div className="min-w-0">
-            <div className="text-xs uppercase tracking-[0.18em] text-txt-tertiary">GPU Detail</div>
+            <div className="text-xs uppercase tracking-[0.18em] text-txt-tertiary">{t('GPU Detail')}</div>
             <div id="gpu-detail-title" className="mt-1 truncate text-base font-semibold text-txt-primary">
               GPU {gpu.index} | {gpu.name}
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1">
-              <div id="gpu-detail-description" className="min-w-0 flex-1 truncate font-mono text-2xs text-txt-tertiary" title={gpu.uuid}>{gpu.uuid || 'UUID unavailable'}</div>
-              {gpu.uuid && <CopyButton value={gpu.uuid} label="Copy GPU UUID" className="-my-1" />}
+              <div id="gpu-detail-description" className="min-w-0 flex-1 truncate font-mono text-2xs text-txt-tertiary" title={gpu.uuid}>{gpu.uuid || t('UUID unavailable')}</div>
+              {gpu.uuid && <CopyButton value={gpu.uuid} label={t('Copy GPU UUID')} className="-my-1" />}
             </div>
           </div>
           <div className="flex flex-none items-center gap-1">
@@ -856,8 +858,8 @@ function GpuProcessDialog({
               type="button"
               onClick={onRetry}
               disabled={loading}
-              aria-label="Refresh GPU details"
-              title="Refresh GPU details"
+              aria-label={t('Refresh GPU details')}
+              title={t('Refresh GPU details')}
               className="touch-target inline-flex h-11 w-11 items-center justify-center rounded-md text-txt-tertiary transition-colors hover:bg-surface-hover hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-wait disabled:opacity-50 sm:h-9 sm:w-9"
             >
               <RefreshCw className={clsx('h-4 w-4', loading && 'motion-safe:animate-spin')} />
@@ -866,7 +868,7 @@ function GpuProcessDialog({
               ref={closeButtonRef}
               type="button"
               onClick={onClose}
-              aria-label="Close GPU details"
+              aria-label={t('Close GPU details')}
               className="touch-target inline-flex h-11 w-11 items-center justify-center rounded-md text-txt-tertiary transition-colors hover:bg-surface-hover hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:h-9 sm:w-9"
             >
               <X className="h-4 w-4" />
@@ -878,34 +880,34 @@ function GpuProcessDialog({
           <section aria-labelledby="gpu-live-metrics-title">
             <h3 id="gpu-live-metrics-title" className="mb-3 flex items-center gap-2 text-xs font-semibold text-txt-primary">
               <Gauge className="h-3.5 w-3.5 text-txt-tertiary" />
-              Live metrics
+              {t('Live metrics')}
             </h3>
             <div className="grid grid-cols-2 gap-x-5 gap-y-4 lg:grid-cols-4">
-              <DetailMetric label="Compute" value={formatPercent(gpu.util)} tone="emerald" />
-              <DetailMetric label="Memory I/O" value={formatOptionalMetric(gpu.mem_util, '%')} tone="sky" />
-              <DetailMetric label="VRAM used" value={`${formatMemory(gpu.mem_used)} / ${formatMemory(gpu.mem_total)}`} tone="sky" />
-              <DetailMetric label="VRAM free" value={formatMemory(reportedMemoryFree)} tone={(memoryPct ?? 0) > 85 ? 'amber' : 'slate'} />
-              <DetailMetric label="Temperature" value={formatOptionalMetric(gpu.temperature_c, ' °C')} tone={(gpu.temperature_c ?? 0) >= 80 ? 'amber' : 'slate'} icon={Thermometer} />
-              <DetailMetric label="Power" value={formatPower(gpu.power_draw_w, gpu.power_limit_w)} tone="slate" icon={Zap} />
-              <DetailMetric label="Fan" value={formatOptionalMetric(gpu.fan_speed_pct, '%')} tone="slate" icon={Fan} />
-              <DetailMetric label="Processes" value={loading || processError ? '--' : String(gpu.processes.length)} tone={gpu.processes.length ? 'emerald' : 'slate'} />
+              <DetailMetric label={t('Compute')} value={formatPercent(gpu.util)} tone="emerald" />
+              <DetailMetric label={t('Memory I/O')} value={formatOptionalMetric(gpu.mem_util, '%')} tone="sky" />
+              <DetailMetric label={t('VRAM used')} value={`${formatMemory(gpu.mem_used)} / ${formatMemory(gpu.mem_total)}`} tone="sky" />
+              <DetailMetric label={t('VRAM free')} value={formatMemory(reportedMemoryFree)} tone={(memoryPct ?? 0) > 85 ? 'amber' : 'slate'} />
+              <DetailMetric label={t('Temperature')} value={formatOptionalMetric(gpu.temperature_c, ' °C')} tone={(gpu.temperature_c ?? 0) >= 80 ? 'amber' : 'slate'} icon={Thermometer} />
+              <DetailMetric label={t('Power')} value={formatPower(gpu.power_draw_w, gpu.power_limit_w)} tone="slate" icon={Zap} />
+              <DetailMetric label={t('Fan')} value={formatOptionalMetric(gpu.fan_speed_pct, '%')} tone="slate" icon={Fan} />
+              <DetailMetric label={t('Processes')} value={loading || processError ? '--' : String(gpu.processes.length)} tone={gpu.processes.length ? 'emerald' : 'slate'} />
             </div>
           </section>
 
           <section aria-labelledby="gpu-device-information-title" className="border-t border-border-subtle pt-4">
             <h3 id="gpu-device-information-title" className="mb-3 flex items-center gap-2 text-xs font-semibold text-txt-primary">
               <Cpu className="h-3.5 w-3.5 text-txt-tertiary" />
-              Device information
+              {t('Device information')}
             </h3>
             <dl className="grid grid-cols-2 gap-x-5 gap-y-4 lg:grid-cols-4">
-              <DeviceDetail label="GPU index" value={String(gpu.index)} mono />
-              <DeviceDetail label="PCI bus" value={gpu.pci_bus_id} mono />
-              <DeviceDetail label="Driver" value={gpu.driver_version} mono />
-              <DeviceDetail label="Performance state" value={gpu.performance_state} mono />
-              <DeviceDetail label="Compute mode" value={gpu.compute_mode} />
-              <DeviceDetail label="Graphics clock" value={formatOptionalMetric(gpu.graphics_clock_mhz, ' MHz')} mono />
-              <DeviceDetail label="Memory clock" value={formatOptionalMetric(gpu.memory_clock_mhz, ' MHz')} mono />
-              <DeviceDetail label="Process VRAM" value={knownMemoryProcesses.length ? `${formatMemory(processMemoryTotal)} total | ${formatMemory(averageProcessMemory)} avg` : ''} mono />
+              <DeviceDetail label={t('GPU index')} value={String(gpu.index)} mono />
+              <DeviceDetail label={t('PCI bus')} value={gpu.pci_bus_id} mono />
+              <DeviceDetail label={t('Driver')} value={gpu.driver_version} mono />
+              <DeviceDetail label={t('Performance state')} value={gpu.performance_state} mono />
+              <DeviceDetail label={t('Compute mode')} value={gpu.compute_mode} />
+              <DeviceDetail label={t('Graphics clock')} value={formatOptionalMetric(gpu.graphics_clock_mhz, ' MHz')} mono />
+              <DeviceDetail label={t('Memory clock')} value={formatOptionalMetric(gpu.memory_clock_mhz, ' MHz')} mono />
+              <DeviceDetail label={t('Process VRAM')} value={knownMemoryProcesses.length ? t('{{total}} total | {{average}} avg', { total: formatMemory(processMemoryTotal), average: formatMemory(averageProcessMemory) }) : ''} mono />
             </dl>
           </section>
 
@@ -913,37 +915,38 @@ function GpuProcessDialog({
             <div className="mb-2 flex items-center justify-between gap-3">
               <h3 id="gpu-processes-title" className="flex items-center gap-2 text-xs font-semibold text-txt-primary">
                 <Activity className="h-3.5 w-3.5 text-txt-tertiary" />
-                GPU processes
+                {t('GPU processes')}
               </h3>
               <span className="text-2xs tabular-nums text-txt-tertiary" aria-live="polite">
-                {loading ? 'Refreshing' : processError ? 'Unavailable' : `${gpu.processes.length} reported`}
+                {loading ? t('Refreshing') : processError ? t('Unavailable') : t('{{count}} reported', { count: gpu.processes.length })}
               </span>
             </div>
           {processError && (
             <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-              <span>{processError}{gpu.processes.length > 0 && ' Showing the last successful process list.'}</span>
-              <button type="button" onClick={onRetry} disabled={loading} className="touch-target inline-flex min-h-11 flex-none items-center rounded-md px-2 font-medium text-accent hover:text-accent-hover disabled:cursor-wait disabled:opacity-50 sm:min-h-0">Retry</button>
+              <span>{processError}{gpu.processes.length > 0 && t(' Showing the last successful process list.')}</span>
+              <button type="button" onClick={onRetry} disabled={loading} className="touch-target inline-flex min-h-11 flex-none items-center rounded-md px-2 font-medium text-accent hover:text-accent-hover disabled:cursor-wait disabled:opacity-50 sm:min-h-0">
+          {t('Retry')}
+        </button>
             </div>
           )}
           {loading && gpu.processes.length === 0 ? (
             <div className="flex items-center justify-center gap-2 rounded-md bg-surface-overlay/60 px-4 py-8 text-sm text-txt-tertiary">
-              <RefreshCw className="h-4 w-4 animate-spin" /> Loading GPU processes…
-            </div>
+              <RefreshCw className="h-4 w-4 animate-spin" /> {t('Loading GPU processes…')}</div>
           ) : gpu.processes.length === 0 ? (
             <div className="rounded-md bg-surface-overlay/60 px-4 py-8 text-center text-sm text-txt-tertiary">
               {processError
-                ? 'The GPU process list could not be refreshed.'
-                : 'No compute processes are currently reported by NVIDIA for this GPU.'}
+                ? t('The GPU process list could not be refreshed.')
+                : t('No compute processes are currently reported by NVIDIA for this GPU.')}
             </div>
           ) : (
             <div className="overflow-hidden rounded-md border border-border-subtle">
               <div>
                 <div className="grid grid-cols-[56px_minmax(0,1fr)_64px_16px] gap-2 border-b border-border-subtle bg-surface-overlay/70 px-3 py-2 text-2xs uppercase tracking-[0.18em] text-txt-tertiary sm:grid-cols-[72px_96px_minmax(0,1fr)_80px_48px_16px] sm:gap-3 sm:px-4">
                   <span>PID</span>
-                  <span className="hidden sm:block">User</span>
-                  <span>Process</span>
+                  <span className="hidden sm:block">{t('User')}</span>
+                  <span>{t('Process')}</span>
                   <span className="text-right">VRAM</span>
-                  <span className="hidden text-right sm:block">Share</span>
+                  <span className="hidden text-right sm:block">{t('Share')}</span>
                   <span aria-hidden="true" />
                 </div>
                 {sortedProcesses.map(process => {
@@ -958,7 +961,7 @@ function GpuProcessDialog({
                         type="button"
                         disabled={loading}
                         aria-expanded={expanded}
-                        aria-label={`${expanded ? 'Hide' : 'View'} details for process ${process.pid} ${displayName}`}
+                        aria-label={expanded ? t('Hide details for process {{pid}} {{name}}', { pid: process.pid, name: displayName }) : t('View details for process {{pid}} {{name}}', { pid: process.pid, name: displayName })}
                         onClick={() => toggleProcessDetails(process, rowKey)}
                         className="grid min-h-11 w-full grid-cols-[56px_minmax(0,1fr)_64px_16px] items-center gap-x-2 gap-y-0.5 px-3 py-3 text-left text-xs transition-colors hover:bg-surface-overlay/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 disabled:cursor-wait disabled:opacity-50 sm:grid-cols-[72px_96px_minmax(0,1fr)_80px_48px_16px] sm:gap-3 sm:px-4 sm:text-sm"
                       >
@@ -1036,17 +1039,16 @@ function GpuProcessMetadata({
   if (!state || state.loading) {
     return (
       <div className="flex items-center justify-center gap-2 border-t border-border-subtle/80 bg-surface-overlay/30 px-4 py-6 text-xs text-txt-tertiary" aria-live="polite">
-        <RefreshCw className="h-3.5 w-3.5 motion-safe:animate-spin" /> Loading process details...
-      </div>
+        <RefreshCw className="h-3.5 w-3.5 motion-safe:animate-spin" /> {t('Loading process details...')}</div>
     )
   }
 
   if (state.error || !state.data?.available) {
     return (
       <div role="alert" className="flex items-center justify-between gap-3 border-t border-border-subtle/80 bg-surface-overlay/30 px-4 py-4 text-xs text-txt-secondary">
-        <span>{state.error || 'This process is no longer available on the host.'}</span>
+        <span>{state.error || t('This process is no longer available on the host.')}</span>
         <button type="button" onClick={onRetry} className="touch-target inline-flex min-h-11 flex-none items-center rounded-md px-2 font-medium text-accent hover:text-accent-hover sm:min-h-0">
-          Retry
+          {t('Retry')}
         </button>
       </div>
     )
@@ -1056,7 +1058,7 @@ function GpuProcessMetadata({
   const startedAt = formatProcessStartedAt(details.created_at)
   const runtime = formatProcessRuntime(details.created_at)
   const hostMemory = details.host_memory_mb == null
-    ? 'Not available'
+    ? t('Not available')
     : `${formatMemory(details.host_memory_mb)}${
       details.host_memory_percent == null
         ? ''
@@ -1066,21 +1068,21 @@ function GpuProcessMetadata({
   return (
     <div className="border-t border-border-subtle/80 bg-surface-overlay/30 px-4 py-3">
       <dl className="grid grid-cols-2 gap-x-5 gap-y-3 lg:grid-cols-6">
-        <ProcessDetail label="Status" value={formatProcessStatus(details.status)} />
-        <ProcessDetail label="Host RAM" value={hostMemory} mono />
-        <ProcessDetail label="Started" value={startedAt} />
-        <ProcessDetail label="Runtime" value={runtime} mono />
-        <ProcessDetail label="Parent PID" value={formatOptionalInteger(details.parent_pid)} mono />
-        <ProcessDetail label="Threads" value={formatOptionalInteger(details.thread_count)} mono />
+        <ProcessDetail label={t('Status')} value={formatProcessStatus(details.status)} />
+        <ProcessDetail label={t('Host RAM')} value={hostMemory} mono />
+        <ProcessDetail label={t('Started')} value={startedAt} />
+        <ProcessDetail label={t('Process runtime')} value={runtime} mono />
+        <ProcessDetail label={t('Parent PID')} value={formatOptionalInteger(details.parent_pid)} mono />
+        <ProcessDetail label={t('Threads')} value={formatOptionalInteger(details.thread_count)} mono />
       </dl>
       <div className="mt-3 grid gap-3 border-t border-border-subtle/80 pt-3 lg:grid-cols-2">
-        <ProcessTextDetail label="Executable" value={details.executable} copyLabel={`Copy executable path for PID ${process.pid}`} />
-        <ProcessTextDetail label="Working directory" value={details.working_directory} copyLabel={`Copy working directory for PID ${process.pid}`} />
-        <ProcessTextDetail label="GPU-reported process" value={process.name} copyLabel={`Copy GPU process path for PID ${process.pid}`} />
+        <ProcessTextDetail label={t('Executable')} value={details.executable} copyLabel={t('Copy executable path for PID {{pid}}', { pid: process.pid })} />
+        <ProcessTextDetail label={t('Working directory')} value={details.working_directory} copyLabel={t('Copy working directory for PID {{pid}}', { pid: process.pid })} />
+        <ProcessTextDetail label={t('GPU-reported process')} value={process.name} copyLabel={t('Copy GPU process path for PID {{pid}}', { pid: process.pid })} />
         <ProcessTextDetail
-          label={details.command_line_truncated ? 'Command line (truncated)' : 'Command line'}
+          label={details.command_line_truncated ? t('Command line (truncated)') : t('Command line')}
           value={details.command_line}
-          copyLabel={`Copy command line for PID ${process.pid}`}
+          copyLabel={t('Copy command line for PID {{pid}}', { pid: process.pid })}
           wide
         />
       </div>
@@ -1109,7 +1111,7 @@ function ProcessTextDetail({
   wide?: boolean
 }) {
   const copyValue = value?.trim() || ''
-  const displayValue = copyValue || 'Not available'
+  const displayValue = copyValue || t('Not available')
   return (
     <div className={clsx('min-w-0', wide && 'lg:col-span-2')}>
       <div className="flex items-center justify-between gap-2">
@@ -1122,7 +1124,7 @@ function ProcessTextDetail({
 }
 
 function DeviceDetail({ label, value, mono = false }: { label: string; value?: string; mono?: boolean }) {
-  const displayValue = value?.trim() || 'Not reported'
+  const displayValue = value?.trim() || t('Not reported')
   return (
     <div className="min-w-0">
       <dt className="text-2xs text-txt-tertiary">{label}</dt>
@@ -1152,35 +1154,35 @@ function gpuProcessKey(process: GPUProcessInfo): string {
 function formatProcessStatus(value: string | null | undefined): string {
   const status = value?.trim()
   if (!status) {
-    return 'Not available'
+    return t('Not available')
   }
   return status.replace(/_/g, ' ')
 }
 
 function formatProcessStartedAt(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) {
-    return 'Not available'
+    return t('Not available')
   }
   const date = new Date(value * 1000)
-  return Number.isNaN(date.getTime()) ? 'Not available' : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? t('Not available') : date.toLocaleString()
 }
 
 function formatProcessRuntime(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value) || value <= 0) {
-    return 'Not available'
+    return t('Not available')
   }
   return formatElapsedDuration(Math.max(0, Date.now() / 1000 - value))
 }
 
 function formatOptionalInteger(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) || value < 0
-    ? 'Not available'
+    ? t('Not available')
     : Math.floor(value).toLocaleString()
 }
 
 function formatMemory(memoryMb: number | null | undefined): string {
   if (memoryMb == null || !Number.isFinite(memoryMb)) {
-    return 'Unknown'
+    return t('Unknown')
   }
   if (memoryMb <= 0) {
     return '0 MB'
@@ -1193,7 +1195,7 @@ function formatMemory(memoryMb: number | null | undefined): string {
 
 function formatPercent(value: number | null): string {
   if (value == null || !Number.isFinite(value)) {
-    return 'Unknown'
+    return t('Unknown')
   }
   if (value <= 0) {
     return '0%'
@@ -1203,7 +1205,7 @@ function formatPercent(value: number | null): string {
 
 function formatOptionalMetric(value: number | null | undefined, suffix: string): string {
   if (value == null || !Number.isFinite(value)) {
-    return 'Not reported'
+    return t('Not reported')
   }
   const formatted = Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, '')
   return `${formatted}${suffix}`
@@ -1211,7 +1213,7 @@ function formatOptionalMetric(value: number | null | undefined, suffix: string):
 
 function formatPower(draw: number | null | undefined, limit: number | null | undefined): string {
   if (draw == null || !Number.isFinite(draw)) {
-    return 'Not reported'
+    return t('Not reported')
   }
   const drawText = formatOptionalMetric(draw, ' W')
   return limit == null || !Number.isFinite(limit)

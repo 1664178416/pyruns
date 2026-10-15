@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import {
   useState,
   useCallback,
@@ -114,22 +115,23 @@ function getDuplicateEnvKeys(envPairs: EnvPair[]): Set<string> {
 function getEnvValidationMessage(envPairs: EnvPair[]): string {
   const duplicateKeys = getDuplicateEnvKeys(envPairs)
   if (duplicateKeys.size > 0) {
-    return `Duplicate key: ${[...duplicateKeys][0]}`
+    return t('Duplicate key: {{key}}', { key: [...duplicateKeys][0] })
   }
 
   if (envPairs.some(({ key, value }) => !key.trim() && value.trim())) {
-    return 'Add a key before saving this value.'
+    return t("Add a key before saving this value.")
   }
 
   const invalidPair = envPairs.find(({ key }) => key.trim() && !ENV_NAME_PATTERN.test(key.trim()))
   if (invalidPair) {
-    return `Invalid environment variable name: ${invalidPair.key.trim()}`
+    return t('Invalid environment variable name: {{key}}', { key: invalidPair.key.trim() })
   }
 
   return ''
 }
 
 export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefresh }: Props) {
+  useTranslation()
   const [tab, setTab] = useState<Tab>('info')
   const [notes, setNotes] = useState(task.notes || '')
   const [envPairs, setEnvPairs] = useState(() => buildEnvPairs(task))
@@ -384,7 +386,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           if (!requestIsCurrent()) return
           if (expectedIdentity && latestTask.task_identity !== expectedIdentity) {
             setNotesConflict(false)
-            setNotesSaveError('This task was replaced. Your draft is safe. Close and reopen task details before editing the new task.')
+            setNotesSaveError(t('This task was replaced. Your draft is safe. Close and reopen task details before editing the new task.'))
             onRefresh()
             return
           }
@@ -392,7 +394,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
         } catch {
           if (!requestIsCurrent()) return
           setNotesConflict(false)
-          setNotesSaveError('Newer notes exist, but their latest version could not be loaded. Your draft is safe. Retry Save Notes before replacing anything.')
+          setNotesSaveError(t("Newer notes exist, but their latest version could not be loaded. Your draft is safe. Retry Save Notes before replacing anything."))
           onRefresh()
           return
         }
@@ -402,7 +404,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
         return
       }
       const message = errorMessage(err)
-      setNotesSaveError(`Could not save notes. Your draft is safe. ${message}`)
+      setNotesSaveError(t('Could not save notes. Your draft is safe. {{message}}', { message }))
     } finally {
       if (requestId === taskRequestSeqRef.current) setSaving(false)
     }
@@ -454,7 +456,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           if (expectedIdentity && latestTask.task_identity !== expectedIdentity) {
             setEnvConflict(false)
             setEnvSaveStatus('error')
-            setEnvSaveError('This task was replaced. Your draft is safe. Close and reopen task details before editing the new task.')
+            setEnvSaveError(t('This task was replaced. Your draft is safe. Close and reopen task details before editing the new task.'))
             onRefresh()
             return
           }
@@ -463,7 +465,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           if (!requestIsCurrent()) return
           setEnvConflict(false)
           setEnvSaveStatus('error')
-          setEnvSaveError('Newer environment variables exist, but their latest version could not be loaded. Your draft is safe. Retry Save before replacing anything.')
+          setEnvSaveError(t("Newer environment variables exist, but their latest version could not be loaded. Your draft is safe. Retry Save before replacing anything."))
           onRefresh()
           return
         }
@@ -515,8 +517,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
     if (notesDirty || envDirty) {
       notify({
         tone: 'info',
-        title: 'Save task details before renaming',
-        detail: 'Save or discard the Notes and Env changes first.',
+        title: t("Save task details before renaming"),
+        detail: t("Save or discard the Notes and Env changes first."),
       })
       return
     }
@@ -530,11 +532,11 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
       onRefresh()
       clearTaskDetailDraft(taskName)
       onClose()
-      notify({ tone: 'success', title: 'Task renamed', detail: newName.trim() })
+      notify({ tone: 'success', title: t("Task renamed"), detail: newName.trim() })
     } catch (err) {
       if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
       setNewName(task.name)
-      notify({ tone: 'error', title: 'Could not rename task', detail: errorMessage(err) })
+      notify({ tone: 'error', title: t("Could not rename task"), detail: errorMessage(err) })
     } finally {
       if (requestId === taskRequestSeqRef.current) {
         setSaving(false)
@@ -545,7 +547,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
 
   const tabs: { key: Tab; label: string; icon: ComponentType<{ className?: string }> }[] = [
     { key: 'info', label: 'Info', icon: FileText },
-    { key: 'config', label: isShellTask(task) ? 'Script' : 'Config', icon: Settings },
+    { key: 'config', label: isShellTask(task) ? t("Script") : t("Config"), icon: Settings },
     { key: 'notes', label: 'Notes', icon: StickyNote },
     { key: 'env', label: 'Env', icon: Variable },
   ]
@@ -553,23 +555,23 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
   const envValidationMessage = getEnvValidationMessage(envPairs)
   const envSaveDisabled = saving || !envDirty || Boolean(envValidationMessage)
   const envSaveButtonLabel = saving
-    ? 'Saving...'
+    ? t("Saving...")
     : envConflict
-      ? 'Replace Env'
+      ? t("Replace Env")
       : envSaveStatus === 'saved'
-        ? 'Saved'
-        : 'Save'
+        ? t("Saved")
+        : t("Save")
   const envFeedback = envValidationMessage
-    || (envConflict ? 'Another editor saved newer environment variables. Your draft is unchanged.' : envSaveError)
+    || (envConflict ? t("Another editor saved newer environment variables. Your draft is unchanged.") : envSaveError)
   const envFeedbackIsError = envConflict || envSaveStatus === 'error' || Boolean(envValidationMessage)
   const envSaveTitle = envValidationMessage
     || (envConflict
-      ? 'Replace the newer environment variables with this draft'
+      ? t("Replace the newer environment variables with this draft")
       : envDirty
-        ? 'Save environment variables'
-        : 'No environment changes to save')
+        ? t("Save environment variables")
+        : t("No environment changes to save"))
   const notesFeedback = notesConflict
-    ? 'Another editor saved newer notes. Your draft is unchanged.'
+    ? t("Another editor saved newer notes. Your draft is unchanged.")
     : notesSaveError
   const renameDirty = renaming && newName.trim() !== '' && newName.trim() !== task.name
   const hasUnsavedChanges = notesDirty || envDirty || renameDirty
@@ -665,12 +667,12 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           }}
           onClick={event => event.stopPropagation()}
         >
-        <span id="task-detail-title" className="sr-only">Task details for {task.name}</span>
+        <span id="task-detail-title" className="sr-only">{t('Task details for {{name}}', { name: task.name })}</span>
         <button
           type="button"
           role="separator"
           tabIndex={0}
-          aria-label="Resize task detail panel"
+          aria-label={t("Resize task detail panel")}
           aria-orientation="vertical"
           aria-valuemin={Math.min(MIN_PANEL_WIDTH, clampPanelWidth(MAX_PANEL_WIDTH))}
           aria-valuemax={clampPanelWidth(MAX_PANEL_WIDTH)}
@@ -709,14 +711,14 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                       setNewName(task.name)
                     }
                   }}
-                  title="New task name"
+                  title={t("New task name")}
                   className="touch-input w-full rounded-md border border-border-subtle bg-surface-overlay px-2.5 py-1.5 text-sm text-txt-primary outline-none focus:border-border"
                 />
                 <button
                   type="button"
                   onClick={() => void handleRename()}
-                  title="Save name"
-                  aria-label="Save task name"
+                  title={t("Save name")}
+                  aria-label={t("Save task name")}
                   className="touch-target inline-flex h-11 w-11 items-center justify-center rounded-md text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:h-8 sm:w-8"
                 >
                   <Check className="h-3.5 w-3.5" />
@@ -727,8 +729,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                     setRenaming(false)
                     setNewName(task.name)
                   }}
-                  title="Cancel"
-                  aria-label="Cancel task rename"
+                  title={t("Cancel")}
+                  aria-label={t("Cancel task rename")}
                   className="touch-target inline-flex h-11 w-11 items-center justify-center rounded-md text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:h-8 sm:w-8"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -740,8 +742,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                 <button
                   type="button"
                   onClick={() => setRenaming(true)}
-                  title="Rename task"
-                  aria-label="Rename task"
+                  title={t("Rename task")}
+                  aria-label={t("Rename task")}
                   className="touch-target inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:h-8 sm:w-8"
                 >
                   <Pencil className="h-3 w-3" />
@@ -755,14 +757,14 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
             type="button"
             onClick={requestClose}
             className="touch-target inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:h-8 sm:w-8"
-            title="Close"
-            aria-label="Close task details"
+            title={t("Close")}
+            aria-label={t("Close task details")}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div role="tablist" aria-label="Task detail sections" className="grid grid-cols-4 gap-2 border-b border-border-subtle px-5 sm:flex sm:gap-5">
+        <div role="tablist" aria-label={t("Task detail sections")} className="grid grid-cols-4 gap-2 border-b border-border-subtle px-5 sm:flex sm:gap-5">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -794,7 +796,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
               )}
             >
               <Icon className="h-3.5 w-3.5" />
-              <span>{label}</span>
+              <span>{t(label)}</span>
             </button>
           ))}
         </div>
@@ -810,7 +812,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           {tab === 'config' && <ConfigTab task={task} />}
           {tab === 'notes' && (
             <div className="flex min-h-full flex-col gap-3">
-              <label htmlFor="task-notes" className="text-sm font-semibold text-txt-primary">Notes</label>
+              <label htmlFor="task-notes" className="text-sm font-semibold text-txt-primary">{t("Notes")}</label>
               <textarea
                 id="task-notes"
                 value={notes}
@@ -820,8 +822,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                   setNotesDirty(true)
                   setNotesSaved(false)
                 }}
-                placeholder="Add notes..."
-                aria-label="Task notes"
+                placeholder={t("Add notes...")}
+                aria-label={t("Task notes")}
                 className="min-h-[220px] flex-1 resize-y rounded-lg border border-border bg-surface-base p-3 text-sm leading-relaxed text-txt-primary placeholder:text-txt-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
               />
               {notesFeedback && (
@@ -838,14 +840,14 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                 </div>
               )}
               <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-surface-raised py-3">
-                <span role="status" className="text-xs text-txt-secondary">{notesFeedback ? '' : notesDirty ? 'Unsaved changes' : notesSaved ? 'Saved' : ''}</span>
+                <span role="status" className="text-xs text-txt-secondary">{notesFeedback ? '' : notesDirty ? t("Unsaved changes") : notesSaved ? t("Saved") : ''}</span>
                 <ActionButton
                   onClick={() => void handleSaveNotes()}
                   disabled={saving || !notesDirty}
                   variant="primary"
                   icon={saving ? <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 >
-                  {saving ? 'Saving...' : notesConflict ? 'Replace Notes' : 'Save Notes'}
+                  {saving ? t("Saving...") : notesConflict ? t("Replace Notes") : t("Save Notes")}
                 </ActionButton>
               </div>
             </div>
@@ -853,21 +855,21 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           {tab === 'env' && (
             <div className="flex flex-col gap-3">
               <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-txt-primary">Environment Variables</h3>
-                <p className="text-xs leading-5 text-txt-secondary">Task overrides applied on the next run.</p>
+                <h3 className="text-sm font-semibold text-txt-primary">{t("Environment Variables")}</h3>
+                <p className="text-xs leading-5 text-txt-secondary">{t("Task overrides applied on the next run.")}</p>
               </div>
 
               {envPairs.length > 0 && (
                 <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,3fr)_36px] gap-2 px-0.5 text-xs font-medium text-txt-secondary sm:grid">
-                  <span>Key</span>
-                  <span>Value</span>
-                  <span className="sr-only">Actions</span>
+                  <span>{t("Key")}</span>
+                  <span>{t("Value")}</span>
+                  <span className="sr-only">{t("Actions")}</span>
                 </div>
               )}
 
               {envPairs.length === 0 && (
                 <div className="px-3 py-8 text-center text-xs text-txt-secondary">
-                  No environment variables
+                  {t("No environment variables")}
                 </div>
               )}
 
@@ -880,7 +882,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                 return (
                 <div key={pair.id} className="grid grid-cols-[minmax(0,1fr)_44px] items-start gap-2 border-b border-border-subtle pb-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_36px] sm:border-0 sm:pb-0">
                   <label className="min-w-0 space-y-1">
-                    <span className="text-xs font-medium text-txt-secondary sm:hidden">Key</span>
+                    <span className="text-xs font-medium text-txt-secondary sm:hidden">{t("Key")}</span>
                     <input
                       ref={node => { envKeyInputRefs.current[pair.id] = node }}
                       value={pair.key}
@@ -890,8 +892,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                         )))
                         markEnvDirty()
                       }}
-                      placeholder="KEY"
-                      aria-label="Environment variable key"
+                      placeholder={t("KEY")}
+                      aria-label={t("Environment variable key")}
                       aria-invalid={Boolean(keyHasError)}
                       aria-describedby={keyHasError ? 'task-env-feedback' : undefined}
                       className={clsx(
@@ -901,7 +903,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                     />
                   </label>
                   <label className="col-start-1 row-start-2 min-w-0 space-y-1 sm:col-auto sm:row-auto">
-                    <span className="text-xs font-medium text-txt-secondary sm:hidden">Value</span>
+                    <span className="text-xs font-medium text-txt-secondary sm:hidden">{t("Value")}</span>
                     <input
                       value={pair.value}
                       onChange={event => {
@@ -910,8 +912,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                         )))
                         markEnvDirty()
                       }}
-                      placeholder="value"
-                      aria-label="Environment variable value"
+                      placeholder={t("value")}
+                      aria-label={t("Environment variable value")}
                       className="touch-input min-h-11 min-w-0 w-full rounded-md border border-border bg-surface-base px-2.5 py-1.5 font-mono text-xs text-txt-primary placeholder:text-txt-secondary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:min-h-9"
                     />
                   </label>
@@ -922,8 +924,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                       markEnvDirty()
                     }}
                     className="touch-target col-start-2 row-start-1 inline-flex h-11 w-11 items-center justify-center rounded-md text-txt-secondary transition-colors hover:bg-rose-500/10 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 dark:hover:text-rose-300 sm:col-auto sm:row-auto sm:h-9 sm:w-9"
-                    title="Remove variable"
-                    aria-label={`Remove ${pair.key.trim() || 'environment variable'}`}
+                    title={t("Remove variable")}
+                    aria-label={t('Remove {{name}}', { name: pair.key.trim() || t("environment variable") })}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -936,9 +938,9 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                   onClick={addEnvPair}
                   variant="secondary"
                   icon={<Plus className="h-3.5 w-3.5" />}
-                  aria-label="Add environment variable"
+                  aria-label={t("Add environment variable")}
                 >
-                  Add variable
+                  {t("Add variable")}
                 </ActionButton>
                 <ActionButton
                   onClick={() => void handleSaveEnv()}
@@ -966,7 +968,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
                     {envFeedback}
                   </span>
                 ) : envDirty ? (
-                  <span className="text-amber-700 dark:text-amber-300">Unsaved changes</span>
+                  <span className="text-amber-700 dark:text-amber-300">{t("Unsaved changes")}</span>
                 ) : null}
               </div>
             </div>
@@ -976,9 +978,9 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
       </div>
       <ConfirmDialog
         open={discardConfirmOpen}
-        title="Discard changes?"
-        description="Unsaved task details will be lost."
-        confirmLabel="Discard"
+        title={t("Discard changes?")}
+        description={t("Unsaved task details will be lost.")}
+        confirmLabel={t("Discard")}
         confirmVariant="danger"
         onConfirm={() => {
           setDiscardConfirmOpen(false)
@@ -1110,18 +1112,19 @@ function InfoValueRow({
   detail?: string
   mono?: boolean
 }) {
+  useTranslation()
   return (
     <div className="task-detail-value-row grid grid-cols-[88px_minmax(0,1fr)] items-start gap-3 py-1.5 sm:grid-cols-[112px_minmax(0,1fr)]">
-      <span className="text-xs leading-6 text-txt-secondary">{label}</span>
+      <span className="text-xs leading-6 text-txt-secondary">{t(label)}</span>
       <div className="flex min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className={clsx('whitespace-pre-wrap text-xs leading-6 text-txt-primary [overflow-wrap:anywhere]', mono && 'font-mono')}>
-            {value}
+            {value === '(none)' || value === '(empty)' ? t(value) : value}
           </div>
           {detail && <div className="mt-0.5 whitespace-pre-wrap font-mono text-2xs leading-5 text-txt-secondary [overflow-wrap:anywhere]">{detail}</div>}
         </div>
         {copyLabel && value !== '(none)' && (
-          <CopyButton value={[value, detail].filter(Boolean).join('\n')} label={copyLabel} size="xs" />
+          <CopyButton value={[value, detail].filter(Boolean).join('\n')} label={t(copyLabel)} size="xs" />
         )}
       </div>
     </div>
@@ -1129,19 +1132,21 @@ function InfoValueRow({
 }
 
 function RunMetric({ label, value }: { label: string; value: string }) {
+  useTranslation()
   return (
     <div className="min-w-0">
-      <dt className="text-xs text-txt-secondary">{label}</dt>
+      <dt className="text-xs text-txt-secondary">{t(label)}</dt>
       <dd className="mt-1 break-words text-xs font-medium tabular-nums text-txt-primary" title={value}>
-        {value}
+        {value === '(none)' || value === '(empty)' ? t(value) : value}
       </dd>
     </div>
   )
 }
 
 function RunEnvironmentRows({ environment }: { environment?: RunEnvironment | null }) {
+  useTranslation()
   if (!environment) {
-    return <div className="py-2 text-xs text-txt-secondary">Environment was not recorded for this run.</div>
+    return <div className="py-2 text-xs text-txt-secondary">{t("Environment was not recorded for this run.")}</div>
   }
   const groups = new Map<string, number[]>()
   for (const gpu of environment.gpus) {
@@ -1154,18 +1159,18 @@ function RunEnvironmentRows({ environment }: { environment?: RunEnvironment | nu
   const devices = [...groups].map(([label, indexes]) =>
     `${indexes.length} × ${label} · GPU ${indexes.join(', ')}`,
   ).join('\n')
-  const scope = { assigned: 'Assigned', visible: 'Visible', detected: 'Detected', disabled: 'Disabled' }[environment.gpu_scope]
+  const scope = { assigned: t("Assigned"), visible: t("Visible"), detected: t("Detected"), disabled: t("Disabled") }[environment.gpu_scope]
   let gpuValue = environment.gpu_scope === 'disabled'
-    ? 'No visible CUDA GPUs'
+    ? t("No visible CUDA GPUs")
     : environment.gpu_status !== 'ok'
-      ? 'GPU information unavailable'
-      : devices ? `${scope}: ${devices}` : 'No NVIDIA GPUs detected'
+      ? t("GPU information unavailable")
+      : devices ? `${scope}: ${devices}` : t("No NVIDIA GPUs detected")
   if (environment.gpu_status !== 'ok' && environment.assigned_gpu_ids.length) {
-    gpuValue += ` · Assigned GPU ${environment.assigned_gpu_ids.join(', ')}`
+    gpuValue += ` · ${t('Assigned GPU {{ids}}', { ids: environment.assigned_gpu_ids.join(', ') })}`
   }
   const visibility = environment.cuda_visible_devices != null
     ? `CUDA_VISIBLE_DEVICES=${environment.cuda_visible_devices || '(empty)'}`
-    : 'CUDA visibility unrestricted'
+    : t("CUDA visibility unrestricted")
   const rows = [
     ['Host', environment.host],
     ['System', environment.system],
@@ -1175,16 +1180,17 @@ function RunEnvironmentRows({ environment }: { environment?: RunEnvironment | nu
   return <>{rows.map(([label, value]) => (
     <InfoValueRow
       key={label}
-      label={label}
-      value={value || 'Not recorded'}
+      label={t(label)}
+      value={value || t("Not recorded")}
       detail={label === 'GPU' ? visibility : undefined}
       mono={label === 'Launcher'}
-      copyLabel={value ? `Copy ${label.toLowerCase()}` : undefined}
+      copyLabel={value ? t('Copy {{label}}', { label: t(label) }) : undefined}
     />
   ))}</>
 }
 
 function InfoTab({ task }: { task: Task }) {
+  useTranslation()
   const runs = buildRunEntries(task)
   const [openRunIndexes, setOpenRunIndexes] = useState<Set<number>>(
     () => new Set(),
@@ -1230,7 +1236,7 @@ function InfoTab({ task }: { task: Task }) {
       ? parseTaskTimestampMillis(task.launch_started_at)
       : parseTaskTimestampMillis(displayedRun?.start)
   const elapsedSeconds = runStartMillis === null ? null : Math.max(0, (nowMillis - runStartMillis) / 1000)
-  const durationLabel = task.status === 'queued' ? 'Waited' : task.status === 'running' ? 'Elapsed' : 'Duration'
+  const durationLabel = task.status === 'queued' ? t("Waited") : task.status === 'running' ? t("Elapsed") : t("Duration")
   const durationValue = live
     ? elapsedSeconds === null ? '(none)' : formatElapsedDuration(elapsedSeconds)
     : formatRunDuration(displayedRun?.duration, displayedRun?.start, displayedRun?.finish)
@@ -1255,10 +1261,10 @@ function InfoTab({ task }: { task: Task }) {
   const configuredCommand = formatStoredCommand(task.cmd)
   const command = launchMatchesRun ? String(task.launch_command) : configuredCommand
   const commandLabel = launchMatchesRun
-    ? 'Launch Command'
+    ? t("Launch Command")
     : Array.isArray(task.cmd)
-      ? 'Configured argv'
-      : 'Configured Command'
+      ? t("Configured argv")
+      : t("Configured Command")
   const executionWorkdir = launchMatchesRun ? task.launch_workdir : task.workdir
   const shell = [task.shell_kind, task.shell_executable].filter(Boolean).join(' | ')
   const executionRows: [string, string, string?][] = [
@@ -1276,49 +1282,49 @@ function InfoTab({ task }: { task: Task }) {
       {currentMetrics.length > 0 && (
         <section className="space-y-2" aria-labelledby="task-current-run-heading">
           <h3 id="task-current-run-heading" className="text-sm font-semibold text-txt-primary">
-            {task.status === 'running' ? 'Current Run' : 'Scheduled Run'}
+            {task.status === 'running' ? t("Current Run") : t("Scheduled Run")}
           </h3>
           <dl className="grid grid-cols-[repeat(auto-fit,minmax(132px,1fr))] gap-x-6 gap-y-4 py-1">
-            {currentMetrics.map(([label, value]) => <RunMetric key={label} label={label} value={value} />)}
+            {currentMetrics.map(([label, value]) => <RunMetric key={label} label={t(label)} value={value} />)}
           </dl>
         </section>
       )}
 
       <section className="space-y-2" aria-labelledby="task-overview-heading">
-        <h3 id="task-overview-heading" className="text-sm font-semibold text-txt-primary">Task</h3>
+        <h3 id="task-overview-heading" className="text-sm font-semibold text-txt-primary">{t("Task")}</h3>
         <dl className="task-detail-overview gap-x-6 gap-y-3 py-1">
-          {overview.map(([label, value]) => <RunMetric key={label} label={label} value={value} />)}
+          {overview.map(([label, value]) => <RunMetric key={label} label={t(label)} value={value} />)}
         </dl>
         <div className="pt-1">
-          <InfoValueRow label="Directory" value={task.dir} mono copyLabel="Copy task directory" />
-          {task._load_error && <InfoValueRow label="Load Error" value={task._load_error} />}
+          <InfoValueRow label={t("Directory")} value={task.dir} mono copyLabel={t("Copy task directory")} />
+          {task._load_error && <InfoValueRow label={t("Load Error")} value={task._load_error} />}
         </div>
       </section>
 
       {(displayedRunIndex > 0 || live) && (
-        <section className="space-y-2" aria-label="Run environment">
+        <section className="space-y-2" aria-label={t("Run environment")}>
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-txt-primary">Run Environment</h3>
-            {displayedRunIndex > 0 && <span className="text-xs tabular-nums text-txt-secondary">Run #{displayedRunIndex}</span>}
+            <h3 className="text-sm font-semibold text-txt-primary">{t("Run Environment")}</h3>
+            {displayedRunIndex > 0 && <span className="text-xs tabular-nums text-txt-secondary">{t('Run #{{index}}', { index: displayedRunIndex })}</span>}
           </div>
           <div>
             {task.status === 'queued' ? (
-              <div className="py-3 text-xs text-txt-secondary">Environment will be recorded when this run starts.</div>
+              <div className="py-3 text-xs text-txt-secondary">{t("Environment will be recorded when this run starts.")}</div>
             ) : <RunEnvironmentRows environment={displayedRun?.environment} />}
           </div>
           {displayedRun?.environment && task.status !== 'queued' && (
-            <p className="text-xs leading-5 text-txt-secondary">Recorded at launch · GPUs reflect assignment or visibility.</p>
+            <p className="text-xs leading-5 text-txt-secondary">{t("Recorded at launch · GPUs reflect assignment or visibility.")}</p>
           )}
         </section>
       )}
 
       <section className="space-y-2" aria-labelledby="task-execution-heading">
-        <h3 id="task-execution-heading" className="text-sm font-semibold text-txt-primary">Execution</h3>
+        <h3 id="task-execution-heading" className="text-sm font-semibold text-txt-primary">{t("Execution")}</h3>
         {command ? (
           <div className="overflow-hidden rounded-md bg-surface-base">
             <div className="flex items-center justify-between gap-2 px-3 pt-2">
-              <span className="text-xs font-medium text-txt-secondary">{commandLabel}</span>
-              <CopyButton value={command} label={`Copy ${commandLabel.toLowerCase()}`} size="xs" />
+              <span className="text-xs font-medium text-txt-secondary">{t(commandLabel)}</span>
+              <CopyButton value={command} label={t('Copy {{label}}', { label: commandLabel })} size="xs" />
             </div>
             <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all px-3 pb-3 pt-1 font-mono text-xs leading-relaxed text-txt-primary">
               {command}
@@ -1326,23 +1332,23 @@ function InfoTab({ task }: { task: Task }) {
           </div>
         ) : (
           <div className="py-2 text-xs text-txt-secondary">
-            Launch command was not recorded for this run.
+            {t("Launch command was not recorded for this run.")}
           </div>
         )}
         {executionRows.length > 0 && (
           <div>
             {executionRows.map(([label, value, copyLabel]) => (
-              <InfoValueRow key={label} label={label} value={value} copyLabel={copyLabel} mono={['Working Directory', 'Script', 'Shell', 'Runner ID'].includes(label)} />
+              <InfoValueRow key={label} label={t(label)} value={value} copyLabel={copyLabel} mono={['Working Directory', 'Script', 'Shell', 'Runner ID'].includes(label)} />
             ))}
           </div>
         )}
       </section>
 
       <section className="space-y-2" aria-labelledby="task-history-heading">
-        <h3 id="task-history-heading" className="text-sm font-semibold text-txt-primary">Run History</h3>
+        <h3 id="task-history-heading" className="text-sm font-semibold text-txt-primary">{t("Run History")}</h3>
         {runs.length === 0 ? (
           <div className="px-0.5 py-2 text-xs text-txt-secondary">
-            No runs recorded yet.
+            {t("No runs recorded yet.")}
           </div>
         ) : (
           <div>
@@ -1366,23 +1372,23 @@ function InfoTab({ task }: { task: Task }) {
               >
                 <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 py-2 text-xs transition-colors hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35">
                   <ChevronDown className="h-3.5 w-3.5 shrink-0 -rotate-90 text-txt-secondary transition-transform group-open:rotate-0" />
-                  <span className="font-medium text-txt-primary">Run #{run.index}</span>
+                  <span className="font-medium text-txt-primary">{t('Run #{{index}}', { index: run.index })}</span>
                   <span className="text-txt-secondary">{run.status || (run.index === task.run_index ? task.status : '')}</span>
                   <span className="ml-auto tabular-nums text-txt-secondary">{formatRunDuration(run.duration, run.start, run.finish)}</span>
                 </summary>
                 <div className="mb-3 ml-1.5 border-l border-border-subtle py-1 pl-4">
-                  <InfoValueRow label="Start" value={formatScalarValue(run.start)} />
-                  <InfoValueRow label="Finish" value={formatScalarValue(run.finish)} />
-                  <InfoValueRow label="PID" value={formatScalarValue(run.pid)} />
-                  <InfoValueRow label="Exit Code" value={formatScalarValue(run.exitCode)} />
-                  {run.source && <InfoValueRow label="Source" value={run.source} mono copyLabel={`Copy source state for run ${run.index}`} />}
+                  <InfoValueRow label={t("Start")} value={formatScalarValue(run.start)} />
+                  <InfoValueRow label={t("Finish")} value={formatScalarValue(run.finish)} />
+                  <InfoValueRow label={t("PID")} value={formatScalarValue(run.pid)} />
+                  <InfoValueRow label={t("Exit Code")} value={formatScalarValue(run.exitCode)} />
+                  {run.source && <InfoValueRow label={t("Source")} value={run.source} mono copyLabel={t('Copy source state for run {{index}}', { index: run.index })} />}
                   {run.index !== displayedRunIndex && (
                     <div className="my-3 border-t border-border-subtle pt-3">
-                      <h4 className="pb-1 text-xs font-semibold text-txt-primary">Environment</h4>
+                      <h4 className="pb-1 text-xs font-semibold text-txt-primary">{t("Environment")}</h4>
                       <RunEnvironmentRows environment={run.environment} />
                     </div>
                   )}
-                  {run.recordText !== '(empty)' && <InfoValueRow label="Record" value={run.recordText} mono copyLabel={`Copy record for run ${run.index}`} />}
+                  {run.recordText !== '(empty)' && <InfoValueRow label={t("Record")} value={run.recordText} mono copyLabel={t('Copy record for run {{index}}', { index: run.index })} />}
                   {openRunIndexes.has(run.index) && <RunInputView key={`${task.dir}:${run.index}`} name={task.name} run={run.index} />}
                 </div>
               </details>
@@ -1395,6 +1401,7 @@ function InfoTab({ task }: { task: Task }) {
 }
 
 function ConfigTab({ task }: { task: Task }) {
+  useTranslation()
   const normalizedConfig = Object.fromEntries(
     Object.entries(task.config || {}).filter(([key]) => !key.startsWith('_meta'))
   )
@@ -1404,21 +1411,21 @@ function ConfigTab({ task }: { task: Task }) {
       ? yamlStringify(normalizedConfig)
       : ''
   const shell = isShellTask(task)
-  const title = shell ? 'Script' : 'Configuration'
+  const title = shell ? t("Script") : t("Configuration")
 
   return (
-    <section className="space-y-3" aria-label={title}>
+    <section className="space-y-3" aria-label={t(title)}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-txt-primary">{title}</h3>
+        <h3 className="text-sm font-semibold text-txt-primary">{t(title)}</h3>
         {content && (
-          <CopyButton value={content} label={shell ? 'Copy script' : 'Copy configuration'} size="xs" />
+          <CopyButton value={content} label={shell ? t("Copy script") : t("Copy configuration")} size="xs" />
         )}
       </div>
       {content ? (
         <pre className="whitespace-pre-wrap rounded-md bg-surface-base p-4 font-mono text-xs leading-relaxed text-txt-primary [overflow-wrap:anywhere]">
           {content}
         </pre>
-      ) : <p className="py-3 text-xs text-txt-secondary">No {shell ? 'script' : 'configuration'} recorded for this task.</p>}
+      ) : <p className="py-3 text-xs text-txt-secondary">{t(shell ? 'No script recorded for this task.' : 'No configuration recorded for this task.')}</p>}
     </section>
   )
 }

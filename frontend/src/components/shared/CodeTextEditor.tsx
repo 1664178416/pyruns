@@ -16,6 +16,7 @@ import { tags as t } from '@lezer/highlight'
 import { WrapText } from 'lucide-react'
 import clsx from 'clsx'
 import CopyButton from '@/components/shared/CopyButton'
+import { useTranslation } from '@/i18n'
 
 type CodeEditorLanguage = 'yaml' | 'shell'
 type CodeEditorTheme = 'light' | 'dark'
@@ -217,6 +218,7 @@ export default function CodeTextEditor({
   compactToolbar = false,
   ariaLabel,
 }: CodeTextEditorProps) {
+  const { t: translate } = useTranslation()
   const [wrap, setWrap] = useState(() => getStoredWrap(wrapStorageKey, defaultWrap))
   const editorViewRef = useRef<EditorView | null>(null)
   const extensions = useMemo(
@@ -260,7 +262,7 @@ export default function CodeTextEditor({
           </span>
           <CopyButton
             value={value}
-            label={`Copy ${language === 'yaml' ? 'YAML' : 'shell'} content`}
+            label={translate('Copy {{language}} content', { language: language === 'yaml' ? 'YAML' : 'shell' })}
             size="xs"
             onMouseDown={event => event.preventDefault()}
             className="ml-auto"
@@ -270,8 +272,8 @@ export default function CodeTextEditor({
             onMouseDown={event => event.preventDefault()}
             onClick={() => setWrap(current => !current)}
             aria-pressed={wrap}
-            aria-label={wrap ? 'Disable line wrapping' : 'Enable line wrapping'}
-            title={wrap ? 'Disable line wrapping' : 'Enable line wrapping'}
+            aria-label={translate(wrap ? 'Disable line wrapping' : 'Enable line wrapping')}
+            title={translate(wrap ? 'Disable line wrapping' : 'Enable line wrapping')}
             className={clsx(
               'touch-target inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-accent/25',
               wrap
@@ -287,7 +289,7 @@ export default function CodeTextEditor({
         <div className="absolute right-1.5 top-1.5 z-10 flex gap-1.5">
           <CopyButton
             value={value}
-            label={`Copy ${language === 'yaml' ? 'YAML' : 'shell'} content`}
+            label={translate('Copy {{language}} content', { language: language === 'yaml' ? 'YAML' : 'shell' })}
             size="xs"
             onMouseDown={event => event.preventDefault()}
             className="border border-border-subtle bg-surface-raised/95 shadow-sm"
@@ -297,8 +299,8 @@ export default function CodeTextEditor({
             onMouseDown={event => event.preventDefault()}
             onClick={() => setWrap(current => !current)}
             aria-pressed={wrap}
-            aria-label={wrap ? 'Disable line wrapping' : 'Enable line wrapping'}
-            title={wrap ? 'Disable line wrapping' : 'Enable line wrapping'}
+            aria-label={translate(wrap ? 'Disable line wrapping' : 'Enable line wrapping')}
+            title={translate(wrap ? 'Disable line wrapping' : 'Enable line wrapping')}
             className={clsx(
               'touch-target inline-flex h-6 w-6 items-center justify-center rounded-md border border-border-subtle bg-surface-raised/95 text-txt-tertiary shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-accent/25',
               wrap ? 'text-accent' : 'hover:bg-surface-overlay hover:text-txt-primary',

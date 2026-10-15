@@ -485,7 +485,7 @@ pyr dev train.py
 - `pyr ui shell` 打开或创建当前项目的 shell workspace。
 - `pyr ui train.py` 初始化或打开该 Python 脚本的 workspace；首次需要模板时可加 `--config`。
 - `pyr ui train` 或 `pyr ui PATH` 打开已有的精确 workspace 名称或路径。
-- `pyr dev ...` 只用于开发 Pyruns 前端时的热更新；日常使用选择 `ui`。
+- `pyr dev SCRIPT.py` 为 Python 后端启用自动重载；前端热更新需要另外启动 Vite，日常使用选择 `ui`。
 
 `-p, --port` 选择监听端口；`--no-browser` 只启动服务并打印 URL；`--browser` 强制自动打开浏览器。
 
@@ -503,6 +503,7 @@ Pyruns 不是代码沙箱。任务命令和 Python 脚本会继承当前用户�
 - Manager：搜索、筛选、排序和批量控制任务，也可运行、停止、重命名、置顶或移入回收站。
 - Monitor：查看实时或历史日志、搜索日志、运行或停止任务，并打开详情或导出记录。
 - 侧栏 Workspace 用于切换工作区；Runtime 用于设置 Python、环境变量、GPU 与运行方式。
+- 侧栏底部的语言图标切换简体中文 / English，太阳或月亮图标切换日间 / 夜间主题；也可在偏好设置中选择，刷新后保留。
 
 ![Monitor](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/tab_monitor.png)
 

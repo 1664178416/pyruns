@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Loader2, X } from 'lucide-react'
+import { useTranslation } from '@/i18n'
 
 interface Props {
   open: boolean
@@ -14,9 +15,10 @@ interface Props {
 }
 
 export default function ConfirmDialog({
-  open, title, description, confirmLabel = 'Confirm', size = 'md',
+  open, title, description, confirmLabel, size = 'md',
   confirmVariant = 'primary', onConfirm, onCancel, children,
 }: Props) {
+  const { t } = useTranslation()
   const ref = useRef<HTMLDialogElement>(null)
   const backdropPointerStartedRef = useRef(false)
   const [pending, setPending] = useState(false)
@@ -94,7 +96,7 @@ export default function ConfirmDialog({
             type="button"
             onClick={handleCancel}
             disabled={pending}
-            aria-label="Close dialog"
+            aria-label={t('Close dialog')}
             className="touch-target inline-flex h-11 w-11 items-center justify-center rounded-md text-txt-tertiary transition-colors hover:bg-surface-hover hover:text-txt-primary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           >
             <X className="w-4 h-4" />
@@ -111,7 +113,7 @@ export default function ConfirmDialog({
             disabled={pending}
             className="touch-target min-h-11 rounded-md px-3.5 py-2 text-xs text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
           >
-            Cancel
+            {t('Cancel')}
           </button>
           <button
             type="button"
@@ -124,7 +126,7 @@ export default function ConfirmDialog({
             }`}
           >
             {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {confirmLabel}
+            {confirmLabel ?? t('Confirm')}
           </button>
         </div>
       </div>

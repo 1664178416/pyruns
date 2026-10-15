@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, Moon, Settings2, Sun, X } from 'lucide-react'
 import clsx from 'clsx'
+import { setLanguage, useTranslation, type Language } from '@/i18n'
 import {
   DEFAULT_SEARCH_SETTINGS,
   usePreferencesStore,
@@ -10,6 +11,7 @@ import {
 } from '@/store'
 
 export default function PreferencesDialog() {
+  const { t, i18n } = useTranslation()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const backdropPointerStarted = useRef(false)
   const titleId = useId()
@@ -60,23 +62,36 @@ export default function PreferencesDialog() {
         <header className="flex flex-none items-center gap-3 border-b border-border-subtle px-5 py-4 sm:px-6">
           <span className="inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-accent/10 text-accent-ink"><Settings2 aria-hidden="true" className="h-4 w-4" /></span>
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="text-base font-semibold">Preferences</h2>
-            <p className="mt-0.5 text-xs text-txt-tertiary">Appearance and search behavior.</p>
+            <h2 id={titleId} className="text-base font-semibold">{t('Preferences')}</h2>
           </div>
-          <button type="button" autoFocus aria-label="Close preferences" onClick={close} className="touch-target inline-flex h-11 w-11 flex-none items-center justify-center rounded-lg text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:h-8 sm:w-8">
+          <button type="button" autoFocus aria-label={t('Close preferences')} onClick={close} className="touch-target inline-flex h-11 w-11 flex-none items-center justify-center rounded-lg text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:h-8 sm:w-8">
             <X aria-hidden="true" className="h-4 w-4" />
           </button>
         </header>
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">
+          <section className="mb-5 border-b border-border-subtle pb-5">
+            <label className="flex min-h-11 items-center justify-between gap-3 text-sm">
+              <span className="font-medium">{t('Language')}</span>
+              <select
+                aria-label={t('Language')}
+                value={i18n.resolvedLanguage}
+                onChange={event => void setLanguage(event.target.value as Language)}
+                className="min-h-11 rounded-md border border-border bg-surface-overlay px-3 text-sm text-txt-primary"
+              >
+                <option value="zh-CN" lang="zh-CN">简体中文</option>
+                <option value="en" lang="en">English</option>
+              </select>
+            </label>
+          </section>
           <section aria-labelledby={`${titleId}-appearance`}>
-            <h3 id={`${titleId}-appearance`} className="text-xs font-semibold">Appearance</h3>
-            <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="Color theme">
+            <h3 id={`${titleId}-appearance`} className="text-xs font-semibold">{t('Appearance')}</h3>
+            <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label={t('Color theme')}>
               {([{ value: 'light', label: 'Light', icon: Sun }, { value: 'dark', label: 'Dark', icon: Moon }] as const).map(({ value, label, icon: Icon }) => (
                 <button key={value} type="button" aria-pressed={theme === value} onClick={() => { if (theme !== value) toggle() }}
                   className={clsx('touch-target flex min-h-11 items-center gap-2.5 rounded-lg border px-3 py-3 text-left text-sm transition-colors', theme === value ? 'border-accent/45 bg-accent/5 text-accent-ink' : 'border-border-subtle text-txt-secondary hover:bg-surface-overlay')}>
                   <Icon aria-hidden="true" className="h-4 w-4" />
-                  <span className="flex-1 font-medium">{label}</span>
+                  <span className="flex-1 font-medium">{t(label)}</span>
                   {theme === value && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
                 </button>
               ))}
@@ -84,29 +99,28 @@ export default function PreferencesDialog() {
           </section>
 
           <section aria-labelledby={`${titleId}-search`} className="mt-5 border-t border-border-subtle pt-5">
-            <h3 id={`${titleId}-search`} className="text-xs font-semibold">Search</h3>
+            <h3 id={`${titleId}-search`} className="text-xs font-semibold">{t('Search')}</h3>
             <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-4">
               <span className="min-w-0 flex-1">
-                <span className="block text-sm text-txt-primary">Search as you type</span>
-                <span className="mt-0.5 block text-xs text-txt-tertiary">Turn off to search with Enter.</span>
+                <span className="block text-sm text-txt-primary">{t('Search as you type')}</span>
               </span>
-              <input type="checkbox" aria-label="Search as you type" checked={settings.searchOnType} onChange={event => settings.update({ searchOnType: event.target.checked })} className="h-4 w-4 flex-none cursor-pointer accent-accent" />
+              <input type="checkbox" aria-label={t('Search as you type')} checked={settings.searchOnType} onChange={event => settings.update({ searchOnType: event.target.checked })} className="h-4 w-4 flex-none cursor-pointer accent-accent" />
             </label>
             <details className="group mt-3 rounded-lg border border-border-subtle">
               <summary className="touch-target flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-xs font-medium text-txt-secondary transition-colors hover:bg-surface-overlay">
-                Advanced search
+                {t('Advanced search')}
                 <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 flex-none text-txt-tertiary transition-transform group-open:rotate-180" />
               </summary>
               <div className="space-y-4 border-t border-border-subtle px-3 py-4">
                 <label className="flex flex-wrap items-center justify-between gap-2 text-xs text-txt-secondary">
-                  <span>Typing delay (ms)</span>
+                  <span>{t('Typing delay (ms)')}</span>
                   <input type="number" min={0} step={50} value={delayDraft}
                     onChange={event => setDelayDraft(event.target.value)} onBlur={commitDelay}
                     onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
                     className="touch-input min-h-9 w-28 rounded-md border border-border bg-surface-overlay px-2.5 py-1.5 text-sm tabular-nums text-txt-primary" />
                 </label>
                 <label className="flex flex-wrap items-center justify-between gap-2 text-xs text-txt-secondary">
-                  <span>Match limit (blank for unlimited)</span>
+                  <span>{t('Match limit (blank for unlimited)')}</span>
                   <input type="number" min={1} step={1} value={limitDraft}
                     onChange={event => setLimitDraft(event.target.value)} onBlur={commitLimit}
                     onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }}
@@ -117,22 +131,21 @@ export default function PreferencesDialog() {
           </section>
 
           <section aria-labelledby={`${titleId}-history`} className="mt-5 border-t border-border-subtle pt-5">
-            <h3 id={`${titleId}-history`} className="text-xs font-semibold">History &amp; defaults</h3>
-            <p className="mt-1 text-xs text-txt-tertiary">Shared by Manager and Monitor in this browser.</p>
+            <h3 id={`${titleId}-history`} className="text-xs font-semibold">{t('History & defaults')}</h3>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" disabled={!history.items.length} onClick={history.clear} className="touch-target min-h-11 rounded-lg border border-border-subtle px-3 py-2 text-xs font-medium text-txt-secondary transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9">Clear search history</button>
+              <button type="button" disabled={!history.items.length} onClick={history.clear} className="touch-target min-h-11 rounded-lg border border-border-subtle px-3 py-2 text-xs font-medium text-txt-secondary transition-colors hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9">{t('Clear search history')}</button>
               <button type="button" onClick={() => {
                 settings.update(DEFAULT_SEARCH_SETTINGS)
                 setDelayDraft(String(DEFAULT_SEARCH_SETTINGS.searchOnTypeDebouncePeriod))
                 setLimitDraft(String(DEFAULT_SEARCH_SETTINGS.maxResults ?? ''))
-              }} className="touch-target min-h-11 rounded-lg px-3 py-2 text-xs font-medium text-txt-secondary transition-colors hover:bg-surface-overlay sm:min-h-9">Reset search settings</button>
+              }} className="touch-target min-h-11 rounded-lg px-3 py-2 text-xs font-medium text-txt-secondary transition-colors hover:bg-surface-overlay sm:min-h-9">{t('Reset search settings')}</button>
             </div>
           </section>
         </div>
 
         <footer className="flex flex-none items-center justify-between gap-3 border-t border-border-subtle bg-surface-base/60 px-5 py-3 sm:px-6">
-          <p className="text-xs text-txt-tertiary">Saved automatically in this browser.</p>
-          <button type="button" onClick={close} className="touch-target min-h-11 flex-none rounded-lg border border-border px-4 py-2 text-xs font-medium transition-colors hover:bg-surface-overlay sm:min-h-9">Done</button>
+          <p className="text-xs text-txt-tertiary">{t('Saved automatically in this browser.')}</p>
+          <button type="button" onClick={close} className="touch-target min-h-11 flex-none rounded-lg border border-border px-4 py-2 text-xs font-medium transition-colors hover:bg-surface-overlay sm:min-h-9">{t('Done')}</button>
         </footer>
       </div>
     </dialog>

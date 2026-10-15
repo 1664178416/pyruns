@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import {
   memo,
   useCallback,
@@ -171,6 +172,7 @@ function mergeMonitorTaskSummary(current: Task, refreshed: Task): Task {
 }
 
 export default function MonitorPage() {
+  useTranslation()
   const {
     monitorTasks,
     monitorTotal,
@@ -541,7 +543,7 @@ export default function MonitorPage() {
       if (err instanceof api.ApiError && err.status === 422) return
       notify({
         tone: 'error',
-        title: 'Could not load monitor tasks',
+        title: t("Could not load monitor tasks"),
         detail: errorMessage(err),
       })
     })
@@ -559,7 +561,7 @@ export default function MonitorPage() {
     void selectTask(initialTask.name).catch(err => {
       notify({
         tone: 'error',
-        title: 'Could not load task logs',
+        title: t("Could not load task logs"),
         detail: errorMessage(err),
       })
     })
@@ -724,12 +726,12 @@ export default function MonitorPage() {
         void navigator.clipboard.writeText(selection)
           .then(() => notify({
             tone: 'success',
-            title: 'Log copied',
-            detail: `${selection.length} character${selection.length === 1 ? '' : 's'} copied.`,
+            title: t("Log copied"),
+            detail: t('{{count}} character(s) copied.', { count: selection.length }),
           }))
-          .catch(err => notify({ tone: 'error', title: 'Could not copy log', detail: errorMessage(err) }))
+          .catch(err => notify({ tone: 'error', title: t("Could not copy log"), detail: errorMessage(err) }))
       } else {
-        notify({ tone: 'error', title: 'Clipboard unavailable', detail: 'Use the browser or terminal copy shortcut instead.' })
+        notify({ tone: 'error', title: t("Clipboard unavailable"), detail: t("Use the browser or terminal copy shortcut instead.") })
       }
       return false
     })
@@ -1043,7 +1045,7 @@ export default function MonitorPage() {
       }
       pendingLiveLogChunkRef.current = { key: '', chunks: [] }
       void selectLogFile(runLogName)
-        .catch(err => notify({ tone: 'error', title: 'Could not load run log', detail: errorMessage(err) }))
+        .catch(err => notify({ tone: 'error', title: t("Could not load run log"), detail: errorMessage(err) }))
     }, 1500)
     return () => window.clearTimeout(fallbackTimer)
   }, [logMatch, notify, runLogName, selectLogFile, selectedLog, selectedTask?.name, selectedTask?.status])
@@ -1275,7 +1277,7 @@ export default function MonitorPage() {
       // a background pause. Load one bounded final tail before stopping updates.
       flushLiveLogChunkBuffer()
       void selectTask(selectedTask.name).catch(err => {
-        notify({ tone: 'error', title: 'Could not load final task log', detail: errorMessage(err) })
+        notify({ tone: 'error', title: t("Could not load final task log"), detail: errorMessage(err) })
       })
     }
   }, [pageVisible, workspaceKey, selectedTaskName, selectedTask, isLive, loading, logMatch,
@@ -1377,11 +1379,14 @@ export default function MonitorPage() {
     ),
     [monitorTasks],
   )
+  const completeSearchSummaryKey = loadedSearchMatchCount === 1
+    ? monitorTotal === 1 ? '{{matches}} match in {{tasks}} task' : '{{matches}} match in {{tasks}} tasks'
+    : monitorTotal === 1 ? '{{matches}} matches in {{tasks}} task' : '{{matches}} matches in {{tasks}} tasks'
   const searchResultSummary = monitorLoading
-    ? `Searching… ${monitorTotal.toLocaleString()} tasks found so far`
+    ? t('Searching… {{count}} tasks found so far', { count: monitorTotal.toLocaleString() })
     : monitorTotal > monitorTasks.length
-    ? `${loadedSearchMatchCount.toLocaleString()} matches on this page · ${monitorTotal.toLocaleString()} tasks`
-    : `${loadedSearchMatchCount.toLocaleString()} match${loadedSearchMatchCount === 1 ? '' : 'es'} in ${monitorTotal.toLocaleString()} task${monitorTotal === 1 ? '' : 's'}`
+    ? t('{{matches}} matches on this page · {{tasks}} tasks', { matches: loadedSearchMatchCount.toLocaleString(), tasks: monitorTotal.toLocaleString() })
+    : t(completeSearchSummaryKey, { matches: loadedSearchMatchCount.toLocaleString(), tasks: monitorTotal.toLocaleString() })
   const pinnedTasks = useMemo(
     () => filteredTasks.filter(task => task.pinned),
     [filteredTasks],
@@ -1409,7 +1414,7 @@ export default function MonitorPage() {
     if (compactMonitorLayout && sidebarQuery) setCompactSearchFocused(true)
     pendingLiveLogChunkRef.current = { key: '', chunks: [] }
     void selectTask(task.name, match)
-      .catch(err => notify({ tone: 'error', title: 'Could not load task logs', detail: errorMessage(err) }))
+      .catch(err => notify({ tone: 'error', title: t("Could not load task logs"), detail: errorMessage(err) }))
     termContainerRef.current?.scrollIntoView({ block: 'nearest' })
     xtermRef.current?.focus()
   }, [exportMode, toggleExport, closeTerminalSearch, compactMonitorLayout, sidebarQuery, selectTask, notify])
@@ -1440,7 +1445,7 @@ export default function MonitorPage() {
 
       if (stillSelected) {
         await selectTask(currentTaskName).catch(err => {
-          notify({ tone: 'error', title: 'Task changed, but its log could not refresh', detail: errorMessage(err) })
+          notify({ tone: 'error', title: t("Task changed, but its log could not refresh"), detail: errorMessage(err) })
         })
       }
       await fetchMonitorTasks({ workspaceKey: requestedWorkspaceKey }).catch(() => {
@@ -1448,13 +1453,13 @@ export default function MonitorPage() {
       })
       notify({
         tone: 'success',
-        title: action === 'run' ? 'Task started' : 'Cancel requested',
+        title: action === 'run' ? t("Task started") : t("Cancel requested"),
         detail: currentTaskName,
       })
     } catch (err) {
       notify({
         tone: 'error',
-        title: action === 'run' ? 'Could not start task' : 'Could not cancel task',
+        title: action === 'run' ? t("Could not start task") : t("Could not cancel task"),
         detail: errorMessage(err),
       })
     } finally {
@@ -1479,7 +1484,7 @@ export default function MonitorPage() {
       ))
     }).catch(err => {
       if (workspaceKeyRef.current === requestedWorkspaceKey) {
-        notify({ tone: 'error', title: 'Could not load task details', detail: errorMessage(err) })
+        notify({ tone: 'error', title: t("Could not load task details"), detail: errorMessage(err) })
       }
     })
   }, [notify])
@@ -1502,11 +1507,11 @@ export default function MonitorPage() {
       }
       notify({
         tone: 'success',
-        title: 'CSV exported',
-        detail: `${names.length} task${names.length === 1 ? '' : 's'} exported.`,
+        title: t("CSV exported"),
+        detail: t('{{count}} task(s) exported.', { count: names.length }),
       })
     } catch (err) {
-      notify({ tone: 'error', title: 'Could not export CSV', detail: errorMessage(err) })
+      notify({ tone: 'error', title: t("Could not export CSV"), detail: errorMessage(err) })
     }
   }, [clearExport, exportIds, notify])
 
@@ -1524,14 +1529,14 @@ export default function MonitorPage() {
       queuedLiveLogTaskRef.current = { taskName: null, runLogName: '' }
     }
     void selectLogFile(logName)
-      .catch(err => notify({ tone: 'error', title: 'Could not load log file', detail: errorMessage(err) }))
+      .catch(err => notify({ tone: 'error', title: t("Could not load log file"), detail: errorMessage(err) }))
   }, [notify, selectLogFile, selectedTaskSnapshot?.status])
 
   const handleTaskPageChange = useCallback((offset: number) => {
     void fetchMonitorTasks({ query: sidebarQuery, offset, refresh: false, workspaceKey })
       .catch(err => notify({
         tone: 'error',
-        title: 'Could not load task page',
+        title: t("Could not load task page"),
         detail: errorMessage(err),
       }))
   }, [fetchMonitorTasks, notify, sidebarQuery, workspaceKey])
@@ -1539,7 +1544,7 @@ export default function MonitorPage() {
   return (
     <div ref={monitorShellRef} className={monitorShellClassName}>
       <aside
-        aria-label="Task monitor sidebar"
+        aria-label={t("Task monitor sidebar")}
         className={clsx(
           'flex-none flex-col overflow-hidden bg-surface-raised',
           compactMonitorLayout && compactSearchFocused && selectedTaskName ? 'hidden' : 'flex',
@@ -1552,8 +1557,8 @@ export default function MonitorPage() {
         <div className="flex-none border-b border-border-subtle px-3 pb-3 pt-3.5">
           <div className="mb-3 flex min-h-8 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              <h1 className="text-sm font-semibold tracking-tight text-txt-primary">Monitor</h1>
-              <span className="rounded-md bg-surface-overlay px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-txt-secondary" title={`${monitorTotal.toLocaleString()} tasks`}>
+              <h1 className="text-sm font-semibold tracking-tight text-txt-primary">{t("Monitor")}</h1>
+              <span className="rounded-md bg-surface-overlay px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-txt-secondary" title={t('{{count}} tasks', { count: monitorTotal.toLocaleString() })}>
                 {monitorTotal.toLocaleString()}
               </span>
             </div>
@@ -1562,13 +1567,13 @@ export default function MonitorPage() {
                 role="status"
                 aria-live="polite"
                 aria-label={taskEventStatus === 'live'
-                  ? 'Task list updates live'
+                  ? t('Task list updates live')
                   : taskEventStatus === 'reconnecting'
-                    ? 'Live task updates disconnected; fallback refresh is active'
-                    : 'Connecting live task updates'}
+                    ? t('Live task updates disconnected; fallback refresh is active')
+                    : t('Connecting live task updates')}
                 title={taskEventStatus === 'live'
-                  ? 'Task changes appear automatically'
-                  : 'Using fallback refresh while the live connection recovers'}
+                  ? t('Task changes appear automatically')
+                  : t('Using fallback refresh while the live connection recovers')}
                 className={clsx(
                   'inline-flex items-center gap-1.5 text-2xs',
                   taskEventStatus === 'live' ? 'text-txt-tertiary' : 'text-amber-700 dark:text-amber-300',
@@ -1578,23 +1583,23 @@ export default function MonitorPage() {
                   ? <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                   : <LoaderCircle aria-hidden="true" className="h-3 w-3 motion-safe:animate-spin" />}
                 {taskEventStatus === 'live'
-                  ? 'Live'
+                  ? t("Live")
                   : taskEventStatus === 'reconnecting'
-                    ? 'Retrying'
-                    : 'Connecting'}
+                    ? t('Retrying')
+                    : t("Connecting")}
               </span>
               <button
                 type="button"
                 aria-label={monitorLoading && sidebarSearchActive
-                  ? 'Cancel search'
+                  ? t("Cancel search")
                   : sidebarSearchActive
-                    ? 'Refresh search results'
-                    : 'Refresh tasks'}
+                    ? t("Refresh search results")
+                    : t("Refresh tasks")}
                 title={monitorLoading && sidebarSearchActive
-                  ? 'Cancel search'
+                  ? t("Cancel search")
                   : sidebarSearchActive
-                    ? 'Refresh search results'
-                    : 'Refresh tasks'}
+                    ? t("Refresh search results")
+                    : t("Refresh tasks")}
                 disabled={monitorLoading && !sidebarSearchActive}
                 onClick={() => monitorLoading && sidebarSearchActive
                   ? useTaskStore.getState().cancelMonitorSearch()
@@ -1623,13 +1628,13 @@ export default function MonitorPage() {
             onRefresh={() => void refreshMonitorTasks(true).catch(() => {})}
             onCancel={() => useTaskStore.getState().cancelMonitorSearch()}
             onFocusSearch={() => setCompactSearchFocused(false)}
-            ariaLabel="Search monitor tasks"
+            ariaLabel={t("Search monitor tasks")}
             inputRef={sidebarSearchInputRef}
           />
           {monitorError && (
             <div className="mt-2 flex items-start gap-1.5 rounded-md border border-rose-500/20 bg-rose-500/8 px-2 py-1.5 text-2xs text-rose-700 dark:text-rose-300" role="alert">
               <WifiOff className="mt-0.5 h-3 w-3 flex-none" />
-              <span className="min-w-0 flex-1">{sidebarSearchActive ? monitorError : 'Task updates are delayed. Retrying automatically.'}</span>
+              <span className="min-w-0 flex-1">{sidebarSearchActive ? monitorError : t("Task updates are delayed. Retrying automatically.")}</span>
             </div>
           )}
         </div>
@@ -1637,14 +1642,14 @@ export default function MonitorPage() {
         <div ref={sidebarListRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           {sidebarSearchActive ? (
             <CompactSection
-              title="Search Results"
+              title={t("Search Results")}
               subtitle={searchResultSummary}
               icon={<Search className="h-3.5 w-3.5 text-accent" />}
               bodyClassName="border-y border-border-subtle"
             >
               {monitorTasks.length === 0 ? (
                 <div className="px-2 py-5 text-center text-2xs text-txt-tertiary" role="status">
-                  {monitorLoading ? 'Searching tasks...' : 'No matching tasks'}
+                  {monitorLoading ? t("Searching tasks...") : t("No matching tasks")}
                 </div>
               ) : monitorTasks.map(task => (
                 <SearchResultGroup
@@ -1661,7 +1666,7 @@ export default function MonitorPage() {
             <>
               {selectedTaskOutsideList && selectedTask && (
                 <CompactSection
-                  title="Current Task"
+                  title={t("Current Task")}
                   icon={<Rows3 className="h-3.5 w-3.5 text-accent" />}
                   className="mb-3 rounded-md border border-accent/20 bg-accent/5 p-2"
                   bodyClassName="space-y-1 pt-0"
@@ -1677,7 +1682,7 @@ export default function MonitorPage() {
               )}
               {pinnedTasks.length > 0 && (
                 <CompactSection
-                  title="Pinned Tasks"
+                  title={t("Pinned Tasks")}
                   count={pinnedTasks.length}
                   icon={<Pin className="h-3.5 w-3.5 text-accent-ink" />}
                   className="mb-3"
@@ -1698,14 +1703,14 @@ export default function MonitorPage() {
               )}
 
               <CompactSection
-                title="Tasks"
+                title={t("Tasks")}
                 count={pinnedTasks.length ? otherTasks.length : undefined}
                 icon={<Rows3 className="h-3.5 w-3.5 text-txt-tertiary" />}
                 bodyClassName="space-y-1 pt-1"
               >
                 {otherTasks.length === 0 && pinnedTasks.length === 0 ? (
                   <div className="px-2 py-5 text-center text-2xs text-txt-tertiary">
-                    {monitorLoading ? 'Loading tasks...' : 'No tasks'}
+                    {monitorLoading ? t("Loading tasks...") : t("No tasks")}
                   </div>
                 ) : otherTasks.map(task => (
                   <SidebarItem
@@ -1726,9 +1731,9 @@ export default function MonitorPage() {
 
         <div className="flex-none border-t border-border-subtle px-2.5 py-2">
           {monitorTotal > MONITOR_TASK_PAGE_SIZE && (
-            <div className="mb-2 space-y-1" aria-label="Monitor task pagination">
+            <div className="mb-2 space-y-1" aria-label={t("Monitor task pagination")}>
               <div className="text-2xs tabular-nums text-txt-tertiary">
-                Tasks {monitorOffset + 1}–{monitorOffset + monitorTasks.length}
+                {t('Tasks {{start}}–{{end}}', { start: monitorOffset + 1, end: monitorOffset + monitorTasks.length })}
               </div>
               <Pagination total={monitorTotal} offset={monitorOffset} limit={MONITOR_TASK_PAGE_SIZE}
                 onOffsetChange={handleTaskPageChange} disabled={monitorLoading} />
@@ -1742,7 +1747,7 @@ export default function MonitorPage() {
               onClick={() => setExportMode(true)}
               disabled={filteredTasks.length === 0}
             >
-              Export
+              {t("Export")}
             </ActionButton>
           ) : (
             <div className="space-y-2">
@@ -1753,9 +1758,9 @@ export default function MonitorPage() {
                   disabled={monitorLoading}
                   className="touch-target text-accent transition-colors hover:text-accent-hover"
                 >
-                  {allExportSelected ? 'Deselect page' : 'Select page'}
+                  {allExportSelected ? t("Deselect page") : t("Select page")}
                 </button>
-                <span className="text-txt-tertiary">{exportIds.size} selected</span>
+                <span className="text-txt-tertiary">{t('{{count}} selected', { count: exportIds.size })}</span>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1766,7 +1771,7 @@ export default function MonitorPage() {
                   onClick={handleExport}
                   disabled={exportIds.size === 0}
                 >
-                  Export
+                  {t("Export")}
                 </ActionButton>
                 <ActionButton
                   variant="ghost"
@@ -1775,7 +1780,7 @@ export default function MonitorPage() {
                     clearExport()
                   }}
                 >
-                  Cancel
+                  {t("Cancel")}
                 </ActionButton>
               </div>
             </div>
@@ -1786,7 +1791,7 @@ export default function MonitorPage() {
         <button
           type="button"
           role="separator"
-          aria-label="Resize monitor sidebar"
+          aria-label={t("Resize monitor sidebar")}
           aria-orientation="vertical"
           aria-valuemin={MIN_MONITOR_SIDEBAR_WIDTH}
           aria-valuemax={MAX_MONITOR_SIDEBAR_WIDTH}
@@ -1807,8 +1812,8 @@ export default function MonitorPage() {
               <div className="flex min-w-0 flex-1 basis-[24rem] items-center gap-2.5">
                 {compactMonitorLayout && compactSearchFocused && selectedTaskName && (
                   <ActionButton
-                    aria-label="Search results"
-                    title="Back to search results"
+                    aria-label={t("Search results")}
+                    title={t("Back to search results")}
                     className="flex-none px-2 [&>span]:sr-only"
                     variant="secondary"
                     icon={<Search className="h-3.5 w-3.5" />}
@@ -1817,7 +1822,7 @@ export default function MonitorPage() {
                       window.requestAnimationFrame(() => sidebarSearchInputRef.current?.focus())
                     }}
                   >
-                    Search results
+                    {t("Search results")}
                   </ActionButton>
                 )}
                 <StatusBadge status={selectedTask.status as TaskStatus} />
@@ -1825,8 +1830,8 @@ export default function MonitorPage() {
                   <div className="truncate text-sm font-semibold text-txt-primary" title={selectedTask.name}>
                     {selectedTask.name}
                   </div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-txt-tertiary" title={selectedLog || liveLogName || 'latest log'}>
-                    {selectedLog || liveLogName || 'latest log'}
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-txt-tertiary" title={selectedLog || liveLogName || t("latest log")}>
+                    {selectedLog || liveLogName || t("latest log")}
                   </div>
                 </div>
 
@@ -1834,7 +1839,7 @@ export default function MonitorPage() {
                   <span
                     role="status"
                     aria-live="polite"
-                    title={streamStatus === 'reconnecting' ? 'Live stream disconnected; incremental polling remains active while reconnecting.' : undefined}
+                    title={streamStatus === 'reconnecting' ? t("Live stream disconnected; incremental polling remains active while reconnecting.") : undefined}
                     className={clsx(
                       'inline-flex flex-none items-center gap-1 rounded-md px-2 py-1 text-2xs font-medium',
                       streamStatus === 'live'
@@ -1846,10 +1851,10 @@ export default function MonitorPage() {
                       ? <Wifi className="h-3 w-3" />
                       : <RefreshCw className="h-3 w-3 motion-safe:animate-spin" />}
                     {streamStatus === 'live'
-                      ? 'Live'
+                      ? t("Live")
                       : streamStatus === 'reconnecting'
-                        ? 'Reconnecting'
-                        : 'Connecting'}
+                        ? t("Reconnecting")
+                        : t("Connecting")}
                   </span>
                 )}
               </div>
@@ -1860,15 +1865,15 @@ export default function MonitorPage() {
                   compactMonitorLayout ? 'w-full' : 'ml-auto flex-none',
                 )}
                 role="toolbar"
-                aria-label="Log actions"
+                aria-label={t("Log actions")}
               >
                 {availableLogs.length > 1 && (
                   <div className="relative min-w-0">
                     <select
                       value={selectedLog}
                       onChange={event => handleSelectLogFile(event.target.value)}
-                      title="Select log file"
-                      aria-label="Select task log file"
+                      title={t("Select log file")}
+                      aria-label={t("Select task log file")}
                       disabled={loading}
                       className="touch-input h-11 max-w-36 appearance-none truncate rounded-md border border-border bg-surface-raised px-2.5 pr-7 text-xs text-txt-primary transition-colors hover:bg-surface-overlay sm:h-9"
                     >
@@ -1883,17 +1888,17 @@ export default function MonitorPage() {
                 <ActionButton
                   icon={<PanelRightOpen className="h-3.5 w-3.5" />}
                   variant="ghost"
-                  aria-label="View Details"
-                  title="View task details"
+                  aria-label={t("View Details")}
+                  title={t("View task details")}
                   className="max-[900px]:px-2 max-[900px]:[&>span]:sr-only"
                   onClick={() => openDetailTask(selectedTask)}
                 >
-                  View Details
+                  {t("View Details")}
                 </ActionButton>
 
                 <CopyButton
                   value={logContent}
-                  label="Copy current log"
+                  label={t("Copy current log")}
                   size="md"
                   className="bg-transparent"
                 />
@@ -1932,7 +1937,7 @@ export default function MonitorPage() {
                     onClick={() => void handleTaskAction('run')}
                     disabled={taskActionPending !== null}
                   >
-                    {taskActionPending === 'run' ? 'Starting' : 'Run'}
+                    {taskActionPending === 'run' ? t("Starting") : t("Run")}
                   </ActionButton>
                 )}
 
@@ -1945,7 +1950,7 @@ export default function MonitorPage() {
                     onClick={() => setStopConfirmTask(selectedTask.name)}
                     disabled={taskActionPending !== null}
                   >
-                    {taskActionPending === 'cancel' ? 'Stopping' : 'Stop'}
+                    {taskActionPending === 'cancel' ? t("Stopping") : t("Stop")}
                   </ActionButton>
                 )}
               </div>
@@ -1956,26 +1961,26 @@ export default function MonitorPage() {
                 <ActionButton variant="secondary" icon={<Search className="h-3.5 w-3.5" />} onClick={() => {
                   setCompactSearchFocused(false)
                   window.requestAnimationFrame(() => sidebarSearchInputRef.current?.focus())
-                }}>Search results</ActionButton>
+                }}>{t("Search results")}</ActionButton>
               )}
-              <span className="text-xs text-txt-tertiary">Select a task to view logs</span>
+              <span className="text-xs text-txt-tertiary">{t("Select a task to view logs")}</span>
             </>
           )}
         </div>
 
         {logMatch && (
-          <div aria-label="Selected log match" className="border-b border-border bg-surface-raised px-3 py-2">
+          <div aria-label={t("Selected log match")} className="border-b border-border bg-surface-raised px-3 py-2">
             <div className="flex min-w-0 items-center justify-between gap-2">
-              <p className="min-w-0 flex-1 text-xs text-txt-secondary">{logMatch.log_file}:{logMatch.line} · Search match · Up to 32 KB</p>
+              <p className="min-w-0 flex-1 text-xs text-txt-secondary">{logMatch.log_file}:{logMatch.line}{t(' · Search match · Up to 32 KB')}</p>
               <ActionButton
                 variant="secondary"
                 icon={<X className="h-3.5 w-3.5" />}
-                aria-label="Back to latest log"
-                title="Close this search match and return to the latest log"
+                aria-label={t("Back to latest log")}
+                title={t("Close this search match and return to the latest log")}
                 className="flex-none max-[900px]:px-2 max-[900px]:[&>span]:sr-only"
                 onClick={() => selectedTask && handleSidebarClick(selectedTask)}
               >
-                Back to latest log
+                {t("Back to latest log")}
               </ActionButton>
             </div>
             <SearchMatchContext match={logMatch} />
@@ -1992,7 +1997,7 @@ export default function MonitorPage() {
             <button type="button" className="touch-target ml-2 text-accent underline" onClick={() => {
               if (!logMatch && selectedLog) handleSelectLogFile(selectedLog)
               else if (selectedTask) handleSidebarClick(selectedTask, logMatch ?? undefined)
-            }}>Retry</button>
+            }}>{t("Retry")}</button>
           </div>
         )}
 
@@ -2007,9 +2012,9 @@ export default function MonitorPage() {
           >
             <AlertTriangle className="h-3.5 w-3.5 flex-none" />
             <span>
-              Showing the latest {formatBytes(logTailLimitBytes)} of this log to keep the monitor responsive.
+              {t('Showing the latest {{size}} of this log to keep the monitor responsive.', { size: formatBytes(logTailLimitBytes) })}
             </span>
-            <span className="text-amber-700/80 dark:text-amber-300/80">New output continues live.</span>
+            <span className="text-amber-700/80 dark:text-amber-300/80">{t("New output continues live.")}</span>
           </div>
         )}
 
@@ -2020,13 +2025,13 @@ export default function MonitorPage() {
                 ref={termContainerRef}
                 className="monitor-terminal-shell h-full w-full"
                 role="region"
-                aria-label={`Read-only logs for ${selectedTaskName}`}
+                aria-label={t('Read-only logs for {{name}}', { name: selectedTaskName })}
               />
               {loading && (
                 <div className="monitor-loading-overlay pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-xs text-[#cbd5e1]" role="status">
                   <span className="inline-flex items-center gap-2 rounded-md border border-[#303136] bg-[#18181b] px-3 py-2">
                     <LoaderCircle className="h-4 w-4 motion-safe:animate-spin" />
-                    Loading log…
+                    {t("Loading log…")}
                   </span>
                 </div>
               )}
@@ -2054,8 +2059,8 @@ export default function MonitorPage() {
                         closeTerminalSearch()
                       }
                     }}
-                    placeholder="Search logs"
-                    aria-label="Search terminal logs"
+                    placeholder={t("Search logs")}
+                    aria-label={t("Search terminal logs")}
                     className="touch-input min-w-0 flex-1 bg-transparent px-1 py-0.5 text-xs text-[#cccccc] caret-[#cccccc] outline-none selection:bg-[#264f78] selection:text-white placeholder:text-[#6f7787]"
                   />
                   <span
@@ -2067,14 +2072,14 @@ export default function MonitorPage() {
                       terminalSearchStatus === 'No match' ? 'text-[#f48771]' : 'text-[#a0a6b1]',
                     )}
                   >
-                    {terminalSearchStatus}
+                    {t(terminalSearchStatus)}
                   </span>
                   <button
                     type="button"
                     onClick={() => runPendingTerminalSearchNow('previous')}
                     className="touch-target rounded-md p-1 text-[#a0a6b1] transition-colors hover:bg-[#2a2d2e] hover:text-[#f0f0f0] focus:outline-none focus:ring-2 focus:ring-[#007acc]/40"
-                    title="Previous match"
-                    aria-label="Previous match"
+                    title={t("Previous match")}
+                    aria-label={t("Previous match")}
                   >
                     <ChevronUp className="h-3.5 w-3.5" />
                   </button>
@@ -2082,8 +2087,8 @@ export default function MonitorPage() {
                     type="button"
                     onClick={() => runPendingTerminalSearchNow('next')}
                     className="touch-target rounded-md p-1 text-[#a0a6b1] transition-colors hover:bg-[#2a2d2e] hover:text-[#f0f0f0] focus:outline-none focus:ring-2 focus:ring-[#007acc]/40"
-                    title="Next match"
-                    aria-label="Next match"
+                    title={t("Next match")}
+                    aria-label={t("Next match")}
                   >
                     <ChevronDown className="h-3.5 w-3.5" />
                   </button>
@@ -2091,8 +2096,8 @@ export default function MonitorPage() {
                     type="button"
                     onClick={() => closeTerminalSearch()}
                     className="touch-target rounded-md p-1 text-[#a0a6b1] transition-colors hover:bg-[#2a2d2e] hover:text-[#f0f0f0] focus:outline-none focus:ring-2 focus:ring-[#007acc]/40"
-                    title="Close search"
-                    aria-label="Close terminal search"
+                    title={t("Close search")}
+                    aria-label={t("Close terminal search")}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -2101,7 +2106,7 @@ export default function MonitorPage() {
             </>
           ) : (
             <div className="flex h-full min-w-0 items-center justify-center px-4">
-              <EmptyState title="No task selected" description="Select a task from the sidebar to inspect logs" />
+              <EmptyState title={t("No task selected")} description={t("Select a task from the sidebar to inspect logs")} />
             </div>
           )}
         </div>
@@ -2129,9 +2134,9 @@ export default function MonitorPage() {
       )}
       <ConfirmDialog
         open={Boolean(stopConfirmTask)}
-        title="Stop active task?"
-        description={stopConfirmTask ? `Request cancellation for '${stopConfirmTask}'? Its process tree will be stopped.` : ''}
-        confirmLabel="Stop Task"
+        title={t("Stop active task?")}
+        description={stopConfirmTask ? t("Request cancellation for '{{name}}'? Its process tree will be stopped.", { name: stopConfirmTask }) : ''}
+        confirmLabel={t("Stop Task")}
         confirmVariant="danger"
         onConfirm={async () => {
           if (!stopConfirmTask || selectedTaskName !== stopConfirmTask) {
@@ -2151,6 +2156,7 @@ export default function MonitorPage() {
 }
 
 function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
+  useTranslation()
   const requested = Math.max(1, Number(wait?.requested_gpu_count || 1))
   const eligible = Number.isFinite(Number(wait?.eligible_gpu_count))
     ? Math.max(0, Number(wait?.eligible_gpu_count))
@@ -2177,30 +2183,30 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <h2 id="gpu-wait-heading" className="text-xs font-semibold text-txt-primary">Waiting for GPU capacity</h2>
+              <h2 id="gpu-wait-heading" className="text-xs font-semibold text-txt-primary">{t("Waiting for GPU capacity")}</h2>
               <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-2xs font-medium text-amber-700 dark:text-amber-300">
-                {eligible === null ? 'Checking eligibility' : `${eligible}/${requested} eligible`}
+                {eligible === null ? t("Checking eligibility") : t('{{eligible}}/{{requested}} eligible', { eligible, requested })}
               </span>
             </div>
             <p className="mt-0.5 text-2xs leading-5 text-txt-secondary">
-              {wait?.reason || 'The scheduler is checking memory, utilization, reservations, and the stability window.'}
+              {wait?.reason || t("The scheduler is checking memory, utilization, reservations, and the stability window.")}
             </p>
           </div>
         </div>
 
         <dl className="grid min-w-[15rem] flex-none grid-cols-2 gap-x-4 gap-y-1 text-2xs sm:grid-cols-3">
           <div>
-            <dt className="text-txt-tertiary">Waited</dt>
+            <dt className="text-txt-tertiary">{t("Waited")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">{formatDuration(waitedSeconds)}</dd>
           </div>
           <div>
-            <dt className="text-txt-tertiary">Time left</dt>
+            <dt className="text-txt-tertiary">{t("Time left")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">
-              {remainingSeconds === null ? 'No limit' : formatDuration(remainingSeconds)}
+              {remainingSeconds === null ? t("No limit") : formatDuration(remainingSeconds)}
             </dd>
           </div>
           <div className="col-span-2 sm:col-span-1">
-            <dt className="text-txt-tertiary">Visible GPUs</dt>
+            <dt className="text-txt-tertiary">{t("Visible GPUs")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">
               {wait?.total_gpu_count ?? (devices.length || '—')}
             </dd>
@@ -2211,10 +2217,10 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
       {devices.length > 0 && (
         <details className="group mt-2 rounded-md border border-border-subtle bg-surface-overlay/60">
           <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-1.5 text-2xs font-medium text-txt-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35">
-            <span>Why each GPU is waiting</span>
+            <span>{t("Why each GPU is waiting")}</span>
             <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
           </summary>
-          <ul className="grid gap-1 border-t border-border-subtle p-2 sm:grid-cols-2" aria-label="GPU eligibility details">
+          <ul className="grid gap-1 border-t border-border-subtle p-2 sm:grid-cols-2" aria-label={t("GPU eligibility details")}>
             {devices.map(device => (
               <li key={device.uuid || device.index} className="flex min-w-0 items-start gap-2 rounded-md bg-surface-raised px-2 py-1.5 text-2xs">
                 <span className={clsx(
@@ -2223,10 +2229,10 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
                 )} />
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-txt-primary">
-                    GPU {device.index}{device.name ? ` · ${device.name}` : ''}
+                    {t("GPU")} {device.index}{device.name ? ` · ${device.name}` : ''}
                   </span>
                   <span className="block truncate text-txt-tertiary" title={device.reason || undefined}>
-                    {device.eligible ? 'Passes current thresholds' : device.reason || 'Waiting for current thresholds'}
+                    {device.eligible ? t("Passes current thresholds") : device.reason || t("Waiting for current thresholds")}
                   </span>
                   <span className="block truncate text-txt-tertiary/80">
                     {formatGPUDeviceMetrics(device)}
@@ -2244,15 +2250,15 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
 function formatGPUDeviceMetrics(device: NonNullable<GPUWaitStatus['devices']>[number]) {
   const parts: string[] = []
   if (device.free_memory_gb != null && Number.isFinite(Number(device.free_memory_gb))) {
-    parts.push(`${Number(device.free_memory_gb).toFixed(1)} GiB free`)
+    parts.push(t('{{value}} GiB free', { value: Number(device.free_memory_gb).toFixed(1) }))
   }
   if (device.memory_used_pct != null && Number.isFinite(Number(device.memory_used_pct))) {
-    parts.push(`${Math.round(Number(device.memory_used_pct))}% memory`)
+    parts.push(t('{{value}}% memory', { value: Math.round(Number(device.memory_used_pct)) }))
   }
   if (device.compute_util_pct != null && Number.isFinite(Number(device.compute_util_pct))) {
-    parts.push(`${Math.round(Number(device.compute_util_pct))}% compute`)
+    parts.push(t('{{value}}% compute', { value: Math.round(Number(device.compute_util_pct)) }))
   }
-  return parts.join(' · ') || 'Metrics unavailable'
+  return parts.join(' · ') || t("Metrics unavailable")
 }
 
 function formatDuration(totalSeconds: number) {
@@ -2272,7 +2278,7 @@ function formatDuration(totalSeconds: number) {
 function formatBytes(bytes: number) {
   const value = Math.max(0, Number(bytes || 0))
   if (value <= 0) {
-    return 'bounded tail'
+    return t("bounded tail")
   }
   if (value >= 1024 * 1024) {
     return `${(value / (1024 * 1024)).toFixed(value % (1024 * 1024) === 0 ? 0 : 1)} MB`
@@ -2295,6 +2301,7 @@ const SidebarItem = memo(function SidebarItem({
   exportSelected: boolean
   onSelect: (task: Task) => void
 }) {
+  useTranslation()
   return (
     <button
       type="button"
@@ -2302,7 +2309,7 @@ const SidebarItem = memo(function SidebarItem({
       onClick={() => onSelect(task)}
       aria-current={!exportMode && active ? 'true' : undefined}
       aria-pressed={exportMode ? exportSelected : undefined}
-      aria-label={`${exportMode ? (exportSelected ? 'Deselect' : 'Select') : 'View'} ${task.name}, ${task.status}`}
+      aria-label={t('{{action}} {{name}}, {{status}}', { action: exportMode ? (exportSelected ? t("Deselect") : t("Select")) : t("View"), name: task.name, status: task.status })}
       className={clsx(
         'flex min-h-11 w-full flex-col justify-center items-stretch rounded-lg border px-2.5 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35',
         exportMode && exportSelected && 'border-accent/25 bg-accent/10',
@@ -2341,9 +2348,10 @@ const SearchResultGroup = memo(function SearchResultGroup({
   exportSelected: boolean
   onSelect: (task: Task, match?: TaskSearchMatch) => void
 }) {
+  useTranslation()
   const matches = task.search_matches ?? []
   const matchCount = Math.max(matches.length, task.search_match_count ?? 0)
-  const action = exportMode ? (exportSelected ? 'Deselect' : 'Select') : 'View'
+  const action = exportMode ? (exportSelected ? t("Deselect") : t("Select")) : t("View")
   const [expanded, setExpanded] = useState(true)
 
   return (

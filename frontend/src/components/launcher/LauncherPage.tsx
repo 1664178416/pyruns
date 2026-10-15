@@ -1,3 +1,4 @@
+import { t, useTranslation, translateMessage } from '@/i18n'
 import { useEffect, useCallback, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -84,9 +85,14 @@ const emptyValidation: PathValidationState = {
 }
 
 function validationFromResult(result: PathValidationResult, validatedPath: string): PathValidationState {
+  const failureMessages: Record<string, string> = {
+    python: 'Python script does not exist or is not a .py file: {{path}}',
+    shell: 'Shell folder does not exist: {{path}}',
+    config: 'YAML config does not exist or is not a .yaml/.yml file: {{path}}',
+  }
   return {
     status: result.ok ? 'valid' : 'invalid',
-    message: result.message,
+    message: !result.ok && validatedPath ? failureMessages[result.kind] || result.message : result.message,
     normalizedPath: result.normalized_path,
     validatedPath,
   }
@@ -124,6 +130,7 @@ function usePathValidation(kind: 'python' | 'shell' | 'config', path: string, en
 }
 
 export default function LauncherPage({ onClose }: { onClose: () => void }) {
+  useTranslation()
   const backdropPointerStartedRef = useRef(false)
   const launcherActionInFlightRef = useRef(false)
   const launcherMountedRef = useRef(true)
@@ -532,8 +539,8 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
         <div className="flex items-center gap-3 border-b border-border-subtle px-4 py-3 sm:px-6 sm:py-4">
           <Rocket className="w-5 h-5 text-accent" />
           <div>
-            <h2 id="launcher-dialog-title" className="text-sm font-semibold text-txt-primary">Launch Workspace</h2>
-            <p id="launcher-dialog-description" className="mt-0.5 text-2xs text-txt-tertiary">Choose a workspace type</p>
+            <h2 id="launcher-dialog-title" className="text-sm font-semibold text-txt-primary">{t('Launch Workspace')}</h2>
+            <p id="launcher-dialog-description" className="mt-0.5 text-2xs text-txt-tertiary">{t('Choose a workspace type')}</p>
           </div>
         </div>
 
@@ -541,7 +548,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
         <div className="flex-1 overflow-y-auto p-3 sm:p-4">
           {error && (
             <div role="alert" className="mb-3 rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-              {error}
+              {translateMessage(error)}
             </div>
           )}
 
@@ -585,7 +592,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
 
           {loading && step !== 0 && (
             <div className="flex items-center justify-center py-12">
-              <div role="status" className="animate-pulse text-xs text-txt-tertiary">Loading...</div>
+              <div role="status" className="animate-pulse text-xs text-txt-tertiary">{t('Loading...')}</div>
             </div>
           )}
 
@@ -593,16 +600,14 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
             <div className="space-y-1">
               <div className="mb-3 space-y-1">
                 <div className="text-xs font-semibold text-txt-secondary">
-                  {mustChooseConfig ? 'Choose a YAML config' : 'Select a config'}
-                  {' '}
-                  for <span className="font-mono">{pathName(selectedScript)}</span>
+                  {t(mustChooseConfig ? 'Choose a YAML config for {{script}}' : 'Select a config for {{script}}', { script: pathName(selectedScript) })}
                 </div>
                 <p className="text-2xs leading-relaxed text-txt-tertiary">
                   {mustChooseConfig
                     ? configSource === 'pyruns_load'
-                      ? 'pyruns.load() reads the selected YAML for this workspace. Choose one below or enter a path; pyruns will save it as config_default.yaml for later runs.'
-                      : 'This script needs a YAML config before first launch. Choose one below or enter a path; pyruns will save it as config_default.yaml for later runs.'
-                    : 'Choose a YAML file for this launch, or open without one when the script can generate its default config.'}
+                      ? t('pyruns.load() reads the selected YAML for this workspace. Choose one below or enter a path; pyruns will save it as config_default.yaml for later runs.')
+                      : t('This script needs a YAML config before first launch. Choose one below or enter a path; pyruns will save it as config_default.yaml for later runs.')
+                    : t('Choose a YAML file for this launch, or open without one when the script can generate its default config.')}
                 </p>
               </div>
               <ConfigActionPanel
@@ -621,15 +626,15 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
                 <div className="text-center py-6">
                   <p className="mb-3 text-xs text-txt-tertiary">
                     {mustChooseConfig
-                      ? 'No YAML configs were found near this script. Enter a config path below.'
-                      : 'No config files found'}
+                      ? t('No YAML configs were found near this script. Enter a config path below.')
+                      : t('No config files found')}
                   </p>
                   {!mustChooseConfig && (
                     <button
                       onClick={handleSkipConfig}
                       className="touch-target inline-flex min-h-11 items-center px-2 text-xs text-accent transition-colors hover:text-accent-hover sm:min-h-8"
                     >
-                      Open without config
+                      {t('Open without config')}
                     </button>
                   )}
                 </div>
@@ -637,9 +642,9 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
                 <div className="pt-2">
                   <div className="flex items-center justify-between border-b border-border-subtle px-1 py-2">
                     <span className="text-2xs font-semibold uppercase tracking-[0.16em] text-txt-tertiary">
-                      Nearby YAML
+                      {t('Nearby YAML')}
                     </span>
-                    <span className="text-2xs text-txt-tertiary">{configs.length} found</span>
+                    <span className="text-2xs text-txt-tertiary">{t('{{count}} found', { count: configs.length })}</span>
                   </div>
                   {configs.map(config => (
                     <ConfigItem
@@ -653,7 +658,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
                       onClick={handleSkipConfig}
                       className="min-h-11 w-full px-3 py-2 text-left text-2xs text-txt-tertiary transition-colors hover:text-txt-secondary"
                     >
-                      Open without config
+                      {t('Open without config')}
                     </button>
                   )}
                 </div>
@@ -672,7 +677,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
               className="touch-target inline-flex min-h-11 items-center px-2 text-xs text-txt-tertiary transition-colors hover:text-txt-secondary disabled:cursor-wait disabled:opacity-50 sm:min-h-8"
             >
               <ArrowLeft aria-hidden="true" className="mr-1 h-3.5 w-3.5" />
-              Back
+              {t('Back')}
             </button>
           ) : <div />}
           <button
@@ -681,7 +686,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
             onClick={requestClose}
             className="touch-target inline-flex min-h-11 items-center px-2 text-xs text-txt-tertiary transition-colors hover:text-txt-secondary disabled:cursor-wait disabled:opacity-50 sm:min-h-8"
           >
-            Cancel
+            {t('Cancel')}
           </button>
         </div>
       </div>
@@ -699,7 +704,7 @@ function LaunchChoiceTabs({
   onChange: (mode: 'python' | 'shell') => void
 }) {
   return (
-    <div className="grid gap-2 md:grid-cols-2" role="group" aria-label="Workspace type">
+    <div className="grid gap-2 md:grid-cols-2" role="group" aria-label={t('Workspace type')}>
       <button
         type="button"
         aria-pressed={launchMode === 'python'}
@@ -761,9 +766,9 @@ function ModeActionPanel({
 }) {
   const isPython = launchMode === 'python'
   const Icon = isPython ? FileSearch : FolderPlus
-  const browseLabel = pickerAvailable ? (isPython ? 'Browse Script' : 'Browse & Open Folder') : 'Browse Unavailable'
-  const manualLabel = isPython ? 'Select Script Path' : 'Open Folder Path'
-  const placeholder = isPython ? 'Absolute or relative path to train.py' : 'Path to shell project folder'
+  const browseLabel = pickerAvailable ? (isPython ? t('Browse Script') : t('Browse & Open Folder')) : t('Browse Unavailable')
+  const manualLabel = isPython ? t('Select Script Path') : t('Open Folder Path')
+  const placeholder = isPython ? t('Absolute or relative path to train.py') : t('Path to shell project folder')
   const inputId = isPython ? 'launcher-python-path' : 'launcher-shell-path'
   const validationId = `${inputId}-validation`
 
@@ -781,15 +786,15 @@ function ModeActionPanel({
         )}
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
-        {busy ? 'Preparing…' : browseLabel}
+        {busy ? t('Preparing…') : browseLabel}
       </button>
       {!pickerAvailable && (
         <div className="px-1 text-2xs text-txt-tertiary">
-          Native picker unavailable on this server; enter the path manually.
+          {t('Native picker unavailable on this server; enter the path manually.')}
         </div>
       )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <label htmlFor={inputId} className="sr-only">{isPython ? 'Python script path' : 'Shell workspace folder path'}</label>
+        <label htmlFor={inputId} className="sr-only">{isPython ? t('Python script path') : t('Shell workspace folder path')}</label>
         <input
           id={inputId}
           value={pathValue}
@@ -814,7 +819,7 @@ function ModeActionPanel({
           onClick={() => void onManualOpen()}
           className="touch-target min-h-11 w-full rounded-md border border-border-subtle px-3 py-1.5 text-xs font-medium text-txt-secondary transition-colors hover:text-txt-primary disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9 sm:w-auto sm:flex-none"
         >
-          {busy ? 'Preparing...' : manualLabel}
+          {busy ? t('Preparing...') : manualLabel}
         </button>
       </div>
       <PathValidationHint id={validationId} validation={validation} pathValue={pathValue} />
@@ -844,7 +849,7 @@ function RecentPathList({
   }
 
   const Icon = kind === 'python' ? FileSearch : kind === 'shell' ? FolderPlus : FileCode
-  const label = kind === 'yaml' ? 'Recent YAML' : 'Recent Paths'
+  const label = kind === 'yaml' ? t('Recent YAML') : t('Recent Paths')
 
   return (
     <div className="space-y-1 pt-1">
@@ -913,15 +918,15 @@ function ConfigActionPanel({
         className="touch-target inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9"
       >
         <FileCode className="h-3.5 w-3.5" />
-        Browse Config
+        {t('Browse Config')}
       </button>
       {!pickerAvailable && (
         <div className="px-1 text-2xs text-txt-tertiary">
-          Native picker unavailable on this server; enter the YAML path manually.
+          {t('Native picker unavailable on this server; enter the YAML path manually.')}
         </div>
       )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <label htmlFor={inputId} className="sr-only">YAML config path</label>
+        <label htmlFor={inputId} className="sr-only">{t('YAML config path')}</label>
         <input
           id={inputId}
           value={pathValue}
@@ -936,7 +941,7 @@ function ConfigActionPanel({
               }
             }
           }}
-          placeholder={mustChooseConfig ? 'Path to YAML config' : 'Optional path to YAML config'}
+          placeholder={mustChooseConfig ? t('Path to YAML config') : t('Optional path to YAML config')}
           className="touch-input min-h-11 w-full min-w-0 flex-1 rounded-md border border-border-subtle bg-surface-raised px-2.5 py-1.5 font-mono text-xs text-txt-primary outline-none transition-colors focus:border-border sm:min-h-9"
         />
         <button
@@ -945,7 +950,7 @@ function ConfigActionPanel({
           onClick={() => void onManualOpen()}
           className="touch-target min-h-11 w-full rounded-md border border-border-subtle px-3 py-1.5 text-xs font-medium text-txt-secondary transition-colors hover:text-txt-primary disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-9 sm:w-auto sm:flex-none"
         >
-          Open Config Path
+          {t('Open Config Path')}
         </button>
       </div>
       <PathValidationHint id={validationId} validation={validation} pathValue={pathValue} />
@@ -977,10 +982,10 @@ function PathValidationHint({
   const checking = waitingForCurrentPath || validation.status === 'checking' || validation.status === 'idle'
   const Icon = valid ? CheckCircle2 : checking ? Loader2 : AlertTriangle
   const text = waitingForCurrentPath
-    ? 'Waiting to check path...'
+    ? t('Waiting to check path...')
     : valid && validation.normalizedPath
       ? validation.normalizedPath
-      : validation.message
+      : t(validation.message, { path: validation.validatedPath })
 
   return (
     <div
@@ -1010,7 +1015,7 @@ function ConfigItem({ config, onClick }: { config: ConfigCandidate; onClick: () 
         <div className="text-sm text-txt-primary">{config.label}</div>
       </div>
       {config.kind === 'workspace_default' && (
-        <span className="flex-none text-2xs text-txt-tertiary">default</span>
+        <span className="flex-none text-2xs text-txt-tertiary">{t('default')}</span>
       )}
       <ChevronRight className="h-3.5 w-3.5 flex-none text-txt-tertiary transition-colors group-hover:text-txt-secondary" />
     </button>

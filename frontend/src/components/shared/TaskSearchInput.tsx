@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import type { TaskSearchOptions, TaskSearchScope, WorkspaceKind } from '@/types'
 import SearchInput from './SearchInput'
 import { usePreferencesStore, useSearchHistoryStore, useSearchSettingsStore } from '@/store'
+import { useTranslation } from '@/i18n'
 
 const SEARCH_FIELDS: { value: TaskSearchScope; label: string; compactLabel: string; description: string }[] = [
   { value: 'all', label: 'All fields', compactLabel: 'All', description: 'Names, notes, config, task env and full log files' },
@@ -57,6 +58,7 @@ export default function TaskSearchInput({
   onFocusSearch,
   ...props
 }: Props) {
+  const { t } = useTranslation()
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [filterPlacement, setFilterPlacement] = useState({ above: false, maxHeight: 480 })
   const settings = useSearchSettingsStore()
@@ -101,15 +103,15 @@ export default function TaskSearchInput({
     <div
       className="flex flex-none items-center border-l border-border-subtle"
       role="group"
-      aria-label="Search match options"
+      aria-label={t('Search match options')}
     >
       {MATCH_OPTIONS.map(option => <button
         key={option.key}
         type="button"
-        aria-label={option.label}
+        aria-label={t(option.label)}
         aria-pressed={searchOptions[option.key]}
         aria-keyshortcuts={option.shortcut}
-        title={`${option.label} (${option.shortcut})`}
+        title={`${t(option.label)} (${option.shortcut})`}
         onClick={() => onSearchOptionsChange({ ...searchOptions, [option.key]: !searchOptions[option.key] })}
         className={clsx(
           'touch-target inline-flex h-11 w-11 items-center justify-center border-l border-border-subtle font-mono text-sm transition-colors first:border-l-0 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-inset sm:h-full sm:w-7',
@@ -126,15 +128,15 @@ export default function TaskSearchInput({
       <select
         value={searchField}
         onChange={event => onSearchFieldChange(event.target.value as TaskSearchScope)}
-        aria-label="Search field"
-        title={taskSearchDescription(searchField, workspaceKind)}
+        aria-label={t('Search field')}
+        title={t(taskSearchDescription(searchField, workspaceKind))}
         className="touch-target h-full w-full cursor-pointer appearance-none border-0 border-l border-border-subtle bg-transparent py-1.5 pl-2 pr-6 text-xs text-txt-secondary opacity-0 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/20 focus-visible:ring-inset"
       >
-        {searchFields.map(option => <option key={option.value} value={option.value} className="text-txt-primary">{option.label}</option>)}
+        {searchFields.map(option => <option key={option.value} value={option.value} className="text-txt-primary">{t(option.label)}</option>)}
       </select>
       <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-2 right-5 flex items-center overflow-hidden whitespace-nowrap text-xs text-txt-secondary group-focus-within:text-txt-primary">
-        <span className="task-search-field-label-short">{selectedField.compactLabel}</span>
-        <span className="task-search-field-label-full">{selectedField.label}</span>
+        <span className="task-search-field-label-short">{t(selectedField.compactLabel)}</span>
+        <span className="task-search-field-label-full">{t(selectedField.label)}</span>
       </span>
       <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-txt-tertiary" />
     </div>
@@ -143,7 +145,7 @@ export default function TaskSearchInput({
     <div
       className="task-search-filter-controls flex h-full flex-none items-stretch"
       role="toolbar"
-      aria-label="Search filters"
+      aria-label={t('Search filters')}
     >
       {fieldSelector}
       {matchOptions}
@@ -203,20 +205,20 @@ export default function TaskSearchInput({
           onCancel={onCancel}
           className="w-full flex-1"
           placeholder={searchOptions.useRegex
-            ? 'Search with regex'
+            ? t('Search with regex')
             : searchField === 'all'
-              ? compact ? 'Search tasks' : 'Search tasks and full logs'
-              : `Search ${selectedField.label.toLowerCase()}`}
+              ? t(compact ? 'Search tasks' : 'Search tasks and full logs')
+              : t('Search {{field}}', { field: t(selectedField.label).toLowerCase() })}
           trailingControls={<div style={{ display: filtersOpen ? 'none' : undefined }} className="task-search-inline-filters flex h-full flex-none items-stretch">{filterControls}</div>}
         />
         <div ref={filterMenuRef} className="task-search-filter-menu flex-none">
           <button
             ref={filterTriggerRef}
             type="button"
-            aria-label="Search filters"
+            aria-label={t('Search filters')}
             aria-expanded={filtersOpen}
             aria-haspopup="true"
-            title="Search filters"
+            title={t('Search filters')}
             onClick={() => setFiltersOpen(open => !open)}
             className="task-search-filter-trigger touch-target inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface-overlay text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 sm:h-9 sm:w-9"
           >
@@ -227,7 +229,7 @@ export default function TaskSearchInput({
               style={{ maxHeight: filterPlacement.maxHeight, ...(filterPlacement.above ? { top: 'auto', bottom: 'calc(100% + 0.5rem)' } : {}) }}
               className="task-search-filter-popover absolute right-0 top-[calc(100%+0.5rem)] z-30 min-w-52 overflow-y-auto overscroll-contain rounded-md border border-border bg-surface-raised p-1.5 shadow-md"
               role="dialog"
-              aria-label="Search filters"
+              aria-label={t('Search filters')}
             >
               {filterControls}
               <div className="mt-1.5 border-t border-border-subtle pt-1.5">
@@ -236,7 +238,7 @@ export default function TaskSearchInput({
                   usePreferencesStore.getState().open(filterTriggerRef.current)
                 }} className="touch-target flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:min-h-9">
                   <Settings2 aria-hidden="true" className="h-3.5 w-3.5" />
-                  <span className="flex-1">Search preferences…</span>
+                  <span className="flex-1">{t('Search preferences…')}</span>
                   <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 text-txt-tertiary" />
                 </button>
               </div>
@@ -247,8 +249,8 @@ export default function TaskSearchInput({
       {!compact && (
         <button
           type="button"
-          aria-label={refreshLabel}
-          title={refreshLabel}
+          aria-label={t(refreshLabel)}
+          title={t(refreshLabel)}
           disabled={searching && !searchActive}
           onClick={() => searching && searchActive ? onCancel() : onRefresh()}
           className="touch-target inline-flex h-11 w-11 flex-none items-center justify-center rounded-md text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-wait disabled:opacity-50 sm:h-9 sm:w-9"
@@ -258,11 +260,11 @@ export default function TaskSearchInput({
             : <RefreshCw aria-hidden="true" className="h-4 w-4" />}
         </button>
       )}
-      {searchActive && <span className="sr-only" role="status">{searching ? 'Searching…' : taskSearchDescription(searchField, workspaceKind)}</span>}
+      {searchActive && <span className="sr-only" role="status">{t(searching ? 'Searching…' : taskSearchDescription(searchField, workspaceKind))}</span>}
     </div>
     {limitHit && <p role="status" className="mt-2 text-xs text-txt-secondary">
-      Match limit reached. More results may exist.{' '}
-      <button type="button" className="text-accent hover:underline" onClick={() => settings.update({ maxResults: null })}>Search without limit</button>
+      {t('Match limit reached. More results may exist.')} {' '}
+      <button type="button" className="text-accent hover:underline" onClick={() => settings.update({ maxResults: null })}>{t('Search without limit')}</button>
     </p>}
     </>
   )
