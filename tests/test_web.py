@@ -3120,12 +3120,18 @@ def test_search_limit_is_shared_across_fields_and_stream_reports_truncation(tmp_
         assert error["type"] == "error" and error["status"] == 422
 
 
-def test_mixed_search_limit_is_consistent_for_normal_and_streaming_responses(tmp_path):
+@pytest.mark.parametrize("batch_size,warm_late_file", [(1, False), (7, False), (128, False), (128, True)])
+def test_mixed_search_limit_is_consistent_for_normal_and_streaming_responses(tmp_path, monkeypatch, batch_size, warm_late_file):
+    import pyruns.web.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_LOG_SEARCH_TASK_BATCH_SIZE", batch_size)
     workspace = _make_workspace(tmp_path, "main")
     names = [f"needle-{index:03d}" for index in range(70)]
     for name in names:
         _add_task(workspace, name, log_text="needle\n")
     runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    if warm_late_file:
+        runtime._log_search.search(str(workspace / TASKS_DIR / names[-1]), "needle", threading.Event())
     with TestClient(create_app(runtime)) as client:
         params = {"query": "needle", "include_logs": True, "sort": "name_asc", "refresh": False,
                   "max_results": 66, "limit": 70, "summary": True}
@@ -3170,7 +3176,7 @@ def test_search_publishes_matches_before_file_finishes_and_can_cancel(tmp_path, 
         try:
             for event in events:
                 yield event
-                if not entered.is_set():
+                if event["type"] == "match" and not entered.is_set():
                     entered.set()
                     assert release.wait(5)
         finally:

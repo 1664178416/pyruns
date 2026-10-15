@@ -96,8 +96,8 @@ from pyruns.utils.task_files import (
 _DEFAULT_GPU_SCHEDULER_CONFIG = GpuSchedulerConfig.from_settings({})
 MAX_MONITOR_LOG_TAIL_BYTES = _cfg.MAX_MONITOR_CHUNK_SIZE
 # Larger batches reduce ripgrep startup costs for log-only requests.
-# Streaming and mixed-field searches use smaller batches for early results
-# and consistent metadata/log match limits across response transports.
+# Streaming searches use smaller batches for early results. Match limits are
+# consumed in task/field/file order independently of these execution batches.
 _LOG_SEARCH_TASK_BATCH_SIZE = 128
 _STREAM_LOG_SEARCH_TASK_BATCH_SIZE = 32
 TaskManagerFactory = Callable[[str], TaskManager]
@@ -1287,6 +1287,8 @@ class PyrunsRuntime:
                     return
                 if cancelled.is_set():
                     raise CancelledError()
+                if not total + batch_total and not errors and not batch_errors:
+                    return
                 now = time.monotonic()
                 if last_progress is None or (not last_progress_total and total + batch_total) or now - last_progress >= 0.1:
                     on_progress(page(False, batch_items, batch_total, batch_errors))
@@ -1297,21 +1299,30 @@ class PyrunsRuntime:
             cursor = 0
             batch_size = (
                 _STREAM_LOG_SEARCH_TASK_BATCH_SIZE
-                if on_progress is not None or (search_logs and search_field == "all")
+                if on_progress is not None
                 else _LOG_SEARCH_TASK_BATCH_SIZE
             )
             while cursor < len(ordered) and not budget.limit_hit:
                 batch = ordered[cursor:cursor + (batch_size if cursor else 1)]
                 contexts = {}
-                for task in batch:
+                tasks_by_dir = {task["dir"]: task for task in batch}
+
+                def start_task_context(task_dir, tasks_by_dir=tasks_by_dir, contexts=contexts):
+                    task = tasks_by_dir[task_dir]
+                    if task["name"] in contexts:
+                        return
                     if cancelled.is_set():
                         raise CancelledError()
                     context = build_task_search_result(task, query, search_field=search_field, matcher=matcher,
                                                        max_count=budget.remaining)
                     contexts[task["name"]] = context
                     budget.take(context["match_count"])
-                    if budget.limit_hit:
-                        break
+
+                if not search_logs:
+                    for task in batch:
+                        start_task_context(task["dir"])
+                        if budget.limit_hit:
+                            break
 
                 def collect_batch(log_results, batch=batch, contexts=contexts, base_total=total):
                     batch_items, batch_errors = [], []
@@ -1319,7 +1330,9 @@ class PyrunsRuntime:
                     for task in batch:
                         if cancelled.is_set():
                             raise CancelledError()
-                        context = contexts.get(task["name"], {"matches": [], "match_count": 0})
+                        context = contexts.get(task["name"])
+                        if context is None:
+                            continue
                         logs = log_results.get(task["dir"], empty_logs)
                         batch_errors.extend(message for message in logs["errors"] if len(batch_errors) < 8)
                         if needles and not (context["match_count"] or logs["match_count"]):
@@ -1343,11 +1356,14 @@ class PyrunsRuntime:
                         batch_total += 1
                     return batch_items, batch_total, batch_errors
 
-                if search_logs and on_progress is not None and any(c["match_count"] for c in contexts.values()):
-                    publish_progress(*collect_batch({}))
+                if search_logs:
+                    start_task_context(batch[0]["dir"])
+                    if on_progress is not None:
+                        publish_progress(*collect_batch({}))
                 log_results = self._log_search.search_many(
                     [task["dir"] for task in batch], query, cancelled, matcher, budget=budget,
                     on_progress=(lambda logs: publish_progress(*collect_batch(logs))) if on_progress is not None else None,
+                    on_task_start=start_task_context,
                 ) if search_logs and not budget.limit_hit else {}
                 batch_items, batch_total, batch_errors = collect_batch(log_results)
                 items.extend(batch_items)
