@@ -1093,6 +1093,70 @@ def test_detached_runner_observes_submitted_run_after_new_rerun_starts(
     assert receipt.run_indices == (1,)
 
 
+@pytest.mark.parametrize("first_outcome", ["queued-cancelled", "missing", "foreign", "completed"])
+def test_detached_runner_settled_task_does_not_abort_or_follow_other_attempts(
+    tmp_path, monkeypatch, first_outcome,
+):
+    from pyruns.cli import detached_runner
+
+    names = ["first", "remaining"]
+    tasks = {
+        name: {"name": name, "dir": str(tmp_path / TASKS_DIR / name), "status": "pending"}
+        for name in names
+    }
+    token = "4" * 32
+    _write_test_submission(tmp_path, token, names, [1, 1])
+    first_states = {
+        "queued-cancelled": {"status": "cancelled", "run_index": 0, "run_statuses": []},
+        "missing": {},
+        "foreign": {"status": "running", "run_index": 1, "runner_id": "foreign"},
+        "completed": {"status": "completed", "run_index": 1, "run_statuses": ["completed"]},
+    }
+    reads = {name: 0 for name in names}
+    events = []
+
+    class FakeTaskManager:
+        runner_id = "submitted-owner"
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def get_task(self, name):
+            return tasks[name]
+
+        def start_batch_tasks(self, selected, **_kwargs):
+            return selected
+
+        def shutdown(self):
+            events.append("shutdown")
+
+    def read(task_dir):
+        name = Path(task_dir).name
+        reads[name] += 1
+        if name == "first":
+            assert reads[name] == 1, "a settled submission must not follow a later attempt"
+            return first_states[first_outcome]
+        return {
+            "status": "completed" if events else "running", "run_index": 1,
+            "runner_id": "submitted-owner", "run_statuses": ["completed"] if events else [],
+        }
+
+    def finish_remaining(_seconds):
+        assert not events, "the original remaining run should finish after one poll"
+        events.append("remaining-finished")
+
+    monkeypatch.setattr(detached_runner, "_parse_args", lambda: SimpleNamespace(
+        workspace=str(tmp_path), jobs=1, submission_token=token,
+    ))
+    monkeypatch.setattr(detached_runner, "TaskManager", FakeTaskManager)
+    monkeypatch.setattr(detached_runner, "load_task_metadata", read)
+    monkeypatch.setattr(detached_runner.time, "sleep", finish_remaining)
+
+    assert detached_runner.main() == (0 if first_outcome == "completed" else 1)
+    assert events == ["remaining-finished", "shutdown"]
+    assert reads == {"first": 1, "remaining": 2}
+
+
 def test_detached_runner_rejects_run_completed_before_claim(tmp_path, monkeypatch):
     from pyruns.cli import detached_runner
 

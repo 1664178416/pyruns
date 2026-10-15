@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Mapping, Optional, overload
 
@@ -3719,6 +3719,8 @@ class TaskManager:
             if exc:
                 worker_error = exc
                 logger.error("Worker for %s raised: %s", task_id, exc)
+        except CancelledError as exc:
+            worker_error = exc
         except Exception:
             pass
 
@@ -4098,13 +4100,14 @@ class TaskManager:
         info["lease_until"] = now + max(1, int(self.lease_seconds))
 
     def _refresh_queued_runner_leases(self) -> None:
-        """Keep locally queued tasks owned while they wait for workers or GPUs."""
+        """Keep queued and starting tasks owned while they wait for execution."""
 
         now = time.monotonic()
         interval = min(DEFAULT_RUNNER_HEARTBEAT_SECONDS, max(1.0, self.lease_seconds / 3))
         if now - self._last_queued_lease_heartbeat < interval:
             return
         self._last_queued_lease_heartbeat = now
+        self._refresh_starting_runner_leases()
 
         with self._lock:
             queued = [
@@ -4156,6 +4159,41 @@ class TaskManager:
                 ):
                     self._apply_info_to_task(current, updated)
                     self._failed_claim_ids.discard(task_name)
+
+    def _refresh_starting_runner_leases(self) -> None:
+        """Bridge executor admission and worker preparation until a PID is saved."""
+        with self._lock:
+            starting = [
+                (task, task.get("_registry_revision", 0), name, str(task["dir"]), active_task_run_index(task))
+                for name in self._running_ids
+                if (task := self._tasks_by_name.get(name))
+                and task.get("status") == "running" and self._is_current_runner(task)
+                and self._current_process_identity(task)[0] is None
+            ]
+        for task, revision, task_name, task_dir, run_index in starting:
+            def _renew(info: Dict[str, Any], run_index: int = run_index) -> None:
+                if (
+                    info.get("status") != "running" or not self._is_current_runner(info)
+                    or active_task_run_index(info) != run_index
+                    or self._current_process_identity(info)[0] is not None
+                ):
+                    raise TaskStateConflict("task already left its starting state")
+                self._set_runner_lease_fields(info)
+
+            try:
+                updated = update_task_metadata(task_dir, _renew)
+            except (TaskClaimConflict, TaskStateConflict):
+                continue
+            except (OSError, ValueError) as exc:
+                logger.debug("Could not renew starting task %s yet: %s", task_name, exc)
+                continue
+            with self._lock:
+                current = self._tasks_by_name.get(task_name)
+                if (
+                    current is task and current.get("_registry_revision", 0) == revision
+                    and self._same_task_dir(current.get("dir"), task_dir)
+                ):
+                    self._apply_info_to_task(current, updated)
 
     @staticmethod
     def _clear_runner_lease_fields(info: Dict[str, Any]) -> None:

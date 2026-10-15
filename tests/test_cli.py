@@ -3444,6 +3444,37 @@ def test_stop_reaches_detached_runner(tmp_path):
     assert payload["stopped"][0]["status"] == "cancelled"
 
 
+def test_stop_unstarted_batch_task_keeps_other_submitted_runs_alive(tmp_path):
+    release = tmp_path / "release-first"
+    first = _legacy_argv_task(tmp_path, "first", [
+        sys.executable, "-c",
+        "import pathlib,time\n"
+        f"release=pathlib.Path({str(release)!r})\n"
+        "deadline=time.monotonic()+20\n"
+        "while not release.exists() and time.monotonic()<deadline: time.sleep(0.02)\n"
+        "assert release.exists()",
+    ])
+    queued = _legacy_argv_task(tmp_path, "queued", [sys.executable, "-c", "print('queued')"])
+    try:
+        submitted = _run_cli(tmp_path, "-w", "shell", "run", "first", "queued", "-j", "1", "-d")
+        assert submitted.returncode == 0, submitted.stderr
+        _wait_status(Path(first["dir"]), {"running"})
+        _wait_status(Path(queued["dir"]), {"queued"})
+        stopped = _run_cli(tmp_path, "-w", "shell", "stop", "queued", "--timeout", "5")
+        assert stopped.returncode == 0, stopped.stderr
+        waiting = _run_cli(tmp_path, "-w", "shell", "wait", "first", "--timeout", "0.5")
+        assert waiting.returncode == 1
+        assert "timed out waiting" in waiting.stderr
+        release.touch()
+        finished = _run_cli(tmp_path, "-w", "shell", "wait", "first", "--timeout", "10", "--json")
+        assert finished.returncode == 0, finished.stderr
+        assert load_task_info(first["dir"])["status"] == "completed"
+        assert load_task_info(queued["dir"])["status"] == "cancelled"
+    finally:
+        release.touch()
+        _run_cli(tmp_path, "-w", "shell", "stop", "first", "--timeout", "5")
+
+
 @pytest.mark.parametrize(
     ("initial_status", "final_status", "return_code"),
     [("queued", "cancelled", 0), ("running", "failed", 1)],

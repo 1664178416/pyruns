@@ -5054,6 +5054,117 @@ def test_task_manager_queue_heartbeat_continues_after_one_metadata_write_fails(t
     assert load_task_info(beta["dir"])["lease_heartbeat"] > 1.0
 
 
+@pytest.mark.parametrize("stage", ["executor-queued", "worker-preparing"])
+def test_task_manager_renews_starting_run_before_child_pid_is_published(tmp_path, monkeypatch, stage):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    release_slot = threading.Event()
+    entered_worker = threading.Event()
+    finish_worker = threading.Event()
+
+    def prepare(*_args):
+        entered_worker.set()
+        assert finish_worker.wait(5)
+
+        def complete(info):
+            slot = ensure_run_slot(info, 1)
+            info["status"] = "completed"
+            info["run_statuses"][slot] = "completed"
+        update_task_info(task["dir"], complete)
+
+    monkeypatch.setattr(task_manager_module, "run_task_worker", prepare)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        blocker = pool.submit(release_slot.wait, 5)
+        manager._independent_executor = pool
+        try:
+            assert manager.start_task_now(task["name"])
+            if stage == "worker-preparing":
+                release_slot.set()
+                assert entered_worker.wait(5)
+            else:
+                assert not entered_worker.is_set()
+            update_task_info(task["dir"], lambda info: info.update(lease_until=time.time() - 1))
+            manager.refresh_from_disk(task_ids=[task["name"]])
+            manager._refresh_queued_runner_leases()
+            refreshed = load_task_info(task["dir"])
+            assert refreshed["lease_until"] > time.time()
+            observer = _make_task_manager(tasks_dir, lazy_scan=None)
+            try:
+                current, changed = observer._fail_unowned_running_info_if_needed(
+                    task["name"], task["dir"], refreshed,
+                )
+                assert not changed
+                assert current["status"] == "running"
+            finally:
+                observer.owns_task_lifecycle = False
+                observer.shutdown()
+        finally:
+            finish_worker.set()
+            release_slot.set()
+            blocker.result(timeout=5)
+    manager.shutdown()
+
+
+def test_task_manager_cancelled_future_releases_starting_run(tmp_path):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    assert manager._sync_status_to_disk(task["name"], "running")
+    future = Future()
+    assert future.cancel()
+    manager._on_task_done(future, task["name"], expected_runner_id=manager.runner_id, expected_run_index=1)
+    assert task["name"] not in manager._running_ids
+    assert load_task_info(task["dir"])["status"] == "failed"
+    manager.shutdown()
+
+
+@pytest.mark.parametrize("change", ["pid", "owner", "new-run", "terminal"])
+def test_task_manager_starting_heartbeat_rechecks_disk_identity_before_renewing(
+    tmp_path, monkeypatch, change,
+):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    assert manager._sync_status_to_disk(task["name"], "running")
+    real_update = task_manager_module.update_task_metadata
+
+    def mutate_then_renew(task_dir, updater, **kwargs):
+        updates = {
+            "pid": {"pids": [12345], "pid_create_times": [1000.0]},
+            "owner": {"runner_id": "foreign"},
+            "new-run": {"run_index": 2},
+            "terminal": {"status": "completed"},
+        }
+        real_update(task_dir, lambda info: info.update({"lease_until": 1.0, **updates[change]}))
+        return real_update(task_dir, updater, **kwargs)
+
+    monkeypatch.setattr(task_manager_module, "update_task_metadata", mutate_then_renew)
+    manager._refresh_queued_runner_leases()
+    assert load_task_info(task["dir"])["lease_until"] == 1.0
+    manager.shutdown()
+
+
+def test_task_manager_starting_heartbeat_does_not_replace_newer_registry_state(tmp_path, monkeypatch):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    assert manager._sync_status_to_disk(task["name"], "running")
+    real_update = task_manager_module.update_task_metadata
+
+    def renew_then_finish(task_dir, updater, **kwargs):
+        updated = real_update(task_dir, updater, **kwargs)
+        latest = real_update(task_dir, lambda info: info.update(status="completed"))
+        with manager._lock:
+            manager._apply_info_to_task(manager._tasks_by_name[task["name"]], latest)
+        return updated
+
+    monkeypatch.setattr(task_manager_module, "update_task_metadata", renew_then_finish)
+    manager._refresh_queued_runner_leases()
+    assert manager.get_task(task["name"])["status"] == "completed"
+    manager.shutdown()
+
+
 @pytest.mark.parametrize("wall_clock_shift", [-3600.0, 3600.0])
 def test_task_manager_queue_heartbeat_ignores_wall_clock_adjustments(tmp_path, monkeypatch, wall_clock_shift):
     tasks_dir = tmp_path / "tasks"
