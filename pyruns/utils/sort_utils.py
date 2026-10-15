@@ -45,11 +45,12 @@ def _timestamp_weight(task: Mapping[str, object]) -> int:
     finishes = task.get("finish_times") or []
     starts = task.get("start_times") or []
 
-    if isinstance(finishes, (list, tuple)) and finishes:
-        timestamp = finishes[-1]
-    elif isinstance(starts, (list, tuple)) and starts:
-        timestamp = starts[-1]
-    else:
+    timestamp = finishes[-1] if isinstance(finishes, (list, tuple)) and finishes else None
+    # Running slots reserve an empty finish time. Use this run's start instead
+    # of hiding it behind the placeholder or reusing a previous run's finish.
+    if timestamp is None or timestamp == "":
+        timestamp = starts[-1] if isinstance(starts, (list, tuple)) and starts else None
+    if timestamp is None or timestamp == "":
         timestamp = task.get("created_at") or ""
 
     digits = _NON_DIGIT_PATTERN.sub("", str(timestamp))
