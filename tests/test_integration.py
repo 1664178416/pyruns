@@ -298,7 +298,7 @@ class TestAddMonitor:
         assert artifact_dir == os.path.join(task_dir, "artifacts", "run2")
         assert os.path.isdir(artifact_dir)
 
-    def test_artifact_dir_returns_current_run_directory(self, tmp_path, monkeypatch):
+    def test_artifact_dir_alias_returns_current_run_directory(self, tmp_path, monkeypatch):
         task_dir = self._make_task_dir(tmp_path)
         config_path = os.path.join(task_dir, "config.yaml")
         open(config_path, "w").close()

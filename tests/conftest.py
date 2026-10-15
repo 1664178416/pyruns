@@ -117,10 +117,13 @@ def _prevent_windows_test_console_windows(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_process_state(monkeypatch, tmp_path_factory):
-    """Keep installation-wide update and browser state outside the test workspace."""
+def _isolate_process_state(monkeypatch, tmp_path):
+    """Keep installation-wide state beside, rather than inside, each test root."""
 
-    state_root = tmp_path_factory.mktemp("process-state")
+    # The project's custom ``tmp_path`` avoids the locked pytest temp root on
+    # Windows/OneDrive.  Keep process state in a sibling so tests that assert
+    # their workspace directory contents are not polluted by this fixture.
+    state_root = Path(tempfile.mkdtemp(prefix=".process-state-", dir=str(tmp_path.parent)))
     update_dir = state_root / "update"
     session_dir = state_root / "session"
     update_dir.mkdir()

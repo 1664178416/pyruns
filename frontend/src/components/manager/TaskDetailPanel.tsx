@@ -25,6 +25,7 @@ import type { RunEnvironment, Task } from '@/types'
 import type { TaskStatus } from '@/theme/tokens'
 import { errorMessage } from '@/utils/errors'
 import { formatElapsedDuration, formatStoredCommand, parseTaskTimestampMillis } from '@/utils/taskRuntime'
+import { summarizeGpuWait } from '@/utils/gpuWait'
 import * as api from '@/api'
 
 interface Props {
@@ -1313,6 +1314,10 @@ function InfoTab({ task }: { task: Task }) {
         </section>
       )}
 
+      {task.status === 'queued' && task.gpu_wait && (
+        <GPUWaitSummary wait={task.gpu_wait} />
+      )}
+
       <section className="space-y-2" aria-labelledby="task-overview-heading">
         <h3 id="task-overview-heading" className="text-sm font-semibold text-txt-primary">{t("Task")}</h3>
         <dl className="task-detail-overview gap-x-6 gap-y-3 py-1">
@@ -1420,6 +1425,45 @@ function InfoTab({ task }: { task: Task }) {
         )}
       </section>
     </div>
+  )
+}
+
+function GPUWaitSummary({ wait }: { wait: NonNullable<Task['gpu_wait']> }) {
+  const { t } = useTranslation()
+  const { requestedGpuCount, eligibleGpuCount, waitedSeconds, remainingSeconds } = summarizeGpuWait(wait)
+  return (
+    <section
+      aria-labelledby="task-gpu-wait-heading"
+      className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-3 dark:bg-amber-500/10"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 id="task-gpu-wait-heading" className="text-xs font-semibold text-txt-primary">
+            {t("Waiting for GPU capacity")}
+          </h3>
+          <p className="mt-1 text-2xs leading-5 text-txt-secondary">
+            {wait.reason || t("The scheduler is checking memory, utilization, reservations, and the stability window.")}
+          </p>
+        </div>
+        <span className="rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-2xs font-medium tabular-nums text-amber-700 dark:text-amber-300">
+          {eligibleGpuCount === null
+            ? t("Checking eligibility")
+            : t('{{eligible}}/{{requested}} eligible', { eligible: eligibleGpuCount, requested: requestedGpuCount })}
+        </span>
+      </div>
+      <dl className="mt-2 grid grid-cols-2 gap-2 text-2xs sm:grid-cols-3">
+        <div className="rounded-md bg-surface-overlay/55 px-2 py-1.5">
+          <dt className="text-txt-tertiary">{t("Waited")}</dt>
+          <dd className="font-medium tabular-nums text-txt-primary">{formatElapsedDuration(waitedSeconds)}</dd>
+        </div>
+        <div className="rounded-md bg-surface-overlay/55 px-2 py-1.5">
+          <dt className="text-txt-tertiary">{t("Time left")}</dt>
+          <dd className="font-medium tabular-nums text-txt-primary">
+            {remainingSeconds === null ? t("No limit") : formatElapsedDuration(remainingSeconds)}
+          </dd>
+        </div>
+      </dl>
+    </section>
   )
 }
 

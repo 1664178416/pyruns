@@ -985,13 +985,15 @@ def test_react_shell_editor_uses_a_base_tag_before_definition_modifier():
 
 def test_monitor_surfaces_structured_gpu_wait_and_bounded_log_tail_state():
     monitor = FRONTEND_MONITOR.read_text(encoding="utf-8")
+    gpu_wait = (FRONTEND_COMPONENTS_DIR.parent / "utils" / "gpuWait.ts").read_text(encoding="utf-8")
     store = FRONTEND_STORE.read_text(encoding="utf-8")
     types = FRONTEND_TYPES.read_text(encoding="utf-8")
 
     assert "GPUWaitPanel" in monitor
     assert "Waiting for GPU capacity" in monitor
-    assert "requested_gpu_count" in monitor
-    assert "eligible_gpu_count" in monitor
+    assert "summarizeGpuWait" in monitor
+    assert "requested_gpu_count" in gpu_wait
+    assert "eligible_gpu_count" in gpu_wait
     assert "Why each GPU is waiting" in monitor
     assert "logTailTruncated" in store
     assert "tail_truncated?: boolean" in types

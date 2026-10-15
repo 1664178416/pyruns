@@ -131,6 +131,16 @@ describe('API errors', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('max_results=0&stream=true')
   })
 
+  it('accepts a complete NDJSON record without a trailing newline', async () => {
+    const page = { items: [{ name: 'final-record' }], total: 1, search_complete: true }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ type: 'complete', page }),
+      { headers: { 'Content-Type': 'application/x-ndjson' } },
+    )))
+
+    await expect(getTasks({ query: 'final-record', onProgress: vi.fn() })).resolves.toEqual(page)
+  })
+
   it.each([
     ['error event', JSON.stringify({ type: 'error', status: 422, detail: 'Invalid regex' }) + '\n', 'Invalid regex'],
     ['closed connection', '', 'before completion'],

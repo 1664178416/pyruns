@@ -74,6 +74,7 @@ import {
 } from '@/utils/monitorSearch'
 import { pickInitialMonitorTask } from '@/utils/monitorSelection'
 import { taskDetailRefreshKey } from '@/utils/taskSnapshots'
+import { summarizeGpuWait } from '@/utils/gpuWait'
 
 const MONITOR_SIDEBAR_WIDTH_STORAGE_KEY = 'pyruns.monitorSidebarWidthPct'
 const DEFAULT_MONITOR_SIDEBAR_WIDTH = 14
@@ -1519,8 +1520,16 @@ export default function MonitorPage() {
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = `pyruns_export_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`
+      // Keep the temporary anchor in the document until the browser has
+      // started the download. Immediate revocation can cancel downloads in
+      // Safari and older Chromium/WebView implementations.
+      anchor.style.display = 'none'
+      document.body.appendChild(anchor)
       anchor.click()
-      URL.revokeObjectURL(url)
+      window.setTimeout(() => {
+        URL.revokeObjectURL(url)
+        anchor.remove()
+      }, 0)
       if (workspaceKeyRef.current === requestedWorkspaceKey) {
         setExportMode(false)
         clearExport()
@@ -2158,18 +2167,12 @@ export default function MonitorPage() {
 
 function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
   useTranslation()
-  const requested = Math.max(1, Number(wait?.requested_gpu_count || 1))
-  const eligible = Number.isFinite(Number(wait?.eligible_gpu_count))
-    ? Math.max(0, Number(wait?.eligible_gpu_count))
-    : null
-  const waitedSeconds = Math.max(0, Number(wait?.waited_seconds || 0))
-  const maxWaitSeconds = Math.max(0, Number(wait?.max_wait_seconds || 0))
-  const serverRemainingSeconds = wait?.remaining_seconds == null ? NaN : Number(wait.remaining_seconds)
-  const remainingSeconds = Number.isFinite(serverRemainingSeconds)
-    ? Math.max(0, serverRemainingSeconds)
-    : maxWaitSeconds > 0
-      ? Math.max(0, maxWaitSeconds - waitedSeconds)
-      : null
+  const {
+    requestedGpuCount: requested,
+    eligibleGpuCount: eligible,
+    waitedSeconds,
+    remainingSeconds,
+  } = summarizeGpuWait(wait)
   const devices = Array.isArray(wait?.devices) ? wait.devices : []
 
   return (

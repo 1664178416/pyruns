@@ -247,22 +247,35 @@ async function streamTaskSearch(url: string, onProgress: (page: TaskPage) => voi
   if (!reader) throw new Error('Search response is empty. Refresh to search again.')
   const decoder = new TextDecoder()
   let buffer = ''
+  const handleEvent = (line: string): TaskPage | null => {
+    if (!line.trim()) return null
+    const event = JSON.parse(line)
+    if (event.type === 'error') {
+      if (isWorkspaceChanged(event.status, event)) notifyWorkspaceChanged(context)
+      throw new ApiError(event.status, event.detail, event)
+    }
+    if (event.type === 'complete') return event.page as TaskPage
+    if (event.type === 'progress') onProgress(event.page as TaskPage)
+    return null
+  }
   try {
     while (true) {
       const { value, done } = await reader.read()
       buffer += decoder.decode(value, { stream: !done })
       let newline: number
       while ((newline = buffer.indexOf('\n')) >= 0) {
-        const event = JSON.parse(buffer.slice(0, newline))
+        const page = handleEvent(buffer.slice(0, newline))
         buffer = buffer.slice(newline + 1)
-        if (event.type === 'error') {
-          if (isWorkspaceChanged(event.status, event)) notifyWorkspaceChanged(context)
-          throw new ApiError(event.status, event.detail, event)
-        }
-        if (event.type === 'complete') return event.page as TaskPage
-        if (event.type === 'progress') onProgress(event.page as TaskPage)
+        if (page) return page
       }
-      if (done) throw new Error('Search connection closed before completion. Refresh to search again.')
+      if (done) {
+        // NDJSON producers are allowed to omit the final line terminator.
+        // Parse that final record before treating the stream as incomplete.
+        const page = handleEvent(buffer)
+        if (page) return page
+        buffer = ''
+        throw new Error('Search connection closed before completion. Refresh to search again.')
+      }
     }
   } finally {
     await reader.cancel().catch(() => {})

@@ -9,6 +9,15 @@
 .ruff_cache/
 .pytest_cache/
 .pytest-run/
+/.pytest-run-*/
+/.pytest-temp-*/
+/.tmppytest-*/
+/.pytest-tmp-*/
+/.pytest-of-*/
+/_pytest_focus_tmp/
+/pytest-cli-temp/
+/.tmp-dist/
+/.tmp-install-venv/
 /test-results/
 .playwright-mcp/
 .pyruns-update/
