@@ -1478,11 +1478,11 @@ class PyrunsRuntime:
     def get_run_input(self, task_name: str, run_index: int) -> Dict[str, Any]:
         """Load just one historical input, without loading curve data."""
         from pyruns.core.run_inputs import load_run_input
-        from pyruns.utils.info_io import load_task_metadata, run_slot_count
+        from pyruns.utils.info_io import load_task_metadata
 
         task = self.require_task(task_name, refresh=True, summary=True, include_tracks=False)
         info = load_task_metadata(task["dir"], raise_error=True)
-        if run_index < 1 or run_index > run_slot_count(info):
+        if run_index < 1 or run_index > TaskManager._effective_run_slot_count(info):
             raise KeyError(f"{task_name}@{run_index}")
         return {
             "schema_version": 1, "task_name": task_name, "run_index": run_index,

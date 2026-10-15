@@ -276,6 +276,10 @@ shell 工作区：
 
 比较同一任务的两次历史输入，返回 `schema_version: 1`、`available`、`equal`、`changed_fields` 和 unified diff。缺少快照时 `available=false`、`equal=null`；不读取曲线数据。
 
+`equal` 和 `changed_fields` 始终比较完整输入，保留 JSON 类型差异。diff 使用按行 Myers 算法和计算预算，复杂文本可能显示较大的改动块。
+展示最多 256 KiB 或 4000 行；`truncated=true` 表示仅返回部分 diff，不能作为完整补丁使用。
+完整输入可通过上面的 `/input` 接口或 `pyr show TASK@RUN --json` 获取。
+
 #### `GET /api/tasks/{task_name}/runs/{run_index}/compare?other_run=RUN&other_task=TASK`
 
 比较同一工作区中任意两次运行。`other_task` 省略时使用当前任务；`other_run` 指定基准运行。

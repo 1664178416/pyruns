@@ -70,7 +70,6 @@ from pyruns.utils.info_io import (
     read_run_attempt_id,
     resolve_log_path,
     run_history_status,
-    run_slot_count,
     task_info_lock,
     task_attempt_matches,
     validate_task_directory,
@@ -471,7 +470,7 @@ def _selected_run_record(
 
     task_dir = str(task.get("dir", "") or "")
     current_info = info if info is not None else (load_task_info(task_dir, raise_error=True) or task)
-    total = run_slot_count(current_info)
+    total = TaskManager._effective_run_slot_count(current_info)
     if run_index > total:
         name = str(task.get("name", "") or "")
         message = (
@@ -2046,6 +2045,12 @@ def cmd_diff(context: Any, args: Any, manager: TaskManager) -> int:
         print("Run inputs are identical.")
     else:
         print(result["diff"], end="")
+        if result["truncated"]:
+            print(
+                "Diff shortened for display (256 KiB / 4000 lines). "
+                "Read full saved inputs with 'pyr show TASK@RUN --json'.",
+                file=sys.stderr,
+            )
     return 0 if result["available"] else 1
 
 

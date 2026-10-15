@@ -432,6 +432,7 @@ export interface RunInputDiff {
   equal: boolean | null
   changed_fields: string[]
   diff: string
+  truncated?: boolean
 }
 
 export interface RunSummary {

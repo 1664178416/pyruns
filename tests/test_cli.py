@@ -3018,6 +3018,74 @@ def test_show_and_log_accept_task_run_references(tmp_path):
     assert "available runs: 1-2" in missing.stderr
 
 
+@pytest.mark.parametrize("command", ["show", "log", "diff"])
+def test_historical_commands_reject_legacy_queued_placeholder_run(tmp_path, capsys, command):
+    from pyruns.core.run_inputs import save_run_input
+    from pyruns.core.task_generator import TaskGenerator
+
+    workspace = Path(bootstrap_shell_workspace(str(tmp_path / "_pyruns_")))
+    task = TaskGenerator(root_dir=str(workspace / TASKS_DIR)).create_shell_task("history", "echo current\n")
+    update_task_info(task["dir"], lambda info: info.update(
+        status="queued", run_index=3,
+        start_times=["2026-10-15_10-00-00", "2026-10-15_11-00-00"],
+        run_statuses=["completed", "completed"], exit_codes=[0, 0],
+    ))
+    for run in (1, 2):
+        save_run_input(task["dir"], run, {"task_kind": "shell", "payload_text": f"echo {run}\n", "environment": {}})
+    (Path(task["dir"]) / RUN_LOGS_DIR / "run2.log").write_text("second run\n", encoding="utf-8")
+    metadata = Path(task["dir"]) / TASK_INFO_FILENAME
+    before = metadata.read_bytes()
+
+    def arguments(run):
+        selection = [f"history@{run}"]
+        if command == "diff":
+            selection.insert(0, "history@1")
+        return ["-w", str(workspace), command, *selection, *(["--path"] if command == "log" else []), "--json"]
+
+    capsys.readouterr()
+    assert main(arguments(3)) == 1
+    rejected = capsys.readouterr()
+    assert "available runs: 1-2" in rejected.err
+    assert not rejected.out
+    assert main(arguments(2)) == 0
+    result = json.loads(capsys.readouterr().out)
+    if command == "show":
+        assert result["selected_run"]["index"] == 2
+    elif command == "log":
+        assert result["run"] == 2
+    else:
+        assert result["available"]
+    assert metadata.read_bytes() == before
+
+
+def test_diff_reports_shortened_output_and_show_retains_the_complete_input(tmp_path, capsys):
+    from pyruns.core.run_inputs import save_run_input
+    from pyruns.core.task_generator import TaskGenerator
+
+    workspace = Path(bootstrap_shell_workspace(str(tmp_path / "_pyruns_")))
+    task = TaskGenerator(root_dir=str(workspace / TASKS_DIR)).create_shell_task("large", "echo current\n")
+    update_task_info(task["dir"], lambda info: info.update(
+        status="completed", run_index=2, run_statuses=["completed", "completed"],
+        start_times=["2026-10-15_10-00-00", "2026-10-15_11-00-00"], exit_codes=[0, 0],
+    ))
+    payload = "new\n" * 5000
+    for run, text in [(1, "old\n" * 5000), (2, payload)]:
+        save_run_input(task["dir"], run, {"task_kind": "shell", "payload_text": text, "environment": {}})
+
+    args = ["-w", str(workspace), "diff", "large@1", "large@2"]
+    capsys.readouterr()
+    assert main(args) == 0
+    shown = capsys.readouterr()
+    assert "Diff shortened for display" in shown.err
+    assert "pyr show TASK@RUN --json" in shown.err
+    assert "--- large@1" in shown.out
+    assert main([*args, "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["truncated"] and not result["equal"]
+    assert main(["-w", str(workspace), "show", "large@2", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["selected_run"]["input"]["payload_text"] == payload
+
+
 @pytest.mark.parametrize("selector", [["history@1"], ["history", "--run", "1"]])
 def test_historical_logs_do_not_depend_on_metric_storage(tmp_path, monkeypatch, capsys, selector):
     from pyruns.core.task_generator import TaskGenerator

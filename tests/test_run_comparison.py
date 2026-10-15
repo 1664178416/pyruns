@@ -88,6 +88,10 @@ def test_compare_runs_validates_reserved_slots_names_and_corrupt_inputs(tmp_path
     runtime = _runtime(workspace, monkeypatch)
     client = _client(runtime)
     assert client.get("/api/tasks/candidate/runs/3/compare?other_run=1").status_code == 404
+    assert client.get("/api/tasks/candidate/runs/3/input").status_code == 404
+    assert client.get("/api/tasks/candidate/runs/3/diff?other_run=1").status_code == 404
+    assert client.get("/api/tasks/candidate/runs/2/diff?other_run=3").status_code == 404
+    assert client.get("/api/tasks/candidate/runs/2/input").status_code == 200
     assert client.get("/api/tasks/candidate/runs/2/compare?other_run=0").status_code == 422
     assert client.get("/api/tasks/candidate/runs/2/compare?other_run=1&other_task=missing").status_code == 404
     assert client.get("/api/tasks/candidate/runs/2/compare?other_run=1&other_task=..").status_code == 400

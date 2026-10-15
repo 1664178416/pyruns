@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
 import json
 import os
 import tempfile
@@ -16,6 +15,7 @@ from pyruns.utils.info_io import (
     task_info_lock,
     validate_task_log_path,
 )
+from pyruns.utils.text_diff import unified_text_diff
 
 MAX_RUN_INPUT_BYTES = 16 * 1024 * 1024
 _INPUT_FIELDS = (
@@ -143,24 +143,30 @@ def compare_run_inputs(
         "equal": None,
         "changed_fields": [],
         "diff": "",
+        "truncated": False,
     }
     if not available:
         return result
     assert left is not None and right is not None
-    changed = [field for field in _INPUT_FIELDS if left.get(field) != right.get(field)]
+    def canonical(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True)
 
-    def lines(data: dict[str, Any]) -> list[str]:
+    changed = [field for field in _INPUT_FIELDS if canonical(left.get(field)) != canonical(right.get(field))]
+    if not changed:
+        result["equal"] = True
+        return result
+
+    def text(data: dict[str, Any]) -> str:
         metadata = {field: data.get(field) for field in _INPUT_FIELDS if field != "payload_text"}
         header = json.dumps(metadata, ensure_ascii=False, allow_nan=False, indent=2, sort_keys=True)
         # Keep script/config lines readable instead of JSON-escaping newlines.
-        return (header + "\n\n--- payload ---\n" + data["payload_text"]).splitlines(keepends=True)
+        return header + "\n\n--- payload ---\n" + data["payload_text"]
 
+    diff, truncated = unified_text_diff(text(left), text(right), left_label=left_label, right_label=right_label)
     result.update(
-        equal=not changed,
+        equal=False,
         changed_fields=changed,
-        diff="".join(
-            line if line.endswith("\n") else line + "\n\\ No newline at end of file\n"
-            for line in difflib.unified_diff(lines(left), lines(right), fromfile=left_label, tofile=right_label)
-        ),
+        diff=diff,
+        truncated=truncated,
     )
     return result

@@ -25,6 +25,7 @@ function comparison(leftName = 'baseline', leftRun = 1, rightName = 'candidate',
       schema_version: 1, available: saved, equal: saved ? false : null, changed_fields: saved ? ['payload_text'] : [],
       left: { reference: `${leftName}@${leftRun}`, available: saved }, right: { reference: `${rightName}@2`, available: true },
       diff: saved ? `--- ${leftName}@${leftRun}\n+++ ${rightName}@2\n-echo before\n+echo after\n` : '',
+      truncated: false,
     },
   }
 }
@@ -88,6 +89,23 @@ test('compares arbitrary task runs on demand and retains metrics when an old inp
   expect(comparisons).toBe(3)
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true)
   await page.screenshot({ path: testInfo.outputPath('run-comparison.png') })
+})
+
+test('a shortened diff is identified and provides the full input command', async ({ page }) => {
+  const result = comparison()
+  result.input_diff.truncated = true
+  await page.route('**/api/tasks/candidate/runs/2/compare?*', route => route.fulfill({ json: result }))
+  await page.goto('/manager?token=pyruns-e2e-access-token')
+  const region = await openComparison(page)
+  await region.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(region.getByRole('status')).toContainText('Diff shortened for display.')
+  await expect(region.getByRole('status')).toContainText('pyr show TASK@RUN --json')
+  await expect(region.getByRole('button', { name: 'Copy displayed diff' })).toBeVisible()
+  // An older backend omits the optional flag entirely.
+  Reflect.deleteProperty(result.input_diff, 'truncated')
+  await region.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(region.getByRole('status')).toHaveCount(0)
+  await expect(region.getByRole('button', { name: 'Copy input differences' })).toBeVisible()
 })
 
 test('edits and task switches abort pending comparisons and discard late results', async ({ page }) => {

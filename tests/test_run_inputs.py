@@ -129,3 +129,18 @@ def test_input_diff_ignores_capture_details_but_preserves_text_and_override_chan
     assert not newline["equal"] and "No newline" in newline["diff"]
     missing = run_inputs.compare_run_inputs(None, _input(), left_label="old@1", right_label="new@1")
     assert not missing["available"] and missing["equal"] is None
+
+
+def test_input_diff_preserves_json_types_and_complete_change_detection_when_truncated():
+    typed = run_inputs.compare_run_inputs(
+        _input(environment={"value": False}), _input(environment={"value": 0}),
+        left_label="a", right_label="b",
+    )
+    assert not typed["equal"] and typed["changed_fields"] == ["environment"]
+    large = run_inputs.compare_run_inputs(
+        _input(payload_text="old\n" * 10_000),
+        _input(payload_text="new\n" * 10_000, environment={"SEED": "changed"}),
+        left_label="a", right_label="b",
+    )
+    assert large["truncated"] and not large["equal"]
+    assert large["changed_fields"] == ["payload_text", "environment"]

@@ -158,8 +158,11 @@ export default function RunComparisonView({ name, run }: { name: string; run: nu
           <p className="text-xs text-txt-secondary">{!diff?.available
             ? `Input was not saved for ${[comparison.left, comparison.right].filter(item => !item.input_available).map(item => item.reference).join(' and ')}. Other run details remain comparable.`
             : diff.equal ? 'Run inputs are identical.' : `${diff.changed_fields.length} input fields changed.`}</p>
+          {diff?.truncated && <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+            Diff shortened for display. Read full saved inputs with <code>pyr show TASK@RUN --json</code>.
+          </p>}
           {diff?.diff && <div className="overflow-hidden rounded-md bg-surface-base">
-            <div className="flex justify-end px-3 pt-2"><CopyButton value={diff.diff} label="Copy input differences" size="xs" /></div>
+            <div className="flex justify-end px-3 pt-2"><CopyButton value={diff.diff} label={diff.truncated ? 'Copy displayed diff' : 'Copy input differences'} size="xs" /></div>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap px-3 pb-3 font-mono text-xs leading-relaxed text-txt-primary [overflow-wrap:anywhere]">{diff.diff}</pre>
           </div>}
         </div>

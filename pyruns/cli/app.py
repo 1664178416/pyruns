@@ -819,6 +819,8 @@ def build_parser(
                 "Both references require @RUN and belong to the selected workspace.",
                 "Returns 0 for a successful comparison (including differences), 1 if an input is unavailable.",
                 "Snapshots contain task inputs, not external files or all inherited environment variables.",
+                "Large diffs are shortened (256 KiB / 4000 lines); --json reports truncated.",
+                "Use 'show TASK@RUN --json' to read the complete saved input.",
             ),
         ),
     )

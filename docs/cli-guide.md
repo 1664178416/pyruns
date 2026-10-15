@@ -481,6 +481,7 @@ pyr -w train diff baseline@1 candidate@1 --json
 ```
 
 `diff` 比较同一工作区内两次运行的输入，成功比较返回 `0`（包含有差异的情况），缺少快照返回 `1`。
+展示最多 256 KiB 或 4000 行；截断时终端会提示，JSON 返回 `truncated=true`，完整输入仍可通过 `show TASK@RUN --json` 读取。
 快照不复制外部脚本、数据集或全部继承环境；`-c "bash train.sh"` 记录该命令，`--stdin < train.sh` 才保存脚本正文。
 
 ## 9. 日志：`log`

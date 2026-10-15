@@ -34,6 +34,7 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=3.4,<5",
+    "diff-match-patch==20241021",
     "fastapi>=0.110",
     # YAML acceleration supports the tested 2.3 and 2.4 internal APIs.
     "omegaconf>=2.3,<2.5",
