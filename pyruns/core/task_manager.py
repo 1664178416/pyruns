@@ -12,6 +12,7 @@ import socket
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Mapping, Optional, overload
@@ -67,7 +68,7 @@ from pyruns.utils.settings import load_settings
 from pyruns.utils.env_utils import normalize_environment
 from pyruns.utils.events import event_sys
 from pyruns.utils.config_utils import to_container
-from pyruns.utils.sort_utils import sort_tasks_for_manager
+from pyruns.utils.sort_utils import TASK_SORT_MODES, sort_tasks_for_manager, task_sort_key
 from pyruns.utils.task_files import (
     TaskPayloadSignature,
     TaskSearchResult,
@@ -85,6 +86,7 @@ _STOP_TASK_INFO_LOCK_TIMEOUT_SEC = 1.0
 _ACTIVE_DELETE_SETTLE_TIMEOUT_SEC = 15.0
 _GPU_SCHEDULE_LOCK_TIMEOUT_SEC = 2.0
 _REACTIVE_DISK_REFRESH_INTERVAL_SEC = 1.0
+_TASK_PAGE_CACHE_SIZE = 8
 _NAMESPACE_OPERATION_LEASE_SEC = 60.0
 _VALID_TASK_STATUSES = {"pending", "queued", "running", "completed", "failed", "cancelled"}
 _GPU_QUEUE_RUN_RE = re.compile(r"\bRun #(\d+)\b")
@@ -156,6 +158,10 @@ class TaskManager:
         self.tasks: List[Dict[str, Any]] = []
         self._tasks_by_name: Dict[str, Dict[str, Any]] = {}
         self._search_view_cache: dict[str, tuple[tuple, Mapping[str, Any]]] = {}
+        self._task_page_cache: OrderedDict[tuple[str, str], list[Dict[str, Any]]] = OrderedDict()
+        self._task_page_counts: Dict[str, int] | None = None
+        self._task_page_source = self.tasks
+        self._task_page_source_size = 0
         self._lock = threading.Lock()
         self._observer_lock = threading.Lock()
         self._ui_refresh_lock = threading.Lock()
@@ -241,6 +247,7 @@ class TaskManager:
         task = self._tasks_by_name.get(task_name)
         if task is not None:
             task["_registry_revision"] = task.get("_registry_revision", 0) + 1
+            self._invalidate_task_page_cache_locked()
         self._running_ids.add(task_name)
         if counts_for_batch:
             self._batch_running_ids.add(task_name)
@@ -396,7 +403,7 @@ class TaskManager:
                     # Reload its metadata too: new curves must not inherit old run slots.
                     info = load_task_info(str(data["dir"]), raise_error=True)
                     info = cls._strip_queued_placeholder_run(info)
-                    cls._apply_info_to_task(data, info)
+                    cls._apply_info_to_task_fields(data, info)
                     data["created_at"] = info.get("created_at")
             except Exception as exc:
                 data["_load_error"] = "; ".join(
@@ -561,28 +568,10 @@ class TaskManager:
         safe_offset = max(0, int(offset))
         safe_limit = max(0, int(limit))
         with self._lock:
-            # Read source references only while locked, then detach the selected
-            # page. Sorting does not need a metadata copy for every task.
-            candidates = [task for task in self.tasks if task is not None]
-            status_counts = dict.fromkeys(
-                ("pending", "queued", "running", "completed", "failed", "cancelled"),
-                0,
-            )
-            for task in candidates:
-                task_status = str(task.get("status", "pending") or "pending").lower()
-                status_counts[task_status] = status_counts.get(task_status, 0) + 1
-            if status != "All":
-                candidates = [
-                    task for task in candidates
-                    if status.lower() == task.get("status", "pending")
-                ]
-            # Summary search uses cached text, falling back to metadata without
-            # config/script payloads. Apply this boundary without copying tasks.
-            candidates = filter_tasks_by_search_field(
-                candidates, query, search_field=search_field,
+            ordered, status_counts = self._get_task_page_index_locked(
+                sort_mode, status, query=query, search_field=search_field,
                 include_payload=not summary or search_field in {"config", "script"},
             )
-            ordered = sort_tasks_for_manager(candidates, sort_mode)
             total = len(ordered)
             selected = (
                 ordered[safe_offset:safe_offset + safe_limit]
@@ -601,6 +590,66 @@ class TaskManager:
             total,
             status_counts,
         )
+
+    def _invalidate_task_page_cache_locked(self) -> None:
+        """Discard only derived list indexes; callers hold the registry lock."""
+        self._task_page_cache.clear()
+        self._task_page_counts = None
+        self._task_page_source = self.tasks
+        self._task_page_source_size = len(self.tasks)
+
+    def _get_task_page_index_locked(
+        self, sort_mode: str, status: str,
+        *, query: str = "", search_field: str = "all", include_payload: bool = True,
+    ) -> tuple[list[Dict[str, Any]], Dict[str, int]]:
+        """Reuse bounded ordered views across pages and API payload formats."""
+        if sort_mode not in TASK_SORT_MODES:
+            raise ValueError(f"Unknown task sort mode: {sort_mode}")
+        if self.tasks is not self._task_page_source or len(self.tasks) != self._task_page_source_size:
+            self._invalidate_task_page_cache_locked()
+        if self._task_page_counts is None:
+            counts = dict.fromkeys(
+                ("pending", "queued", "running", "completed", "failed", "cancelled"), 0,
+            )
+            for task in self.tasks:
+                if task is not None:
+                    task_status = str(task.get("status", "pending") or "pending").lower()
+                    counts[task_status] = counts.get(task_status, 0) + 1
+            self._task_page_counts = counts
+        status_key = "All" if status == "All" else status.lower()
+        key = (sort_mode, status_key)
+        ordered = self._task_page_cache.get(key)
+        if ordered is None:
+            all_key = (sort_mode, "All")
+            ordered = self._task_page_cache.get(all_key)
+            if ordered is None:
+                candidates = [
+                    task for task in self.tasks
+                    if task is not None and (status_key == "All" or status_key == task.get("status", "pending"))
+                ]
+                if query:
+                    # A cold selective search should sort its matches only.
+                    # Once a list index exists, searches reuse its order below.
+                    matches = filter_tasks_by_search_field(
+                        candidates, query, search_field=search_field, include_payload=include_payload,
+                    )
+                    return sort_tasks_for_manager(matches, sort_mode), dict(self._task_page_counts)
+                # Likewise, the first active-only request need not sort a
+                # workspace full of historical tasks before returning its page.
+                ordered = sort_tasks_for_manager(candidates, sort_mode)
+            elif status_key != "All":
+                ordered = [task for task in ordered if status_key == task.get("status", "pending")]
+            self._task_page_cache[key] = ordered
+            while len(self._task_page_cache) > _TASK_PAGE_CACHE_SIZE:
+                self._task_page_cache.popitem(last=False)
+        self._task_page_cache.move_to_end(key)
+        # Filtering stays live: configs may have dynamic resolvers, and
+        # editable text/env fields do not invalidate the shared sort index.
+        if query:
+            ordered = filter_tasks_by_search_field(
+                ordered, query, search_field=search_field, include_payload=include_payload,
+            )
+        return ordered, dict(self._task_page_counts)
 
     _SEARCH_VIEW_DEFAULTS = {
         "dir": "", "name": "", "status": "pending", "pinned": None,
@@ -2169,6 +2218,10 @@ class TaskManager:
                     return
                 current_revision = current.get("_registry_revision", 0)
                 if current_revision == revision:
+                    order_changed = (
+                        current.get("pinned", False) != info.get("pinned", False)
+                        or current.get("task_order") != info.get("task_order")
+                    )
                     notes_changed = current.get("notes", "") != info.get("notes", "")
                     for field, default in (("pinned", False), ("task_order", None), ("notes", ""), ("env", {})):
                         current[field] = copy.deepcopy(info.get(field, default))
@@ -2176,6 +2229,8 @@ class TaskManager:
                     if notes_changed:
                         self._refresh_derived_fields(current)
                     current["_registry_revision"] = current_revision + 1
+                    if order_changed:
+                        self._invalidate_task_page_cache_locked()
                     return
                 # A newer mutation may contain this write plus other edits.
                 # Reload it outside the registry lock before trying again.
@@ -3024,6 +3079,7 @@ class TaskManager:
                             candidate["dir"],
                         ):
                             current["status"] = "failed"
+                            self._invalidate_task_page_cache_locked()
                             self.gpu_scheduler.release(candidate["name"])
                             self._recompute_processing_flag_locked()
 
@@ -3848,6 +3904,7 @@ class TaskManager:
                     current = self._resolve_identifier_locked(task_name)
                     if current:
                         current["status"] = "failed"
+                        self._invalidate_task_page_cache_locked()
                         self._clear_running_locked(task_name)
                         self.gpu_scheduler.release(task_name)
                         changed = True
@@ -3948,6 +4005,7 @@ class TaskManager:
             self._shutdown_event.set()
         with self._lock:
             self._search_view_cache.clear()
+            self._invalidate_task_page_cache_locked()
         if self.owns_task_lifecycle:
             try:
                 self._cleanup_on_shutdown()
@@ -5019,7 +5077,8 @@ class TaskManager:
             update_kwargs["timeout_sec"] = lock_timeout_sec
         updated = update_task_metadata(task_dir, _apply, **update_kwargs)
         if "status" in task:
-            self._apply_info_to_task(task, updated)
+            with self._lock:
+                self._apply_info_to_task(task, updated)
 
     def _apply_terminal_status_to_info(
         self,
@@ -5126,8 +5185,9 @@ class TaskManager:
                 detail_lines=lines,
             )
         if "status" in task:
-            self._apply_info_to_task(task, updated)
-            task["status"] = final_status
+            with self._lock:
+                self._apply_info_to_task(task, updated)
+                task["status"] = final_status
 
     @staticmethod
     def _task_snapshot(task: Dict[str, Any]) -> tuple:
@@ -5173,8 +5233,35 @@ class TaskManager:
             repr(task.get("gpu_wait")),
         )
 
-    @classmethod
     def _apply_info_to_task(
+        self,
+        task: Dict[str, Any],
+        info: Dict[str, Any],
+        *,
+        mtime_ns: int | None = None,
+        info_signature: tuple[int, ...] | None = None,
+    ) -> None:
+        """Refresh under the registry lock, retaining indexes on payload-only edits."""
+        registered = self._tasks_by_name.get(task.get("name", "")) is task
+        before = self._task_page_order_signature(task) if registered else None
+        try:
+            self._apply_info_to_task_fields(
+                task, info, mtime_ns=mtime_ns, info_signature=info_signature,
+            )
+        finally:
+            # A failed payload load can still have copied new lifecycle fields.
+            if registered and before != self._task_page_order_signature(task):
+                self._invalidate_task_page_cache_locked()
+
+    @staticmethod
+    def _task_page_order_signature(task: Dict[str, Any]) -> tuple:
+        return (
+            task.get("name"), task.get("status", "pending"), bool(task.get("pinned")),
+            task.get("task_order"), task_sort_key(task)[1],
+        )
+
+    @classmethod
+    def _apply_info_to_task_fields(
         cls,
         task: Dict[str, Any],
         info: Dict[str, Any],
@@ -5276,6 +5363,7 @@ class TaskManager:
         task["search_text"] = search_text
 
     def _rebuild_indexes_locked(self) -> None:
+        self._invalidate_task_page_cache_locked()
         self._tasks_by_name = {task["name"]: task for task in self.tasks if task and task.get("name")}
         for name in self._search_view_cache.keys() - self._tasks_by_name.keys():
             self._search_view_cache.pop(name)
