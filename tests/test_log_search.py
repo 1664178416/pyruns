@@ -199,6 +199,19 @@ def test_match_limit_reaps_process_and_never_caches_partial_results(tmp_path, mo
     assert all(process.poll() is not None and process.stdout.closed for process in processes)
 
 
+def test_match_limit_uses_input_order_with_partially_warmed_files(tmp_path, monkeypatch):
+    tasks = [write_log(tmp_path, b"needle\n", task=name)[0] for name in ("z-first", "a-second", "b-third")]
+    search = log_search.LogSearch()
+    search.search(tasks[-1], "needle", threading.Event())
+    for argument_bytes in (256_000, 1):
+        monkeypatch.setattr(log_search, "_ARG_BYTES", argument_bytes)
+        result = search.search_many(tasks, "needle", threading.Event(), budget=SearchBudget(2))
+        assert [result[task]["match_count"] for task in tasks] == [1, 1, 0]
+    write_log(tmp_path, b"absent\n", task="a-second")
+    result = search.search_many(tasks, "needle", threading.Event(), budget=SearchBudget(2))
+    assert [result[task]["match_count"] for task in tasks] == [1, 0, 1]
+
+
 @pytest.mark.parametrize("change", ["append", "rewrite", "replace", "remove"])
 def test_cached_misses_recheck_file_changes(tmp_path, change):
     task, path = write_log(tmp_path, b"absent\n")

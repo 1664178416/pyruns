@@ -2,6 +2,84 @@ import { expect, test } from '@playwright/test'
 
 const emptyCounts = { pending: 0, queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 
+test('Manager coalesces task events, pauses while hidden and reconciles on return', async ({ page }) => {
+  const now = new Date()
+  await page.clock.install({ time: now })
+  await page.clock.pauseAt(new Date(now.getTime() + 100))
+  await page.addInitScript(() => {
+    const events = { ready: 0, changed: 0 }
+    Object.assign(window, { managerRefreshEvents: events })
+    // Observe dispatched mock messages without replacing Playwright's WebSocket.
+    const dispatch = EventTarget.prototype.dispatchEvent
+    EventTarget.prototype.dispatchEvent = function(event) {
+      const result = dispatch.call(this, event)
+      if (this instanceof WebSocket && event instanceof MessageEvent
+        && new URL(this.url).pathname === '/api/tasks/events') {
+        const { type } = JSON.parse(event.data)
+        if (type === 'ready') events.ready++
+        if (type === 'changed') events.changed++
+      }
+      return result
+    }
+  })
+  const eventCounts = () => page.evaluate(() => (window as typeof window & {
+    managerRefreshEvents: { ready: number; changed: number }
+  }).managerRefreshEvents)
+  const refreshes: string[] = []
+  const task = { name: 'event-task', dir: '/tmp/event-task', status: 'pending', run_index: 1, task_kind: 'shell' }
+  await page.route('**/api/tasks?*', route => {
+    refreshes.push(new URL(route.request().url()).searchParams.get('refresh') || '')
+    return route.fulfill({ json: { items: [task], total: 1, offset: 0, limit: 50,
+      has_more: false, status_counts: { ...emptyCounts, [task.status]: 1 } } })
+  })
+  let sendEvent!: () => void
+  let connections = 0
+  await page.routeWebSocket('**/api/tasks/events?*', socket => {
+    connections++
+    sendEvent = () => socket.send(JSON.stringify({ type: 'changed' }))
+    socket.send(JSON.stringify({ type: 'ready' }))
+  })
+  const visibility = (state: string) => page.evaluate(value => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value })
+    document.dispatchEvent(new Event('visibilitychange'))
+  }, state)
+  await page.goto('/manager?token=pyruns-e2e-access-token')
+  await expect(page.locator('[data-task-card]')).toContainText('event-task')
+  await expect.poll(() => connections).toBe(1)
+  await expect.poll(eventCounts).toEqual({ ready: 1, changed: 0 })
+  task.status = 'running'
+  const readyRefresh = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/tasks' && url.searchParams.get('refresh') === 'false'
+  })
+  await page.clock.runFor(150)
+  await (await readyRefresh).finished()
+  // A distinct rendered state proves the initial ready refresh has been applied.
+  await expect(page.locator('[data-task-card]')).toContainText('Running')
+  await expect.poll(() => refreshes.length).toBe(2)
+  expect(refreshes).toEqual(['', 'false'])
+  task.status = 'completed'
+  for (let index = 0; index < 10; index++) sendEvent()
+  // WebSocket delivery is real async work, independent of the paused browser clock.
+  await expect.poll(eventCounts).toEqual({ ready: 1, changed: 10 })
+  await page.clock.runFor(150)
+  await expect.poll(() => refreshes.length).toBe(3)
+  expect(refreshes.at(-1)).toBe('false')
+  await expect(page.locator('[data-task-card]')).toContainText('Completed')
+  await visibility('hidden')
+  await page.clock.runFor(60_001)
+  expect(refreshes).toHaveLength(3)
+  await visibility('visible')
+  await expect.poll(() => connections).toBe(2)
+  await expect.poll(eventCounts).toEqual({ ready: 2, changed: 10 })
+  await page.clock.runFor(200)
+  await expect.poll(() => refreshes.length).toBe(4)
+  expect(refreshes.at(-1)).toBe('true')
+  await page.clock.runFor(60_001)
+  await expect.poll(() => refreshes.length).toBe(5)
+  expect(refreshes.at(-1)).toBe('true')
+})
+
 test('Manager cancels obsolete lists and preserves results through timeout and retry', async ({ page }) => {
   const now = new Date()
   await page.clock.install({ time: now })
@@ -399,6 +477,7 @@ test('monitor pauses background streams and resumes logs with one reconciled sna
     logConnections.push(socket.url())
     socket.onClose(() => { logCloses++ })
     sendLog = value => socket.send(value)
+    socket.send(JSON.stringify({ type: 'ready', task_name: task.name }))
   })
   const reads = () => page.evaluate(() => (window as typeof window & {
     monitorRefreshTest: { reads: number; refreshes: string[]; logReads: number }
@@ -454,7 +533,10 @@ test('monitor pauses background streams and resumes logs with one reconciled sna
   await expect(terminal).toContainText('while hidden')
   await expect(terminal.getByRole('listitem').filter({ hasText: 'before hiding' })).toHaveCount(1)
   expect(await reads()).toBe(before + 1)
-  await page.clock.runFor(60_001)
+  await page.clock.runFor(30_000)
+  // Model the server heartbeat while this test keeps the live log idle.
+  sendLog(JSON.stringify({ type: 'heartbeat', task_name: task.name }))
+  await page.clock.runFor(30_001)
   await expect.poll(reads).toBe(before + 2)
   expect((await refreshes()).at(-1)).toBe('true')
   await visibility('hidden')
@@ -471,13 +553,22 @@ test('monitor pauses background streams and resumes logs with one reconciled sna
 test('manager refreshes on return and coalesces a return during an active request', async ({ page }) => {
   await page.clock.install()
   let reads = 0
+  let stall = false
   let release: (() => void) | undefined
   await page.route('**/api/tasks?*', async route => {
     reads++
-    if (reads === 2) await new Promise<void>(resolve => { release = resolve })
+    if (stall) {
+      stall = false
+      await new Promise<void>(resolve => { release = resolve })
+    }
     await route.fulfill({ json: {
       items: [], total: 0, offset: 0, limit: 50, has_more: false, status_counts: emptyCounts,
     } })
+  })
+  let connections = 0
+  await page.routeWebSocket('**/api/tasks/events?*', socket => {
+    connections++
+    socket.send(JSON.stringify({ type: 'ready' }))
   })
   const visibility = (value: 'visible' | 'hidden') => page.evaluate(state => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
@@ -485,17 +576,23 @@ test('manager refreshes on return and coalesces a return during an active reques
   }, value)
   await page.goto('/manager?token=pyruns-e2e-access-token')
   await expect(page.getByRole('textbox', { name: 'Search tasks', exact: true })).toBeVisible()
-  await expect.poll(() => reads).toBe(1)
+  await expect.poll(() => connections).toBe(1)
+  await page.clock.runFor(150)
+  await expect.poll(() => reads).toBe(2)
+  const before = reads
+  stall = true
   await visibility('hidden')
   await page.clock.fastForward(60_001)
-  expect(reads).toBe(1)
+  expect(reads).toBe(before)
   await visibility('visible')
-  await expect.poll(() => reads).toBe(2)
+  await expect.poll(() => reads).toBe(before + 1)
   await visibility('hidden')
   await visibility('visible')
-  expect(reads).toBe(2)
+  await expect.poll(() => connections).toBe(3)
+  await page.clock.runFor(150)
+  expect(reads).toBe(before + 1)
   release?.()
-  await expect.poll(() => reads).toBe(3)
+  await expect.poll(() => reads).toBe(before + 2)
   await page.clock.runFor(500)
-  expect(reads).toBe(3)
+  expect(reads).toBe(before + 2)
 })

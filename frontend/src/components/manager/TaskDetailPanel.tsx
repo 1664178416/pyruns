@@ -19,6 +19,7 @@ import StatusBadge from '@/components/shared/StatusBadge'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
 import CopyButton from '@/components/shared/CopyButton'
 import ActionButton from '@/components/shared/ActionButton'
+import RunInputView from './RunInputView'
 import { useTaskDetailDraftStore, useToastStore } from '@/store'
 import type { RunEnvironment, Task } from '@/types'
 import type { TaskStatus } from '@/theme/tokens'
@@ -151,6 +152,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const previousTaskNameRef = useRef(task.name)
   const currentTaskNameRef = useRef(task.name)
+  const currentTaskIdentityRef = useRef(task.task_identity)
   const envKeyInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const suppressNextCloseRef = useRef(false)
   const backdropPointerStartedRef = useRef(false)
@@ -164,10 +166,13 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
   const envDraftRevisionRef = useRef(0)
   const envBaseRef = useRef(copyEnv(task.env || {}))
   const notesBaseRef = useRef(task.notes || '')
+  const envTaskIdentityRef = useRef(task.task_identity)
+  const notesTaskIdentityRef = useRef(task.task_identity)
   const notify = useToastStore(state => state.notify)
   const setTaskDetailDraftDirty = useTaskDetailDraftStore(state => state.setDirty)
   const clearTaskDetailDraft = useTaskDetailDraftStore(state => state.clear)
   currentTaskNameRef.current = task.name
+  currentTaskIdentityRef.current = task.task_identity
 
   const startPanelResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -228,6 +233,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
     setDiscardConfirmOpen(false)
     notesBaseRef.current = task.notes || ''
     envBaseRef.current = copyEnv(task.env || {})
+    notesTaskIdentityRef.current = task.task_identity
+    envTaskIdentityRef.current = task.task_identity
   }, [task.name])
 
   useEffect(() => () => {
@@ -240,10 +247,11 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
     }
     const incomingNotes = task.notes || ''
     notesBaseRef.current = incomingNotes
+    notesTaskIdentityRef.current = task.task_identity
     setNotes(incomingNotes)
     setNotesConflict(false)
     setNotesSaveError('')
-  }, [task.name, task.notes, notesDirty])
+  }, [task.name, task.notes, task.task_identity, notesDirty])
 
   useEffect(() => {
     if (envDirty || previousTaskNameRef.current !== task.name) {
@@ -251,9 +259,10 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
     }
     const incomingEnv = copyEnv(task.env || {})
     envBaseRef.current = incomingEnv
+    envTaskIdentityRef.current = task.task_identity
     setEnvConflict(false)
     setEnvPairs(buildEnvPairs(task))
-  }, [task.name, task.env, envDirty])
+  }, [task.name, task.env, task.task_identity, envDirty])
 
   useEffect(() => {
     if (!pendingEnvFocusId) {
@@ -346,14 +355,18 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
   const handleSaveNotes = useCallback(async () => {
     const requestId = ++taskRequestSeqRef.current
     const taskName = task.name
+    const taskIdentity = task.task_identity
+    const requestIsCurrent = () => requestId === taskRequestSeqRef.current
+      && currentTaskNameRef.current === taskName && currentTaskIdentityRef.current === taskIdentity
     const draftRevision = notesDraftRevisionRef.current
     const expectedNotes = notesBaseRef.current
+    const expectedIdentity = notesTaskIdentityRef.current
     setSaving(true)
     setNotesSaved(false)
     setNotesSaveError('')
     try {
-      const response = await api.updateNotes(taskName, notes, expectedNotes)
-      if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+      const response = await api.updateNotes(taskName, notes, expectedNotes, expectedIdentity)
+      if (!requestIsCurrent()) return
       const savedNotes = response.task?.notes ?? notes
       notesBaseRef.current = savedNotes
       onTaskUpdated(response.task)
@@ -366,14 +379,20 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
       }
       onRefresh()
     } catch (err) {
-      if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+      if (!requestIsCurrent()) return
       if (err instanceof api.ApiError && err.status === 409 && !api.isWorkspaceChangedError(err)) {
         try {
           const latestTask = await api.getTask(taskName, true)
-          if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+          if (!requestIsCurrent()) return
+          if (expectedIdentity && latestTask.task_identity !== expectedIdentity) {
+            setNotesConflict(false)
+            setNotesSaveError(t('This task was replaced. Your draft is safe. Close and reopen task details before editing the new task.'))
+            onRefresh()
+            return
+          }
           notesBaseRef.current = latestTask.notes || ''
         } catch {
-          if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+          if (!requestIsCurrent()) return
           setNotesConflict(false)
           setNotesSaveError(t("Newer notes exist, but their latest version could not be loaded. Your draft is safe. Retry Save Notes before replacing anything."))
           onRefresh()
@@ -389,7 +408,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
     } finally {
       if (requestId === taskRequestSeqRef.current) setSaving(false)
     }
-  }, [task.name, notes, onTaskUpdated, onRefresh])
+  }, [task.name, task.task_identity, notes, onTaskUpdated, onRefresh])
 
   const handleSaveEnv = useCallback(async () => {
     const validationMessage = getEnvValidationMessage(envPairs)
@@ -401,8 +420,12 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
 
     const requestId = ++taskRequestSeqRef.current
     const taskName = task.name
+    const taskIdentity = task.task_identity
+    const requestIsCurrent = () => requestId === taskRequestSeqRef.current
+      && currentTaskNameRef.current === taskName && currentTaskIdentityRef.current === taskIdentity
     const draftRevision = envDraftRevisionRef.current
     const expectedEnv = envBaseRef.current
+    const expectedIdentity = envTaskIdentityRef.current
     setSaving(true)
     setEnvSaveStatus('idle')
     setEnvSaveError('')
@@ -412,8 +435,8 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
         .map(({ key, value }) => [key.trim(), value])
     )
     try {
-      const response = await api.updateEnv(taskName, env, expectedEnv)
-      if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+      const response = await api.updateEnv(taskName, env, expectedEnv, expectedIdentity)
+      if (!requestIsCurrent()) return
       const savedEnv = copyEnv(response.task?.env || env)
       envBaseRef.current = savedEnv
       onTaskUpdated(response.task)
@@ -425,14 +448,21 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
       }
       onRefresh()
     } catch (err) {
-      if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+      if (!requestIsCurrent()) return
       if (err instanceof api.ApiError && err.status === 409 && !api.isWorkspaceChangedError(err)) {
         try {
           const latestTask = await api.getTask(taskName, true)
-          if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+          if (!requestIsCurrent()) return
+          if (expectedIdentity && latestTask.task_identity !== expectedIdentity) {
+            setEnvConflict(false)
+            setEnvSaveStatus('error')
+            setEnvSaveError(t('This task was replaced. Your draft is safe. Close and reopen task details before editing the new task.'))
+            onRefresh()
+            return
+          }
           envBaseRef.current = copyEnv(latestTask.env || {})
         } catch {
-          if (requestId !== taskRequestSeqRef.current || currentTaskNameRef.current !== taskName) return
+          if (!requestIsCurrent()) return
           setEnvConflict(false)
           setEnvSaveStatus('error')
           setEnvSaveError(t("Newer environment variables exist, but their latest version could not be loaded. Your draft is safe. Retry Save before replacing anything."))
@@ -451,7 +481,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
     } finally {
       if (requestId === taskRequestSeqRef.current) setSaving(false)
     }
-  }, [task.name, envPairs, onTaskUpdated, onRefresh])
+  }, [task.name, task.task_identity, envPairs, onTaskUpdated, onRefresh])
 
   function requestClose() {
     if (hasUnsavedChanges) {
@@ -1359,6 +1389,7 @@ function InfoTab({ task }: { task: Task }) {
                     </div>
                   )}
                   {run.recordText !== '(empty)' && <InfoValueRow label={t("Record")} value={run.recordText} mono copyLabel={t('Copy record for run {{index}}', { index: run.index })} />}
+                  {openRunIndexes.has(run.index) && <RunInputView key={`${task.dir}:${run.index}`} name={task.name} run={run.index} />}
                 </div>
               </details>
             ))}

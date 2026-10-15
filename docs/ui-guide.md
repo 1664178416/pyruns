@@ -56,6 +56,9 @@ pyr ui shell --no-browser
 <project>/_pyruns_/_shell_/
 ```
 
+脚本和配置发现可以通过 `Cancel` 或 `Escape` 取消，读取超过 10 秒会提示重试。
+已经提交的工作区打开操作会等待结果。
+
 ## Generator
 
 Generator 是整个 UI 最像“工作台”的页面。
@@ -109,6 +112,8 @@ Generator 是整个 UI 最像“工作台”的页面。
 
 ![Shell Generator](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/shell_generator.png)
 
+创建成功会立即显示任务结果；随后刷新模板列表不会阻塞继续操作。
+
 ## Manager
 
 Manager 是任务的调度台。  
@@ -152,8 +157,13 @@ Manager 和 Monitor 均支持 `Ctrl/Cmd+Shift+F` 聚焦并选中查询。在首�
 其中：
 
 - `Info` 显示任务模式、目录和完整 Run History
+- 展开一条运行记录后，点击 `Saved input` 查看启动前保存的脚本或配置；点击 `Compare runs`，选择同一工作区中的任务名与运行编号，比较输入、汇总指标、耗时、状态、Git 来源与运行环境。默认选择本任务的上一次运行，可直接输入其他任务名与编号。
+- 比较内容仅在点击时读取，不加载训练曲线。旧运行没有保存输入时会明确提示，其余已记录信息仍可比较；正在运行的记录显示本次读取时的值。
 - `python` 任务显示 `config.yaml`
 - `shell` 任务显示当前 runtime 对应的 `config.ps1` / `config.cmd` / `config.sh`
+
+Notes 和 Env 保存会检查编辑时的字段值与任务身份。若原任务被同名任务替换，草稿仍保留，
+请关闭并重新打开详情后再编辑新任务；旧草稿不能直接覆盖新任务。
 
 ![任务详情面板](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/task_info.png)
 
@@ -178,6 +188,10 @@ Monitor 的目标不是“把日志显示出来”，而是把日志变成一个
 - 请求带竞态保护，避免旧响应覆盖新内容
 - websocket chunk 会校验任务身份，避免串日志
 
+`monitor_scrollback=0` 关闭终端历史滚动，当前屏幕仍显示初始尾部与新增输出。日志连接成功读取文件状态后才显示 `Live`；持续读盘失败会显示提示，并尝试重连与增量读取，正常无输出的任务仍保持连接。
+
+工具栏的 `Download` 下载当前选定日志的完整原始文件，文件名包含任务名和日志名；不受页面显示长度限制。运行中下载以打开文件时的大小为准，后续输出可再次下载。`Copy current log` 仍只复制当前已加载的内容。
+
 浏览器标签页进入后台时，Monitor 暂停任务事件和实时日志连接；返回时更新任务状态，并从已接收的位置继续读取日志。Manager、Monitor 和 Dashboard 的定时刷新也会在后台暂停，返回时立即补刷。搜索结果仍需使用刷新按钮更新。
 
 Monitor 收到任务变更事件后读取服务端已有快照，合并短时间内的连续事件。连接正常时，前端额外每 60 秒发起一次磁盘校验请求，断连时改为每 5 秒重试；手动刷新会立即同步磁盘。服务端的任务调度和磁盘发现仍按自身周期运行。
@@ -186,7 +200,7 @@ Monitor 收到任务变更事件后读取服务端已有快照，合并短时间
 
 ### 导出
 
-Monitor 支持选择多个任务并导出，适合快速聚合一批日志做对照或归档。
+Monitor 支持选择多个任务并导出任务指标 CSV；完整日志使用日志工具栏的 `Download`。
 
 ![Shell Monitor](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/shell_monitor.png)
 

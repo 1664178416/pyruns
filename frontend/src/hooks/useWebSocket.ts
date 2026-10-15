@@ -11,6 +11,7 @@ interface UseLogStreamOptions {
   onChunk: (message: LogStreamMessage) => void
   onDisconnect?: () => void
   onStatusChange?: (status: LogStreamStatus) => void
+  onError?: (message: string) => void
   enabled?: boolean
   logFileName?: string
   offset?: number
@@ -20,6 +21,7 @@ interface UseLogStreamOptions {
 
 const LOG_STREAM_RECONNECT_BASE_MS = 750
 const LOG_STREAM_RECONNECT_MAX_MS = 10_000
+const LOG_STREAM_HEALTH_TIMEOUT_MS = 35_000
 const TASK_EVENT_RECONNECT_BASE_MS = 750
 const TASK_EVENT_RECONNECT_MAX_MS = 15_000
 
@@ -134,6 +136,7 @@ export function useLogStream({
   onChunk,
   onDisconnect,
   onStatusChange,
+  onError,
   enabled = true,
   logFileName,
   offset,
@@ -145,12 +148,14 @@ export function useLogStream({
   const onChunkRef = useRef(onChunk)
   const onDisconnectRef = useRef(onDisconnect)
   const onStatusChangeRef = useRef(onStatusChange)
+  const onErrorRef = useRef(onError)
   const offsetRef = useRef(offset)
   const logIdentityRef = useRef(logIdentity)
   const generationKeyRef = useRef(generationKey)
   onChunkRef.current = onChunk
   onDisconnectRef.current = onDisconnect
   onStatusChangeRef.current = onStatusChange
+  onErrorRef.current = onError
   offsetRef.current = offset
   logIdentityRef.current = logIdentity
   generationKeyRef.current = generationKey
@@ -178,6 +183,7 @@ export function useLogStream({
 
     let disposed = false
     let retryTimer: number | null = null
+    let healthTimer: number | null = null
     let reconnectAttempt = 0
     const connectedGenerationKey = generationKey
 
@@ -193,6 +199,16 @@ export function useLogStream({
         logIdentity: logIdentityRef.current,
       })
       wsRef.current = ws
+      let unhealthy = false
+      const failRead = (message: string) => {
+        if (disposed || wsRef.current !== ws || unhealthy) return
+        unhealthy = true
+        if (healthTimer !== null) window.clearTimeout(healthTimer)
+        onErrorRef.current?.(message)
+        onStatusChangeRef.current?.('reconnecting')
+        onDisconnectRef.current?.()
+        ws.close()
+      }
 
       ws.onopen = () => {
         if (
@@ -202,13 +218,14 @@ export function useLogStream({
         ) {
           return
         }
-        reconnectAttempt = 0
-        onStatusChangeRef.current?.('live')
+        healthTimer = window.setTimeout(() => {
+          failRead('Live log reads timed out. Retrying with incremental polling.')
+        }, LOG_STREAM_HEALTH_TIMEOUT_MS)
       }
 
       ws.onmessage = (ev) => {
         if (
-          disposed
+          disposed || unhealthy
           || wsRef.current !== ws
           || generationKeyRef.current !== connectedGenerationKey
         ) {
@@ -216,6 +233,19 @@ export function useLogStream({
         }
         try {
           const msg = JSON.parse(ev.data) as LogStreamMessage
+          if (msg.type === 'error') {
+            failRead(msg.detail || 'Live log reads failed. Retrying with incremental polling.')
+            return
+          }
+          if (['ready', 'heartbeat', 'chunk', 'reset'].includes(msg.type)) {
+            if (healthTimer !== null) window.clearTimeout(healthTimer)
+            healthTimer = window.setTimeout(() => {
+              failRead('Live log reads timed out. Retrying with incremental polling.')
+            }, LOG_STREAM_HEALTH_TIMEOUT_MS)
+            reconnectAttempt = 0
+            onStatusChangeRef.current?.('live')
+            onErrorRef.current?.('')
+          }
           if ((msg.type === 'chunk' && msg.content) || msg.type === 'reset') {
             onChunkRef.current(msg)
           }
@@ -232,7 +262,8 @@ export function useLogStream({
           return
         }
         wsRef.current = null
-        onDisconnectRef.current?.()
+        if (healthTimer !== null) window.clearTimeout(healthTimer)
+        if (!unhealthy) onDisconnectRef.current?.()
         if (event?.code === 4409) {
           onStatusChangeRef.current?.('idle')
           return
@@ -254,6 +285,7 @@ export function useLogStream({
       if (retryTimer !== null) {
         window.clearTimeout(retryTimer)
       }
+      if (healthTimer !== null) window.clearTimeout(healthTimer)
       const ws = wsRef.current
       if (ws) {
         ws.onopen = null

@@ -1311,7 +1311,7 @@ def test_task_manager_gpu_auto_queues_and_writes_queue_log_before_assignment(tmp
     text = queue_log.read_text(encoding="utf-8")
     assert "[PYRUNS] [GPU WAIT] Run #1 waiting for GPU resources" in text
     assert "[PYRUNS]   Run log: run1.log" in text
-    assert "max wait=24h" in text
+    assert "timeout=24h" in text
 
 
 def test_task_manager_gpu_batch_run_waits_each_selected_task(tmp_path, monkeypatch):
@@ -1370,7 +1370,7 @@ def test_task_manager_gpu_batch_run_waits_each_selected_task(tmp_path, monkeypat
     for task in tasks:
         queue_bytes = (Path(task["dir"]) / RUN_LOGS_DIR / "queue.log").read_bytes()
         assert b"\r[PYRUNS] Run #1 still waiting after " in queue_bytes
-        assert b"blocked: GPU 0 free" in queue_bytes
+        assert b"Blocked: GPU 0 free" in queue_bytes
 
 
 def test_task_manager_gpu_auto_assigns_cuda_env_when_queued_task_is_picked(tmp_path):
@@ -5054,6 +5054,117 @@ def test_task_manager_queue_heartbeat_continues_after_one_metadata_write_fails(t
     assert load_task_info(beta["dir"])["lease_heartbeat"] > 1.0
 
 
+@pytest.mark.parametrize("stage", ["executor-queued", "worker-preparing"])
+def test_task_manager_renews_starting_run_before_child_pid_is_published(tmp_path, monkeypatch, stage):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    release_slot = threading.Event()
+    entered_worker = threading.Event()
+    finish_worker = threading.Event()
+
+    def prepare(*_args):
+        entered_worker.set()
+        assert finish_worker.wait(5)
+
+        def complete(info):
+            slot = ensure_run_slot(info, 1)
+            info["status"] = "completed"
+            info["run_statuses"][slot] = "completed"
+        update_task_info(task["dir"], complete)
+
+    monkeypatch.setattr(task_manager_module, "run_task_worker", prepare)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        blocker = pool.submit(release_slot.wait, 5)
+        manager._independent_executor = pool
+        try:
+            assert manager.start_task_now(task["name"])
+            if stage == "worker-preparing":
+                release_slot.set()
+                assert entered_worker.wait(5)
+            else:
+                assert not entered_worker.is_set()
+            update_task_info(task["dir"], lambda info: info.update(lease_until=time.time() - 1))
+            manager.refresh_from_disk(task_ids=[task["name"]])
+            manager._refresh_queued_runner_leases()
+            refreshed = load_task_info(task["dir"])
+            assert refreshed["lease_until"] > time.time()
+            observer = _make_task_manager(tasks_dir, lazy_scan=None)
+            try:
+                current, changed = observer._fail_unowned_running_info_if_needed(
+                    task["name"], task["dir"], refreshed,
+                )
+                assert not changed
+                assert current["status"] == "running"
+            finally:
+                observer.owns_task_lifecycle = False
+                observer.shutdown()
+        finally:
+            finish_worker.set()
+            release_slot.set()
+            blocker.result(timeout=5)
+    manager.shutdown()
+
+
+def test_task_manager_cancelled_future_releases_starting_run(tmp_path):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    assert manager._sync_status_to_disk(task["name"], "running")
+    future = Future()
+    assert future.cancel()
+    manager._on_task_done(future, task["name"], expected_runner_id=manager.runner_id, expected_run_index=1)
+    assert task["name"] not in manager._running_ids
+    assert load_task_info(task["dir"])["status"] == "failed"
+    manager.shutdown()
+
+
+@pytest.mark.parametrize("change", ["pid", "owner", "new-run", "terminal"])
+def test_task_manager_starting_heartbeat_rechecks_disk_identity_before_renewing(
+    tmp_path, monkeypatch, change,
+):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    assert manager._sync_status_to_disk(task["name"], "running")
+    real_update = task_manager_module.update_task_metadata
+
+    def mutate_then_renew(task_dir, updater, **kwargs):
+        updates = {
+            "pid": {"pids": [12345], "pid_create_times": [1000.0]},
+            "owner": {"runner_id": "foreign"},
+            "new-run": {"run_index": 2},
+            "terminal": {"status": "completed"},
+        }
+        real_update(task_dir, lambda info: info.update({"lease_until": 1.0, **updates[change]}))
+        return real_update(task_dir, updater, **kwargs)
+
+    monkeypatch.setattr(task_manager_module, "update_task_metadata", mutate_then_renew)
+    manager._refresh_queued_runner_leases()
+    assert load_task_info(task["dir"])["lease_until"] == 1.0
+    manager.shutdown()
+
+
+def test_task_manager_starting_heartbeat_does_not_replace_newer_registry_state(tmp_path, monkeypatch):
+    tasks_dir = tmp_path / "tasks"
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task("starting", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    assert manager._sync_status_to_disk(task["name"], "running")
+    real_update = task_manager_module.update_task_metadata
+
+    def renew_then_finish(task_dir, updater, **kwargs):
+        updated = real_update(task_dir, updater, **kwargs)
+        latest = real_update(task_dir, lambda info: info.update(status="completed"))
+        with manager._lock:
+            manager._apply_info_to_task(manager._tasks_by_name[task["name"]], latest)
+        return updated
+
+    monkeypatch.setattr(task_manager_module, "update_task_metadata", renew_then_finish)
+    manager._refresh_queued_runner_leases()
+    assert manager.get_task(task["name"])["status"] == "completed"
+    manager.shutdown()
+
+
 @pytest.mark.parametrize("wall_clock_shift", [-3600.0, 3600.0])
 def test_task_manager_queue_heartbeat_ignores_wall_clock_adjustments(tmp_path, monkeypatch, wall_clock_shift):
     tasks_dir = tmp_path / "tasks"
@@ -5795,7 +5906,8 @@ def test_task_manager_scheduler_refresh_ignores_wall_clock_adjustments(tmp_path,
     updates = []
 
     def refresh(**kwargs):
-        assert kwargs == {"check_all": True, "discover": True, "check_payload": not refreshes}
+        assert kwargs == {"task_ids": None, "check_all": not refreshes,
+                          "discover": not refreshes, "check_payload": not refreshes}
         refreshes.append(elapsed_now[0])
         return True
 
@@ -6078,7 +6190,7 @@ def test_task_manager_logs_and_gpu_helper_branches(tmp_path, monkeypatch):
         config,
         GpuDecision(assignment=None, reason="busy", snapshot=[]),
         waited=10,
-        now=100,
+        now=90,
     )
     manager._append_gpu_assignment(task, assignment)
     manager._append_gpu_assignment(
@@ -6098,7 +6210,7 @@ def test_task_manager_logs_and_gpu_helper_branches(tmp_path, monkeypatch):
         config,
         GpuDecision(assignment=None, reason="busy", snapshot=[]),
         waited=11,
-        now=101,
+        now=91,
     )
     assert repeated is None
     periodic = manager._gpu_wait_decision_lines(
@@ -6107,7 +6219,7 @@ def test_task_manager_logs_and_gpu_helper_branches(tmp_path, monkeypatch):
         config,
         GpuDecision(assignment=None, reason="busy", snapshot=[]),
         waited=61,
-        now=161,
+        now=151,
     )
     assert periodic is not None
     assert "still waiting after 00:01:01" in periodic[0]
@@ -6116,10 +6228,12 @@ def test_task_manager_logs_and_gpu_helper_branches(tmp_path, monkeypatch):
     queue_bytes = queue_log.read_bytes()
     with open(queue_log, "r", encoding="utf-8", newline="") as handle:
         queue_text = handle.read()
-    refresh_line = (
-        "\r[PYRUNS] Run #1 still waiting after 00:00:10 | "
-        "blocked: busy | GPU snapshot: no NVIDIA GPU metrics available"
-    )
+    refresh_start = queue_text.index("\r[PYRUNS] Run #1 still waiting after 00:00:10")
+    refresh_line = queue_text[refresh_start:queue_text.index("\n", refresh_start)]
+    assert "GPU count: 0/2 ready [blocked]" in refresh_line
+    assert "Wait: 00:00:10 / 01:00:00 [ready]; remaining 00:59:50" in refresh_line
+    assert "Blocked: busy" in refresh_line
+    assert "GPU metrics: [blocked] no NVIDIA GPU metrics available" in refresh_line
     assert refresh_line.encode("utf-8") in queue_bytes
     assert refresh_line in queue_text
     assert "\n" + refresh_line in queue_text
@@ -6142,22 +6256,6 @@ def test_task_manager_logs_and_gpu_helper_branches(tmp_path, monkeypatch):
     assert "CUDA_VISIBLE_DEVICES=GPU-uuid-0,MIG-GPU-uuid/0/1" in queue_text
     assert "Updated at " in queue_text
     assert "Last status at " not in queue_text
-
-    class FakeGpu:
-        def __init__(self, index, memory_used_pct, compute_util_pct, free_memory_gb):
-            self.index = index
-            self.memory_used_pct = memory_used_pct
-            self.compute_util_pct = compute_util_pct
-            self.free_memory_gb = free_memory_gb
-
-    assert manager._gpu_snapshot_lines([], config) == ["GPU snapshot: no NVIDIA GPU metrics available"]
-    assert manager._gpu_snapshot_lines([FakeGpu(4, 90, 50, 1)], config) == ["GPU snapshot: configured GPU pool is empty"]
-    visible_lines = manager._gpu_snapshot_lines(
-        [FakeGpu(1, 10, 5, 80), FakeGpu(3, 90, 50, 1)],
-        config,
-    )
-    assert "GPU 1 eligible" in visible_lines[0]
-    assert "GPU 3 blocked" in visible_lines[1]
 
     monkeypatch.setattr("builtins.open", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("no write")))
     manager._append_gpu_queue_log(task, "GPU WAIT", ["cannot write"])
@@ -6183,21 +6281,107 @@ def test_task_manager_gpu_wait_log_interval_uses_stable_window(tmp_path):
     assert "still waiting after 00:00:15" in second[0]
 
 
-def test_task_manager_gpu_wait_refresh_labels_stabilizing_candidates():
-    line = TaskManager._gpu_wait_refresh_line(
-        [
-            "Run #3 still waiting after 00:00:05",
-            "Stabilizing: GPU 0 stabilizing 0.0/5s",
-            "GPU 0 eligible: memory 58%, compute 2%, free 5.1 GiB",
-        ]
-    )
+def test_task_manager_gpu_wait_refresh_keeps_every_card_and_condition():
+    details = [
+        "Run #3 still waiting after 00:00:05",
+        "GPU count: 0/2 ready [blocked]; 2 candidates",
+        "Wait: 00:00:05 / unlimited [ready]; no timeout",
+        "Stabilizing: GPU 0 stabilizing 0.0/5s",
+        "GPU 0 [blocked]: free memory 24 GiB >= 20 GiB [ready]; stable 0/5s [blocked: observing]",
+        "GPU 1 [blocked]: free memory 12 GiB < 20 GiB [blocked]; idle 20% < 70% [blocked]",
+    ]
+    line = TaskManager._gpu_wait_refresh_line(details)
 
-    assert line == (
-        "[PYRUNS] Run #3 still waiting after 00:00:05 | "
-        "stabilizing: GPU 0 stabilizing 0.0/5s | "
-        "GPU 0 eligible: memory 58%, compute 2%, free 5.1 GiB"
+    assert line.startswith("[PYRUNS] Run #3 still waiting")
+    assert all(detail in line for detail in details)
+    assert line.index("GPU 0 [blocked]") < line.index("GPU 1 [blocked]")
+    assert "\n" not in line
+
+
+def test_task_manager_gpu_wait_reports_thresholds_stability_and_reservations():
+    now = [100.0]
+    scheduler = GpuResourceScheduler(
+        provider=_StaticGpuProvider([
+            GpuDevice(0, "GPU", "GPU-0", 16384, 40960, 10),
+            GpuDevice(1, "GPU", "GPU-1", 28672, 40960, 80),
+            GpuDevice(2, "GPU", "GPU-2", 16384, 40960, 10),
+            GpuDevice(3, "GPU", "GPU-3", 16384, 40960, None),
+        ]),
+        clock=lambda: now[0],
     )
-    assert "blocked:" not in line
+    config = GpuSchedulerConfig.from_wait_rule("2-20-70-2-1")
+    scheduler.sync_reservations({"another-task": [2]})
+    for timestamp in (100, 101, 102):
+        now[0] = float(timestamp)
+        decision = scheduler.try_reserve("waiting", 1, config, task_env={})
+
+    assert decision.assignment is None
+    assert decision.eligible_gpu_count == 1
+    lines = TaskManager._gpu_device_status_lines(decision, config)
+    ready, thresholds, reserved, unknown = lines
+    assert ready.startswith("GPU 0 [ready]")
+    assert "free memory 24 GiB >= 20 GiB [ready]" in ready
+    assert "idle 90% >= 70% [ready]" in ready
+    assert "stable 2/2s [ready]" in ready
+    assert thresholds.startswith("GPU 1 [blocked]")
+    assert "free memory 12 GiB < 20 GiB [blocked]" in thresholds
+    assert "idle 20% < 70% [blocked]" in thresholds
+    assert "stable 0/2s [blocked: waiting for thresholds]" in thresholds
+    assert reserved.startswith("GPU 2 [blocked]")
+    assert "stable 2/2s [ready]" in reserved
+    assert "reserved" in reserved
+    assert unknown.startswith("GPU 3 [blocked]")
+    assert "idle unknown / 70% [blocked" in unknown
+    assert "stable unknown / 2s [blocked" in unknown
+
+
+def test_task_manager_gpu_wait_keeps_high_index_selected_card_stabilizing():
+    scheduler = GpuResourceScheduler(
+        provider=_StaticGpuProvider([
+            GpuDevice(index, "GPU", f"GPU-{index}", 16384, 40960, 10)
+            for index in range(10)
+        ]),
+        clock=lambda: 100.0,
+    )
+    config = GpuSchedulerConfig.from_wait_rule("device=9-20-70-2-1")
+    decision = scheduler.try_reserve("waiting", 1, config, task_env={})
+
+    assert decision.assignment is None
+    assert decision.total_gpu_count == 1
+    lines = TaskManager._gpu_device_status_lines(decision, config)
+    assert len(lines) == 1
+    assert lines[0].startswith("GPU 9 [blocked]")
+    assert "free memory 24 GiB >= 20 GiB [ready]" in lines[0]
+    assert "idle 90% >= 70% [ready]" in lines[0]
+    assert "stable 0/2s [blocked: observing]" in lines[0]
+    assert "stabilizing" in lines[0]
+
+
+@pytest.mark.parametrize(("timeout", "waited", "timing"), [
+    (60, 10, "Wait: 00:00:10 / 00:01:00 [ready]; remaining 00:00:50"),
+    (60, 61, "Wait: 00:01:01 / 00:01:00 [blocked: timeout reached]; remaining 00:00:00"),
+    (0, 7200, "Wait: 02:00:00 / unlimited [ready]; no timeout"),
+])
+def test_task_manager_gpu_wait_reports_count_timeout_and_remaining(tmp_path, timeout, waited, timing):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    manager = _make_task_manager(tasks_dir)
+    config = GpuSchedulerConfig.from_wait_rule("2-20-70-2-1")
+    config.max_wait_seconds = timeout
+    decision = GpuDecision(
+        assignment=None, reason="need 2 eligible GPUs, only 1 available", snapshot=[],
+        eligible_gpu_count=1, total_gpu_count=2,
+    )
+    try:
+        task = {"gpu_wait": {"max_wait_seconds": timeout}}
+        config.max_wait_seconds = timeout + 3600
+        lines = manager._gpu_wait_decision_lines(task, 1, config, decision, waited=waited, now=100)
+        assert lines is not None
+        assert "GPU count: 1/2 ready [blocked]; 2 candidates" in lines
+        assert timing in lines
+        assert f"Blocked: {decision.reason}" in lines
+    finally:
+        manager.shutdown()
 
 
 def test_task_manager_gpu_wait_log_interval_ignores_reason_changes_until_stable_window(tmp_path):

@@ -28,11 +28,13 @@ import time
 import traceback
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_opener
 
 
 WORKLOAD = '''import faulthandler
 import hashlib
+import os
 import sys
 from pathlib import Path
 import pyruns
@@ -55,6 +57,7 @@ for step in range(cfg.steps):
         print(f"wheel-step-{run}:{step}", flush=True)
 pyruns.record(attempt=run, steps=cfg.steps, label=cfg.label,
               enabled=cfg.nested.enabled, values=list(cfg.nested["values"]),
+              run_attempt_id=os.environ.get("PYRUNS_RUN_ATTEMPT_ID"),
               package_sha256=digest.hexdigest(), package_version=pyruns.__version__,
               python=sys.executable)
 print(f"wheel-import:{package}", flush=True)
@@ -197,7 +200,54 @@ def _verify_ui(project, report, scripts, env, identities, package):
             assert updated["ok"] and updated["task"]["notes"] == notes, updated
             entry["notes_roundtrip"] = True
 
+            with opener.open(
+                base_url + "/api/tasks/wheel-shell/runs/2/compare?other_task=wheel-shell&other_run=1",
+                timeout=10,
+            ) as response:
+                comparison = json.load(response)
+            assert comparison["schema_version"] == 1, comparison
+            assert comparison["left"]["reference"] == "wheel-shell@1", comparison
+            assert comparison["right"]["reference"] == "wheel-shell@2", comparison
+            for side in ("left", "right"):
+                run = comparison[side]
+                assert run["status"] == "completed" and run["exit_code"] == 0, run
+                assert run["input_available"] and run["duration_seconds"] >= 0, run
+                assert "environment" in run and "source_state" in run and "record" in run, run
+                assert "tracks" not in run, run
+            assert comparison["input_diff"]["available"] and comparison["input_diff"]["equal"], comparison
+            entry["run_comparison"] = comparison
+
             cookie_header = "; ".join(f"{cookie.name}={cookie.value}" for cookie in cookies)
+            log_query = urlencode({"log_file_name": "run2.log", "tail_lines": 0})
+            with opener.open(base_url + "/api/tasks/wheel-shell/logs?" + log_query, timeout=10) as response:
+                log_cursor = json.load(response)
+            assert log_cursor["content"] == "" and log_cursor["offset"] > 0, log_cursor
+            log_selection = {
+                "log_file_name": "run2.log", "log_identity": log_cursor["log_identity"],
+                "expected_workspace": workspace["run_root"],
+            }
+            download_url = base_url + "/api/tasks/wheel-shell/logs/download?" + urlencode(log_selection)
+            with opener.open(download_url, timeout=10) as response:
+                downloaded = response.read()
+                assert len(downloaded) == int(response.headers["Content-Length"]) == log_cursor["offset"]
+                assert response.headers["X-Pyruns-Log-Identity"] == log_cursor["log_identity"]
+                assert response.headers["Accept-Ranges"] == "none"
+                assert "wheel-shell--run2.log" in response.headers["Content-Disposition"]
+            with opener.open(
+                base_url + "/api/tasks/wheel-shell/logs?" + urlencode({"log_file_name": "run2.log", "offset": 0}),
+                timeout=10,
+            ) as response:
+                log_content = json.load(response)
+            assert downloaded.decode("utf-8", errors="replace") == log_content["content"]
+            log_stream_query = urlencode({**log_selection, "offset": log_cursor["offset"]})
+            with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+                with connect(f"ws://127.0.0.1:{port}/api/tasks/wheel-shell/logs/stream?{log_stream_query}",
+                             sock=connection, origin=Origin(base_url), additional_headers={"Cookie": cookie_header},
+                             open_timeout=10, close_timeout=5) as logs:
+                    ready = json.loads(logs.recv(timeout=10))
+                    assert ready == {"type": "ready", "task_name": "wheel-shell"}, ready
+            entry["log_download"] = {"bytes": len(downloaded), "identity": log_cursor["log_identity"]}
+            report["checks"].append("installed complete log download, zero-line cursor, and log stream readiness")
             # A supplied socket bypasses proxy auto-detection across websockets 12-15.
             with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
                 with connect(f"ws://127.0.0.1:{port}/api/tasks/events", sock=connection,
@@ -207,6 +257,7 @@ def _verify_ui(project, report, scripts, env, identities, package):
                     assert ready == {"type": "ready", "revision": 0}, ready
                     entry["event"] = ready
             report["checks"].append("installed UI server, authentication, frontend assets, API read/write, and WebSocket")
+            report["checks"].append("installed historical run comparison without curve expansion")
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -282,7 +333,10 @@ def _verify(project, report, identities):
     for program in ("pyr", "pyruns"):
         assert cli("--version", program=program).strip() == f"{program} {report['version']}"
     cli("help")
+    diagnostics = json.loads(cli("doctor", "--json"))
+    assert diagnostics["schema_version"] == 1 and diagnostics["ok"], diagnostics
     report["checks"].append("installed imports, app, and both entry points")
+    report["checks"].append("workspace-free installation diagnostics")
 
     # Saved stdin scripts must survive spaces, Unicode, and literal shell syntax.
     # -I ignores PYTHONUTF8, so select UTF-8 explicitly for Windows pipe output.
@@ -309,11 +363,19 @@ def _verify(project, report, identities):
     assert shell["status"] == "completed" and shell["exit_codes"] == [0]
     assert Path(shell["payload"]).read_text(encoding="utf-8") == script_text
     assert shell["command_mode"] == "shell" and shell["command_argv"] is None
-    shell_log = re.sub(r"\x1b\[[0-9;]*m", "", cli("-w", "shell", "log", "wheel-shell"))
+    shell_raw_log = cli("-w", "shell", "log", "wheel-shell")
+    shell_log = re.sub(r"\x1b\[[0-9;]*m", "", shell_raw_log)
     assert json.dumps(arguments, ensure_ascii=False) in shell_log.splitlines()
+    shell_tail = cli("-w", "shell", "log", "wheel-shell", "--tail", "1")
+    assert shell_tail and shell_raw_log.endswith(shell_tail)
+    assert len(shell_tail.rstrip("\n").split("\n")) == 1
+    assert cli("-w", "shell", "log", "wheel-shell", "--tail", "0") == ""
     cli("-w", "shell", "run", "wheel-shell")
     shell = show("shell", "wheel-shell")
     assert shell["exit_codes"] == [0, 0]
+    shell_input = show("shell", "wheel-shell@1")["selected_run"]["input"]
+    assert shell_input["payload_text"] == script_text
+    assert json.loads(cli("-w", "shell", "diff", "wheel-shell@1", "wheel-shell@2", "--json"))["equal"]
     report["checks"].append("detached stdin script, saved parameters, logs, and rerun")
 
     report["phase"] = "config snapshot and failed run"
@@ -331,6 +393,9 @@ def _verify(project, report, identities):
     cli("-w", "train", "wait", "recovery", "--timeout", "60", expected=1)
     first = show("train", "recovery@1")
     assert first["status"] == "failed" and first["exit_codes"] == [42]
+    import yaml
+
+    assert yaml.safe_load(first["selected_run"]["input"]["payload_text"]) == config
     assert (Path(first["directory"]) / "tracks.sqlite3").is_file(), "external metric storage was not exercised"
     report["checks"].append("immutable config snapshot, detached failure, and external metric storage")
 
@@ -339,9 +404,15 @@ def _verify(project, report, identities):
     second = show("train", "recovery@2")
     assert second["status"] == "completed" and second["run_index"] == 2
     assert second["exit_codes"] == [42, 0] and second["config"] == config
+    assert json.loads(cli("-w", "train", "diff", "recovery@1", "recovery@2", "--json"))["equal"]
+    metadata = json.loads((Path(second["directory"]) / "task_info.json").read_text(encoding="utf-8"))
+    attempt_ids = metadata["run_attempt_ids"]
+    assert len(attempt_ids) == 2 and len(set(attempt_ids)) == 2, attempt_ids
+    assert all(isinstance(token, str) and re.fullmatch(r"[0-9a-f]{32}", token) for token in attempt_ids)
     expected_records = [
         {"attempt": run, "steps": 600, "label": config["label"], "enabled": True,
          "values": [1, 2, 3], "package_sha256": report["package_sha256"],
+         "run_attempt_id": attempt_ids[run - 1],
          "package_version": report["version"], "python": sys.executable}
         for run in (1, 2)
     ]
@@ -351,6 +422,7 @@ def _verify(project, report, identities):
     ]
     assert first["records"] == expected_records[:1] and first["tracks"] == expected_tracks[:1]
     assert second["records"] == expected_records and second["tracks"] == expected_tracks
+    report["checks"].append("distinct run identities reach SDK processes and match persistent history")
     logs = []
     for run, status, code in ((1, "failed", 42), (2, "completed", 0)):
         historical = show("train", f"recovery@{run}")["selected_run"]

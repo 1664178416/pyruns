@@ -17,7 +17,7 @@ import time
 import traceback
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
 
-from omegaconf import ListConfig
+from omegaconf import DictConfig, ListConfig
 
 from pyruns._config import (
     CONFIG_FILENAME,
@@ -30,6 +30,7 @@ from pyruns._config import (
     ENV_KEY_CONFIG,
     ENV_KEY_PYTHON_EXECUTABLE,
     ENV_KEY_RUN_INDEX,
+    ENV_KEY_RUN_ATTEMPT_ID,
     ERROR_LOG_FILENAME,
     RECORDS_KEY,
     SCRIPT_INFO_FILENAME,
@@ -41,6 +42,7 @@ from pyruns._config import (
 )
 from pyruns.core.gpu_scheduler import CUDA_VISIBLE_DEVICES, PYRUNS_ASSIGNED_GPUS
 from pyruns.core.run_environment import collect_run_environment
+from pyruns.core.run_inputs import materialize_run_payload, save_run_input
 from pyruns.utils import get_logger, get_now_str
 from pyruns.utils.events import log_emitter
 from pyruns.utils.info_io import (
@@ -48,6 +50,8 @@ from pyruns.utils.info_io import (
     load_script_info,
     load_task_metadata,
     prepare_task_log_path,
+    task_info_lock,
+    task_attempt_matches,
     update_task_metadata,
 )
 from pyruns.utils.log_io import normalize_log_newlines
@@ -784,6 +788,7 @@ def _clear_runner_lease(info: Dict[str, Any], runner_id: str) -> None:
         "lease_until",
         "_scheduled_env",
         "_gpu_assignment",
+        "_gpu_wait_override",
     ):
         info.pop(key, None)
 
@@ -815,31 +820,36 @@ def _persist_run_source_state(
     log_path: str,
     run_index: int,
     source_state: str,
+    expected_attempt_id: str | None = None,
 ) -> None:
     if not source_state:
         return
 
     line = f"[PYRUNS] Source {source_state}\n"
-    try:
-        log_path = _get_log_path(task_dir, run_index)
-        payload = _append_run_log_text(log_path, line, clean_boundary=True)
-        log_emitter.emit(
-            task_name,
-            payload.replace("\n", "\r\n"),
-            offset=os.path.getsize(log_path),
-            byte_length=_text_log_write_size(payload),
-            log_file_name=os.path.basename(log_path),
-            task_dir=task_dir,
-        )
-    except Exception as exc:
-        logger.debug("Failed to append source state log for %s: %s", task_name, exc)
+    emitted: list[tuple[str, str, int]] = []
 
     def _apply(info: Dict[str, Any]) -> None:
+        if not task_attempt_matches(info, expected_attempt_id, run_index=run_index):
+            return
         slot = ensure_run_slot(info, run_index)
         _append_run_slot_value(info, "source_states", slot, source_state)
+        # Namespace moves use this same metadata lock. Validate the admission
+        # before opening a path which may now belong to a replacement task.
+        try:
+            current_log_path = _get_log_path(task_dir, run_index)
+            payload = _append_run_log_text(current_log_path, line, clean_boundary=True)
+            emitted.append((current_log_path, payload, os.path.getsize(current_log_path)))
+        except Exception as exc:
+            logger.debug("Failed to append source state log for %s: %s", task_name, exc)
 
     try:
         update_task_metadata(task_dir, _apply)
+        for current_log_path, payload, offset in emitted:
+            log_emitter.emit(
+                task_name, payload.replace("\n", "\r\n"), offset=offset,
+                byte_length=_text_log_write_size(payload),
+                log_file_name=os.path.basename(current_log_path), task_dir=task_dir,
+            )
     except Exception as exc:
         logger.debug("Failed to persist source state for %s: %s", task_name, exc)
 
@@ -1427,10 +1437,10 @@ def _append_error_summary(
     title: str,
     detail_lines: List[str],
     traceback_text: str = "",
+    expected_attempt_id: str | None = None,
 ) -> None:
     """Append one failure/error summary block into ``error.log``."""
 
-    err_log_path = prepare_task_log_path(task_dir, ERROR_LOG_FILENAME)
     traceback_block = (
         f"\nTraceback:\n{traceback_text.rstrip()}\n"
         if traceback_text.strip()
@@ -1443,11 +1453,26 @@ def _append_error_summary(
         + traceback_block
         + f"\n{'=' * 70}\n"
     )
-    with open(err_log_path, "a", encoding="utf-8") as handle:
-        handle.write(block)
+    def _write() -> None:
+        err_log_path = prepare_task_log_path(task_dir, ERROR_LOG_FILENAME)
+        with open(err_log_path, "a", encoding="utf-8") as handle:
+            handle.write(block)
+
+    if expected_attempt_id is None:
+        _write()
+        return
+    try:
+        with task_info_lock(task_dir, create_dir=False):
+            info = load_task_metadata(task_dir, raise_error=True)
+            if task_attempt_matches(info, expected_attempt_id, run_index=run_index):
+                _write()
+    except FileNotFoundError:
+        return
 
 
-def _consume_pending_stop_summary(task_dir: str, run_index: int) -> Dict[str, Any] | None:
+def _consume_pending_stop_summary(
+    task_dir: str, run_index: int, *, expected_attempt_id: str | None = None,
+) -> Dict[str, Any] | None:
     """Pop one pending stop summary for the finished run, if present."""
 
     current = load_task_metadata(task_dir)
@@ -1464,6 +1489,8 @@ def _consume_pending_stop_summary(task_dir: str, run_index: int) -> Dict[str, An
     captured: Dict[str, Any] = {}
 
     def _apply(info: Dict[str, Any]) -> None:
+        if not task_attempt_matches(info, expected_attempt_id):
+            return
         raw = info.get("_pending_stop_summary")
         if not isinstance(raw, dict):
             return
@@ -1518,12 +1545,13 @@ def run_task_worker(
     task_dir: str,
     name: str,
     created_at: str,
-    config: Dict[str, Any],
+    config: Dict[str, Any] | DictConfig,
     env_vars: Optional[Dict[str, str]] = None,
     run_index: int = 1,
     runner_id: str = "",
     runner_host: str = "",
     lease_seconds: int = DEFAULT_RUNNER_LEASE_SECONDS,
+    attempt_id: str | None = None,
 ) -> Dict[str, Any]:
     """Worker function executed in a separate thread/process."""
 
@@ -1586,6 +1614,8 @@ def run_task_worker(
     output_lock = threading.Lock()
 
     def _owns_current_run(info: Dict[str, Any]) -> bool:
+        if not task_attempt_matches(info, attempt_id):
+            return False
         if not runner_id:
             return True
         try:
@@ -1595,6 +1625,24 @@ def run_task_worker(
         return (
             str(info.get("runner_id", "") or "") == runner_id
             and current_run_index == int(run_index)
+        )
+
+    def _append_owned_run_log(text: str, *, clean_boundary: bool = False) -> None:
+        """Guard infrequent lifecycle output after the process releases ownership."""
+        try:
+            with task_info_lock(task_dir, create_dir=False):
+                info = load_task_metadata(task_dir, raise_error=True)
+                if not task_attempt_matches(info, attempt_id, run_index=run_index):
+                    return
+                current_log_path = _get_log_path(task_dir, run_index)
+                payload = _append_run_log_text(current_log_path, text, clean_boundary=clean_boundary)
+                offset = os.path.getsize(current_log_path)
+        except FileNotFoundError:
+            return
+        log_emitter.emit(
+            name, payload.replace("\n", "\r\n"), offset=offset,
+            byte_length=_text_log_write_size(payload),
+            log_file_name=os.path.basename(current_log_path), task_dir=task_dir,
         )
 
     def _refresh_runner_lease() -> None:
@@ -1638,6 +1686,7 @@ def run_task_worker(
                 log_path=log_path,
                 run_index=run_index,
                 source_state=collected,
+                expected_attempt_id=attempt_id,
             )
         finally:
             source_state_ready.set()
@@ -1806,12 +1855,13 @@ def run_task_worker(
             run_index=run_index,
             title=f"Run #{run_index} {summary.get('event', 'stopped')} at {end_str}",
             detail_lines=detail_lines,
+            expected_attempt_id=attempt_id,
         )
         logger.info("Task %s stopped before normal execution  status=%s", name, status)
         return {"status": status, "progress": progress}
 
     try:
-        stop_summary = _consume_pending_stop_summary(task_dir, run_index)
+        stop_summary = _consume_pending_stop_summary(task_dir, run_index, expected_attempt_id=attempt_id)
         if stop_summary:
             return _finish_stopped_run(
                 stop_summary,
@@ -1819,20 +1869,36 @@ def run_task_worker(
                 process_terminated=False,
             )
 
+        payload_text, frozen_payload = materialize_run_payload(
+            task_dir, task_kind, config_file, config,
+            argv_task=task_kind == TASK_KIND_SHELL and isinstance(meta_cmd, list) and bool(meta_cmd),
+        )
+        if task_kind == TASK_KIND_CONFIG:
+            from pyruns.utils.config_utils import load_config_text
+
+            captured_config = load_config_text(payload_text)
+            if not isinstance(captured_config, DictConfig):
+                raise RuntimeError("Task configuration must be a mapping")
+            config = captured_config
+        execution_config_file = config_file
+        if frozen_payload:
+            cleanup_paths.append(frozen_payload)
+            execution_config_file = os.path.relpath(frozen_payload, task_dir)
         python_runtime = _resolve_python_runtime(task_dir, env_vars)
-        command, workdir, cleanup_paths = _build_command(
+        command, workdir, command_cleanup_paths = _build_command(
             meta_cmd,
             script_path,
             meta_workdir,
             config,
             task_kind=task_kind,
             task_dir=task_dir,
-            config_file=config_file or (
+            config_file=execution_config_file or (
                 SHELL_CONFIG_FILENAME if task_kind == TASK_KIND_SHELL else CONFIG_FILENAME
             ),
             python_runtime=python_runtime,
             shell_executable=shell_executable,
         )
+        cleanup_paths.extend(command_cleanup_paths)
         logger.debug("Built command: %s  workdir=%s  python_runtime=%s", command, workdir, python_runtime)
 
         if not command:
@@ -1843,12 +1909,17 @@ def run_task_worker(
             env_vars,
             task_dir=task_dir,
             task_kind=task_kind,
-            config_file=config_file or CONFIG_FILENAME,
+            config_file=execution_config_file or CONFIG_FILENAME,
             python_runtime=python_runtime,
             wsl_env_keys=wsl_env_keys,
         )
         env[ENV_KEY_RUN_INDEX] = str(run_index)
         wsl_env_keys.add(ENV_KEY_RUN_INDEX)
+        if attempt_id:
+            env[ENV_KEY_RUN_ATTEMPT_ID] = attempt_id
+            wsl_env_keys.add(ENV_KEY_RUN_ATTEMPT_ID)
+        else:
+            env.pop(ENV_KEY_RUN_ATTEMPT_ID, None)
         _augment_wsl_env(command, env, wsl_env_keys)
 
         if workdir and not os.path.isdir(workdir):
@@ -1865,7 +1936,7 @@ def run_task_worker(
         if isinstance(command, str):
             command = shlex.split(command, posix=not _is_windows())
 
-        stop_summary = _consume_pending_stop_summary(task_dir, run_index)
+        stop_summary = _consume_pending_stop_summary(task_dir, run_index, expected_attempt_id=attempt_id)
         if stop_summary:
             return _finish_stopped_run(
                 stop_summary,
@@ -1885,6 +1956,23 @@ def run_task_worker(
                 "error": "task ownership changed before process launch",
             }
 
+        save_run_input(
+            task_dir, run_index,
+            {
+                "captured_at": get_now_str(),
+                "task_kind": task_kind,
+                "payload_file": config_file,
+                "payload_text": payload_text,
+                "script": script_path if task_kind == TASK_KIND_CONFIG else None,
+                "command": meta_cmd if meta_cmd else None,
+                "workdir": os.path.abspath(workdir or os.getcwd()),
+                "shell_executable": shell_executable if task_kind == TASK_KIND_SHELL else None,
+                "environment": normalize_environment(env_vars or {}),
+                "launch_argv": command,
+            },
+            runner_id=runner_id,
+            expected_attempt_id=attempt_id,
+        )
         try:
             proc = _spawn_captured_process(
                 command,
@@ -1899,7 +1987,7 @@ def run_task_worker(
                 raise
             command, _shell_workdir, shell_cleanup_paths = _build_shell_command(
                 task_dir,
-                config_file or SHELL_CONFIG_FILENAME,
+                execution_config_file or SHELL_CONFIG_FILENAME,
                 shell_executable=shell_executable,
             )
             command = _apply_python_runtime_to_shell_command(command, python_runtime)
@@ -1927,7 +2015,7 @@ def run_task_worker(
             else shlex.join(str(part) for part in command)
         )
 
-        stop_summary = _consume_pending_stop_summary(task_dir, run_index)
+        stop_summary = _consume_pending_stop_summary(task_dir, run_index, expected_attempt_id=attempt_id)
         if stop_summary:
             process_terminated, _survived = _terminate_and_wait_for_started_process("stop request")
             return _finish_stopped_run(
@@ -2142,7 +2230,7 @@ def run_task_worker(
                 for error in output_capture_errors
             )
             raise RuntimeError(f"Task output capture failed: {detail}") from output_capture_errors[0]
-        stop_summary = _consume_pending_stop_summary(task_dir, run_index)
+        stop_summary = _consume_pending_stop_summary(task_dir, run_index, expected_attempt_id=attempt_id)
         if stop_summary:
             status = "cancelled"
             progress = 0.0
@@ -2155,16 +2243,7 @@ def run_task_worker(
             + f"[PYRUNS] Exit code: {exit_code}\n"
             + f"[PYRUNS] Duration: {duration_seconds:.3f}s\n"
         )
-        log_path = _get_log_path(task_dir, run_index)
-        finish_payload = _append_run_log_text(log_path, finish_log, clean_boundary=True)
-        log_emitter.emit(
-            name,
-            finish_payload.replace("\n", "\r\n"),
-            offset=os.path.getsize(log_path),
-            byte_length=_text_log_write_size(finish_payload),
-            log_file_name=os.path.basename(log_path),
-            task_dir=task_dir,
-        )
+        _append_owned_run_log(finish_log, clean_boundary=True)
 
         def _mark_finished(info: Dict[str, Any]) -> None:
             nonlocal progress, status, stop_summary
@@ -2206,17 +2285,7 @@ def run_task_worker(
 
         if status == "cancelled":
             final_status_payload = "[PYRUNS] Final status: cancelled\n"
-            log_path = _get_log_path(task_dir, run_index)
-            with open(log_path, "a", encoding="utf-8") as handle:
-                handle.write(final_status_payload)
-            log_emitter.emit(
-                name,
-                final_status_payload.replace("\n", "\r\n"),
-                offset=os.path.getsize(log_path),
-                byte_length=_text_log_write_size(final_status_payload),
-                log_file_name=os.path.basename(log_path),
-                task_dir=task_dir,
-            )
+            _append_owned_run_log(final_status_payload)
 
         if stop_summary:
             detail_lines = [f"reason={stop_summary.get('reason', 'stopped')}"]
@@ -2234,6 +2303,7 @@ def run_task_worker(
                 run_index=run_index,
                 title=f"Run #{run_index} {stop_summary.get('event', 'stopped')} at {end_str}",
                 detail_lines=detail_lines,
+                expected_attempt_id=attempt_id,
             )
         elif status == "failed":
             log_tail = _read_log_tail_text(log_path)
@@ -2250,6 +2320,7 @@ def run_task_worker(
                 run_index=run_index,
                 title=f"Run #{run_index} failed at {end_str}",
                 detail_lines=detail_lines,
+                expected_attempt_id=attempt_id,
             )
 
         logger.info("Task %s finished  status=%s", name, status)
@@ -2310,6 +2381,7 @@ def run_task_worker(
             title=f"Internal error during run #{run_index} at {end_str}",
             detail_lines=detail_lines,
             traceback_text=traceback_text,
+            expected_attempt_id=attempt_id,
         )
 
         block = (
@@ -2318,16 +2390,7 @@ def run_task_worker(
             f"[PYRUNS] {'-' * 47}\n"
         )
         try:
-            log_path = _get_log_path(task_dir, run_index)
-            run_payload = _append_run_log_text(log_path, block, clean_boundary=True)
-            log_emitter.emit(
-                name,
-                run_payload.replace("\n", "\r\n"),
-                offset=os.path.getsize(log_path),
-                byte_length=_text_log_write_size(run_payload),
-                log_file_name=os.path.basename(log_path),
-                task_dir=task_dir,
-            )
+            _append_owned_run_log(block, clean_boundary=True)
         except OSError as log_exc:
             logger.error("Failed to write run log for %s: %s", name, log_exc)
         logger.error("%s", block)

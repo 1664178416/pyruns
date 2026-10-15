@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import shutil
@@ -15,7 +16,7 @@ from concurrent.futures import CancelledError
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Callable, Dict, List
+from typing import Any, BinaryIO, Callable, Dict, List
 
 import yaml
 from omegaconf import DictConfig
@@ -69,6 +70,8 @@ from pyruns.utils.info_io import (
     load_script_info,
     load_task_metadata,
     resolve_log_path,
+    run_history_status,
+    task_attempt_matches,
     validate_task_log_path,
     validate_task_name,
     validate_tasks_root,
@@ -96,8 +99,8 @@ from pyruns.utils.task_files import (
 _DEFAULT_GPU_SCHEDULER_CONFIG = GpuSchedulerConfig.from_settings({})
 MAX_MONITOR_LOG_TAIL_BYTES = _cfg.MAX_MONITOR_CHUNK_SIZE
 # Larger batches reduce ripgrep startup costs for log-only requests.
-# Streaming and mixed-field searches use smaller batches for early results
-# and consistent metadata/log match limits across response transports.
+# Streaming searches use smaller batches for early results. Match limits are
+# consumed in task/field/file order independently of these execution batches.
 _LOG_SEARCH_TASK_BATCH_SIZE = 128
 _STREAM_LOG_SEARCH_TASK_BATCH_SIZE = 32
 TaskManagerFactory = Callable[[str], TaskManager]
@@ -119,8 +122,55 @@ _GPU_SCHEDULER_PAYLOAD_KEYS = {
 }
 
 
+def _comparison_metric_rows(left: Any, right: Any) -> List[Dict[str, Any]]:
+    """Format metrics before JSON transport can round large integers in browsers."""
+    def fields(value: Any) -> Dict[str, Any]:
+        if value is None:
+            return {}
+        return value if isinstance(value, dict) else {"Record": value}
+
+    missing = object()
+
+    def display(value: Any) -> str:
+        if value is missing:
+            return "Not recorded"
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
+
+    before, after = fields(left), fields(right)
+    rows = []
+    for key in sorted(before.keys() | after.keys()):
+        a, b = before.get(key, missing), after.get(key, missing)
+        left_text, right_text = display(a), display(b)
+        delta = None
+        if type(a) is int and type(b) is int:
+            delta = str(b - a)
+        elif type(a) in (int, float) and type(b) in (int, float):
+            # Mixing a float with an unsafe integer loses precision or overflows.
+            if not any(type(value) is int and abs(value) > 2**53 - 1 for value in (a, b)):
+                difference = b - a
+                if math.isfinite(difference):
+                    delta = format(difference, ".8g")
+        rows.append({
+            "key": key, "left": left_text, "right": right_text,
+            "changed": left_text != right_text, "delta": delta,
+        })
+    return rows
+
+
 class WorkspaceChangedError(RuntimeError):
     """Raised when a request or stream outlives its source workspace."""
+
+
+class LogFileChangedError(ValueError):
+    """The selected log was replaced before its download could be opened."""
+
+
+@dataclass
+class OpenedTaskLog:
+    handle: BinaryIO
+    filename: str
+    size: int
+    identity: str
 
 
 expected_workspace: ContextVar[str | None] = ContextVar("expected_workspace", default=None)
@@ -1096,12 +1146,12 @@ class PyrunsRuntime:
                 self._metrics_sampler = self._metrics_factory()
             return self._metrics_sampler
 
-    def invalidate_cache(self) -> None:
+    def invalidate_cache(self, task_names: List[str] | None = None) -> None:
         """Invalidate the snapshot shared by UI requests and the scheduler."""
         with self._lock:
             manager = self._task_manager
         if manager is not None:
-            manager.invalidate_ui_snapshot()
+            manager.invalidate_ui_snapshot(task_names)
 
     @_with_stable_workspace
     def ensure_tasks_loaded(self, *, full_refresh: bool = False, force_refresh: bool = False) -> None:
@@ -1287,6 +1337,8 @@ class PyrunsRuntime:
                     return
                 if cancelled.is_set():
                     raise CancelledError()
+                if not total + batch_total and not errors and not batch_errors:
+                    return
                 now = time.monotonic()
                 if last_progress is None or (not last_progress_total and total + batch_total) or now - last_progress >= 0.1:
                     on_progress(page(False, batch_items, batch_total, batch_errors))
@@ -1297,21 +1349,30 @@ class PyrunsRuntime:
             cursor = 0
             batch_size = (
                 _STREAM_LOG_SEARCH_TASK_BATCH_SIZE
-                if on_progress is not None or (search_logs and search_field == "all")
+                if on_progress is not None
                 else _LOG_SEARCH_TASK_BATCH_SIZE
             )
             while cursor < len(ordered) and not budget.limit_hit:
                 batch = ordered[cursor:cursor + (batch_size if cursor else 1)]
                 contexts = {}
-                for task in batch:
+                tasks_by_dir = {task["dir"]: task for task in batch}
+
+                def start_task_context(task_dir, tasks_by_dir=tasks_by_dir, contexts=contexts):
+                    task = tasks_by_dir[task_dir]
+                    if task["name"] in contexts:
+                        return
                     if cancelled.is_set():
                         raise CancelledError()
                     context = build_task_search_result(task, query, search_field=search_field, matcher=matcher,
                                                        max_count=budget.remaining)
                     contexts[task["name"]] = context
                     budget.take(context["match_count"])
-                    if budget.limit_hit:
-                        break
+
+                if not search_logs:
+                    for task in batch:
+                        start_task_context(task["dir"])
+                        if budget.limit_hit:
+                            break
 
                 def collect_batch(log_results, batch=batch, contexts=contexts, base_total=total):
                     batch_items, batch_errors = [], []
@@ -1319,7 +1380,9 @@ class PyrunsRuntime:
                     for task in batch:
                         if cancelled.is_set():
                             raise CancelledError()
-                        context = contexts.get(task["name"], {"matches": [], "match_count": 0})
+                        context = contexts.get(task["name"])
+                        if context is None:
+                            continue
                         logs = log_results.get(task["dir"], empty_logs)
                         batch_errors.extend(message for message in logs["errors"] if len(batch_errors) < 8)
                         if needles and not (context["match_count"] or logs["match_count"]):
@@ -1343,11 +1406,14 @@ class PyrunsRuntime:
                         batch_total += 1
                     return batch_items, batch_total, batch_errors
 
-                if search_logs and on_progress is not None and any(c["match_count"] for c in contexts.values()):
-                    publish_progress(*collect_batch({}))
+                if search_logs:
+                    start_task_context(batch[0]["dir"])
+                    if on_progress is not None:
+                        publish_progress(*collect_batch({}))
                 log_results = self._log_search.search_many(
                     [task["dir"] for task in batch], query, cancelled, matcher, budget=budget,
                     on_progress=(lambda logs: publish_progress(*collect_batch(logs))) if on_progress is not None else None,
+                    on_task_start=start_task_context,
                 ) if search_logs and not budget.limit_hit else {}
                 batch_items, batch_total, batch_errors = collect_batch(log_results)
                 items.extend(batch_items)
@@ -1408,6 +1474,79 @@ class PyrunsRuntime:
             return None
         return task
 
+    @_with_stable_workspace
+    def get_run_input(self, task_name: str, run_index: int) -> Dict[str, Any]:
+        """Load just one historical input, without loading curve data."""
+        from pyruns.core.run_inputs import load_run_input
+        from pyruns.utils.info_io import load_task_metadata
+
+        task = self.require_task(task_name, refresh=True, summary=True, include_tracks=False)
+        info = load_task_metadata(task["dir"], raise_error=True)
+        if run_index < 1 or run_index > TaskManager._effective_run_slot_count(info):
+            raise KeyError(f"{task_name}@{run_index}")
+        return {
+            "schema_version": 1, "task_name": task_name, "run_index": run_index,
+            "input": load_run_input(task["dir"], run_index),
+        }
+
+    @_with_stable_workspace
+    def compare_run_inputs(self, task_name: str, run_index: int, other_run: int) -> Dict[str, Any]:
+        from pyruns.core.run_inputs import compare_run_inputs
+
+        left = self.get_run_input(task_name, other_run)["input"]
+        right = self.get_run_input(task_name, run_index)["input"]
+        return compare_run_inputs(
+            left, right, left_label=f"{task_name}@{other_run}", right_label=f"{task_name}@{run_index}",
+        )
+
+    @_with_stable_workspace
+    def compare_runs(
+        self, task_name: str, run_index: int, other_run: int, *, other_task: str | None = None,
+    ) -> Dict[str, Any]:
+        """Read two run summaries and their saved inputs without payloads or curves."""
+        from pyruns.core.run_inputs import compare_run_inputs, load_run_input
+
+        metadata: Dict[str, Dict[str, Any]] = {}
+
+        def read(name: str, index: int) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
+            error = validate_task_name(name)
+            if error:
+                raise ValueError(error)
+            task_dir = os.path.join(self.tasks_dir, name)
+            if name not in metadata:
+                try:
+                    metadata[name] = load_task_metadata(task_dir, raise_error=True)
+                except FileNotFoundError as exc:
+                    raise KeyError(name) from exc
+            info = metadata[name]
+            if index < 1 or index > TaskManager._effective_run_slot_count(info):
+                raise KeyError(f"{name}@{index}")
+
+            def at(key: str) -> Any:
+                values = info.get(key, []) or []
+                return values[index - 1] if index <= len(values) else None
+
+            status = run_history_status(info, index)
+            saved = load_run_input(task_dir, index)
+            return {
+                "task_name": name, "run_index": index, "reference": f"{name}@{index}",
+                "status": status, "start_time": at("start_times") or None,
+                "finish_time": at("finish_times") or None, "duration_seconds": at("durations"),
+                "exit_code": at("exit_codes"), "source_state": at("source_states") or None,
+                "environment": at("run_environments"), "record": at("records"),
+                "input_available": saved is not None,
+            }, saved
+
+        left, left_input = read(task_name if other_task is None else other_task, other_run)
+        right, right_input = read(task_name, run_index)
+        return {
+            "schema_version": 1, "left": left, "right": right,
+            "metric_rows": _comparison_metric_rows(left["record"], right["record"]),
+            "input_diff": compare_run_inputs(
+                left_input, right_input, left_label=left["reference"], right_label=right["reference"],
+            ),
+        }
+
     def require_task(
         self, task_name: str, *, refresh: bool = True, summary: bool = False, include_tracks: bool = True,
     ) -> Dict[str, Any]:
@@ -1424,7 +1563,7 @@ class PyrunsRuntime:
         task = self.require_task(task_name, summary=True)
         if task.get("_load_error"):
             raise ValueError(str(task["_load_error"]))
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         started = self.task_manager.start_task_now(task_name)
         if not started:
             raise ValueError(f"Task '{task_name}' could not be started")
@@ -1447,11 +1586,13 @@ class PyrunsRuntime:
                 return self.get_task(task_name, include_tracks=include_tracks) or task
             raise ValueError(f"Task '{task_name}' cannot be cancelled")
         requested_run_index = active_task_run_index(info)
-        self.invalidate_cache()
+        requested_attempt_id = str(info.get("_attempt_id", "") or "")
+        self.invalidate_cache([task_name])
         ok = manager.request_task_cancel(
             task_name,
             expected_runner_id=str(info.get("runner_id", "") or ""),
             expected_run_index=requested_run_index,
+            expected_attempt_id=requested_attempt_id,
         )
         if not ok:
             latest = self.get_task(task_name, include_tracks=include_tracks)
@@ -1460,6 +1601,8 @@ class PyrunsRuntime:
             # file to distinguish a durable request from an identity race.
             latest_info = load_task_metadata(task_dir) or {}
             latest_status = str(latest_info.get("status", "") or "").lower()
+            if not task_attempt_matches(latest_info, requested_attempt_id):
+                raise ValueError(f"Task '{task_name}' cannot be cancelled")
             if (
                 latest_status in {"completed", "failed", "cancelled"}
                 and active_task_run_index(latest_info) == requested_run_index
@@ -1500,7 +1643,7 @@ class PyrunsRuntime:
         if not normalized_names:
             raise ValueError("No valid tasks were provided for batch run.")
 
-        self.invalidate_cache()
+        self.invalidate_cache(normalized_names)
         claimed_names = self.task_manager.start_batch_tasks(
             normalized_names,
             max_workers=max_workers,
@@ -1577,7 +1720,7 @@ class PyrunsRuntime:
     ) -> Dict[str, Any]:
         """Toggle or set one task's pinned state."""
         self.require_task(task_name, refresh=False, summary=True)
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         ok, result = self.task_manager.set_task_pinned(task_name, pinned)
         if not ok:
             if str(result) == "Task not found":
@@ -1630,12 +1773,15 @@ class PyrunsRuntime:
         expected_notes: str,
         *,
         include_tracks: bool = True,
+        expected_task_identity: str | None = None,
     ) -> Dict[str, Any]:
         """Persist notes for one task."""
         self.require_task(task_name, refresh=False, summary=True)
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         try:
-            ok, result = self.task_manager.update_task_notes(task_name, notes, expected_notes)
+            ok, result = self.task_manager.update_task_notes(
+                task_name, notes, expected_notes, expected_task_identity=expected_task_identity,
+            )
         except TaskStateConflict as exc:
             raise TaskNotesConflictError(str(exc)) from exc
         if not ok:
@@ -1652,12 +1798,15 @@ class PyrunsRuntime:
         expected_env: Dict[str, Any],
         *,
         include_tracks: bool = True,
+        expected_task_identity: str | None = None,
     ) -> Dict[str, Any]:
         """Persist env vars for one task."""
         self.require_task(task_name, refresh=False, summary=True)
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         try:
-            ok, result = self.task_manager.update_task_env(task_name, env, expected_env)
+            ok, result = self.task_manager.update_task_env(
+                task_name, env, expected_env, expected_task_identity=expected_task_identity,
+            )
         except TaskStateConflict as exc:
             raise TaskEnvConflictError(str(exc)) from exc
         if not ok:
@@ -1694,6 +1843,7 @@ class PyrunsRuntime:
         include_log_options: bool = True,
         expected_workspace_root: str | None = None,
         expected_task_dir: str | None = None,
+        strict: bool = False,
     ) -> Dict[str, Any]:
         """Load a historical log chunk for the monitor page."""
         if expected_workspace_root is not None:
@@ -1755,6 +1905,18 @@ class PyrunsRuntime:
             selected_path = resolve_log_path(task_dir)
             selected_name = os.path.basename(selected_path) if selected_path else ""
 
+        if strict and not selected_path and selected_name:
+            # isfile/exists deliberately suppress permission and remote I/O
+            # errors. Streams must distinguish those errors from a log which
+            # has not been created yet, so the health protocol can report them.
+            candidate = validate_task_log_path(task_dir, selected_name)
+            try:
+                os.stat(candidate)
+            except FileNotFoundError:
+                pass
+            else:
+                selected_path = candidate
+
         if not selected_path:
             return {
                 "task_name": task_name,
@@ -1770,7 +1932,7 @@ class PyrunsRuntime:
 
         tail_truncated = False
         tail_limit_bytes = MAX_MONITOR_LOG_TAIL_BYTES
-        selected_identity = log_file_identity(selected_path)
+        selected_identity = log_file_identity(selected_path, **({"strict": True} if strict else {}))
         reset = False
         if offset is None:
             if tail_lines is not None:
@@ -1784,6 +1946,7 @@ class PyrunsRuntime:
                     selected_path,
                     max_lines=max(0, tail_lines),
                     max_bytes=tail_limit_bytes,
+                    **({"strict": True} if strict else {}),
                 )
                 if tail_lines > 0:
                     try:
@@ -1799,7 +1962,9 @@ class PyrunsRuntime:
                         _cfg.DEFAULT_MONITOR_CHUNK_SIZE,
                     )
                 tail_limit_bytes = min(MAX_MONITOR_LOG_TAIL_BYTES, max(1, int(byte_limit)))
-                content, new_offset = read_last_bytes(selected_path, n_bytes=tail_limit_bytes)
+                content, new_offset = read_last_bytes(
+                    selected_path, n_bytes=tail_limit_bytes, **({"strict": True} if strict else {}),
+                )
                 try:
                     tail_truncated = os.path.getsize(selected_path) > tail_limit_bytes
                 except OSError:
@@ -1816,6 +1981,8 @@ class PyrunsRuntime:
             try:
                 selected_size = os.path.getsize(selected_path)
             except OSError:
+                if strict:
+                    raise
                 selected_size = 0
             identity_changed = bool(
                 log_identity
@@ -1824,7 +1991,10 @@ class PyrunsRuntime:
             )
             reset = identity_changed or requested_offset > selected_size
             read_offset = 0 if reset else requested_offset
-            content, new_offset = safe_read_log(selected_path, read_offset, max_bytes=max(1, byte_limit))
+            content, new_offset = safe_read_log(
+                selected_path, read_offset, max_bytes=max(1, byte_limit),
+                **({"strict": True} if strict else {}),
+            )
 
         return {
             "task_name": task_name,
@@ -1837,6 +2007,44 @@ class PyrunsRuntime:
             "tail_truncated": tail_truncated,
             "tail_limit_bytes": tail_limit_bytes,
         }
+
+    @_with_stable_workspace
+    def open_task_log_download(
+        self, task_name: str, log_file_name: str, *, log_identity: str | None = None,
+        expected_workspace_root: str | None = None,
+    ) -> OpenedTaskLog:
+        """Open and pin one validated log; callers own and must close the handle."""
+        self._check_expected_workspace(expected_workspace_root)
+        task = self.get_task(task_name, refresh=False, summary=True)
+        if task is None:
+            raise KeyError(task_name)
+        if log_file_name not in {_cfg.QUEUE_LOG_FILENAME, _cfg.ERROR_LOG_FILENAME} and not (
+            log_file_name.startswith("run") and log_file_name.endswith(".log")
+        ):
+            raise ValueError("Select a task log file")
+        task_dir = str(task["dir"])
+        path = validate_task_log_path(task_dir, log_file_name)
+        before = os.stat(path, follow_symlinks=False)
+
+        def opener(filename: str, flags: int) -> int:
+            return regular_file_opener(filename, flags | getattr(os, "O_NOFOLLOW", 0))
+
+        handle = open(path, "rb", opener=opener)
+        try:
+            opened = os.fstat(handle.fileno())
+            # Revalidate directory boundaries and the path after opening. Stream
+            # this handle, never reopen the path after the identity check.
+            current_path = validate_task_log_path(task_dir, log_file_name)
+            current = os.stat(current_path, follow_symlinks=False)
+            if not os.path.samestat(before, opened) or not os.path.samestat(current, opened):
+                raise LogFileChangedError("This log changed. Refresh it before downloading.")
+            identity = f"{opened.st_dev:x}:{opened.st_ino:x}" if opened.st_ino > 0 else ""
+            if log_identity and identity != log_identity:
+                raise LogFileChangedError("This log changed. Refresh it before downloading.")
+            return OpenedTaskLog(handle, f"{task_name}--{log_file_name}", opened.st_size, identity)
+        except BaseException:
+            handle.close()
+            raise
 
     def get_metrics(
         self,

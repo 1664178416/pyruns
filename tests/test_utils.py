@@ -1299,6 +1299,26 @@ def test_task_sort_key():
     assert task_sort_key(task7) == (0, 20231007, 2)
 
 
+@pytest.mark.parametrize("unfinished", [None, ""])
+@pytest.mark.parametrize("sort_mode", ["priority", "manual", "activity_desc", "activity_asc"])
+def test_running_task_sort_uses_current_start_when_finish_is_empty(unfinished, sort_mode):
+    tasks = [
+        {"name": "a-older", "status": "running", "start_times": ["2023-10-05"],
+         "finish_times": [unfinished]},
+        {"name": "z-newer", "status": "running", "created_at": "2023-10-01",
+         "start_times": ["2023-10-01", "2023-10-06"], "finish_times": ["2023-10-01", unfinished]},
+    ]
+    expected = ["a-older", "z-newer"] if sort_mode == "activity_asc" else ["z-newer", "a-older"]
+    assert [task["name"] for task in sort_tasks_for_manager(tasks, sort_mode)] == expected
+
+
+@pytest.mark.parametrize("unfinished", [None, ""])
+def test_task_sort_uses_creation_time_when_current_run_has_no_times(unfinished):
+    task = {"status": "pending", "created_at": "2023-10-05",
+            "start_times": [unfinished], "finish_times": [unfinished]}
+    assert task_sort_key(task) == (0, 20231005, 1)
+
+
 def test_sort_tasks_for_manager_keeps_pinned_active_and_fresh_tasks_first():
     tasks = [
         {

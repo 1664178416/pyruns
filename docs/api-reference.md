@@ -114,6 +114,11 @@ NaN 和 Infinity 不受支持。完整详情仍需读取全部历史，耗时和
 不会在迁移中的目录打开指标事务。移动任务前应先等待全部指标写入进程结束；
 已继承旧任务路径的后台进程不会自动切换到新路径。
 
+新版调度器会自动向子进程传递本次运行的独立标识；SDK 在写入锁内核对该运行的归属。
+旧目录被同名新任务复用时，旧进程的记录与指标写入会警告并放弃，避免污染新任务。
+同一任务已完成运行的后台写入仍归入原运行槽位；无需手动设置标识。
+升级前已启动且未携带标识的进程沿用旧行为，应先结束这些进程再移动任务或复用名称。
+
 ### `pyruns.track_many(points)`
 
 按输入顺序追加一批指标点，成功时整批持久化后返回。每项是指标名到数值的字典，
@@ -159,6 +164,9 @@ pyruns.track_many([
 ```
 
 如果不在 Pyruns 任务环境里，则使用当前工作目录下的 `artifacts/run1`。
+
+新版任务调用此接口时会核对运行归属；目录已被其他任务复用则抛出 `RuntimeError`。
+返回路径后，调用方仍应在任务移动前结束文件写入，已取得的路径不会自动跟随任务改名。
 
 示例：
 
@@ -252,11 +260,38 @@ shell 工作区：
 
 分页获取任务列表。
 
-首次加载后，`refresh=true` 复用工作区共享的刷新结果，完整校验最短间隔为 4 秒；`refresh=false` 使用当前任务快照。实时订阅会约每秒发现目录和任务状态变化，配置、脚本内容约每 4 秒校验一次。并发刷新合并，间隔从扫描完成后计算；手动刷新可传 `force_refresh=true` 立即完整校验。
+首次加载后，`refresh=true` 复用工作区共享的刷新结果，完整校验最短间隔为 4 秒；`refresh=false` 使用当前任务快照。实时订阅约每秒校对活动任务，每 4 秒发现任务目录，每 30 秒校对历史任务内容；已知变更按任务失效并及时校对。并发刷新合并，间隔从扫描完成后计算；手动刷新可传 `force_refresh=true` 立即完整校验。
 
 #### `GET /api/tasks/{task_name}`
 
 获取单个任务详情。`summary=true` 仅获取任务摘要，不加载历史曲线；适用于只需状态的轮询。默认返回完整详情，`refresh=false` 可复用当前任务快照。
+
+任务摘要和详情中的 `task_identity` 是不透明的任务身份；编辑客户端应在载入草稿时保留它。
+
+#### `GET /api/tasks/{task_name}/runs/{run_index}/input`
+
+按需读取一次运行在启动前保存的输入。返回 `schema_version: 1`、任务名、运行编号和 `input`；旧运行没有快照时 `input` 为 `null`，不存在的任务或运行返回 404。普通任务列表不附带历史正文。
+
+#### `GET /api/tasks/{task_name}/runs/{run_index}/diff?other_run=RUN`
+
+比较同一任务的两次历史输入，返回 `schema_version: 1`、`available`、`equal`、`changed_fields` 和 unified diff。缺少快照时 `available=false`、`equal=null`；不读取曲线数据。
+
+`equal` 和 `changed_fields` 始终比较完整输入，保留 JSON 类型差异。diff 使用按行 Myers 算法和计算预算，复杂文本可能显示较大的改动块。
+展示最多 256 KiB 或 4000 行；`truncated=true` 表示仅返回部分 diff，不能作为完整补丁使用。
+完整输入可通过上面的 `/input` 接口或 `pyr show TASK@RUN --json` 获取。
+
+#### `GET /api/tasks/{task_name}/runs/{run_index}/compare?other_run=RUN&other_task=TASK`
+
+比较同一工作区中任意两次运行。`other_task` 省略时使用当前任务；`other_run` 指定基准运行。
+返回 `schema_version: 1`、基准 `left`、当前 `right` 和 `input_diff`。两侧包含运行引用、状态、
+起止时间、耗时、退出码、汇总记录 `record`、Git 来源 `source_state`、运行环境 `environment`
+和输入是否存在的 `input_available`。
+
+`metric_rows` 提供汇总指标的两侧显示文本、`changed` 和字符串差值 `delta`（不可计算时为 `null`），
+避免浏览器舍入大整数后误判相同；原始 `record` 字段保留。
+
+缺少输入快照不影响其余信息比较；不存在的任务或运行返回 404。只读取运行元数据与所选输入，
+不读取训练曲线；两侧分别取得快照，正在运行的指标可能继续变化。
 
 #### `POST /api/tasks/{task_name}/run`
 
@@ -283,6 +318,10 @@ pin / unpin 任务。
 
 如果 notes 已被其他客户端修改，接口返回 `409 Conflict` 且不覆盖新内容。
 
+Notes 和 Env 更新还应提交草稿载入时的 `expected_task_identity`（来自 `task_identity`）。
+原任务改名、移走后即使出现同名新任务且字段值相同，也会返回 `409`，避免写错对象。
+该字段对旧客户端可选；新版 Web UI 自动携带。
+
 #### `PATCH /api/tasks/{task_name}/env`
 
 更新任务环境变量。请求必须同时提交编辑时读到的完整 `expected_env`：
@@ -308,9 +347,19 @@ pin / unpin 任务。
 
 读取某个日志文件的历史内容。
 
+`tail_lines=0` 只取得当前文件末尾游标，不读取正文。`log_identity` 与 `offset` 可用于安全续读；文件替换或截断时返回 `reset`。
+
+#### `GET /api/tasks/{task_name}/logs/download`
+
+通过 `log_file_name` 指定完整原始日志，可附带 `log_identity` 和 `expected_workspace` 防止下载到已替换的文件或其他工作区；不匹配返回 `409`。与其他 API 一样需要有效 UI 会话。
+
+响应以 `任务名--日志名` 下载，包含 `X-Pyruns-Log-Identity`，按打开时文件大小分块读取；下载期间追加的输出不包含在本次文件中。使用已经校验的普通文件句柄，不支持 Range 续传（`Accept-Ranges: none`）。
+
 #### `WS /api/tasks/{task_name}/logs/stream`
 
 订阅日志增量。
+
+成功读取日志状态后发送 `ready`；正常静默时发送健康 `heartbeat`。连续读取失败发送带 `detail` 的 `error`，随后以 `1013` 关闭，客户端可退避重连并使用增量 HTTP 读取。`chunk` 和 `reset` 含续读所需的 `offset`、`log_identity` 和 `log_file_name`。
 
 消息示例：
 

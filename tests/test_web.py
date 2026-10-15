@@ -71,6 +71,15 @@ def log_stream_idle(monkeypatch):
     return idle
 
 
+def _receive_stream_data(websocket):
+    """Existing assertions consume log data; health frames are checked separately."""
+    while True:
+        message = websocket.receive_json()
+        if message.get("task_name") and message.get("type") in {"ready", "heartbeat"}:
+            continue
+        return message
+
+
 def _watch_log_stream_initialization(runtime: PyrunsRuntime) -> threading.Event:
     """Signal when this runtime finishes the stream's initial metadata read."""
     initialized = threading.Event()
@@ -835,12 +844,12 @@ def test_parallel_ui_instances_keep_independent_websocket_sessions():
         "/api/tasks/events",
         headers={"Cookie": shared_cookie},
     ) as websocket:
-        assert websocket.receive_json() == {"type": "ready", "revision": 0}
+        assert _receive_stream_data(websocket) == {"type": "ready", "revision": 0}
     with second_client.websocket_connect(
         "/api/tasks/events",
         headers={"Cookie": shared_cookie},
     ) as websocket:
-        assert websocket.receive_json() == {"type": "ready", "revision": 0}
+        assert _receive_stream_data(websocket) == {"type": "ready", "revision": 0}
 
 
 def test_unicode_ui_token_is_rejected_without_server_error():
@@ -993,12 +1002,12 @@ def test_task_event_websocket_pushes_invalidations_and_releases_watch(tmp_path):
 
     try:
         with client.websocket_connect("/api/tasks/events") as websocket:
-            ready = websocket.receive_json()
+            ready = _receive_stream_data(websocket)
             assert ready == {"type": "ready", "revision": 0}
             assert runtime.task_manager.has_reactive_watchers() is True
 
             runtime.task_manager.trigger_update()
-            changed = websocket.receive_json()
+            changed = _receive_stream_data(websocket)
             assert changed == {"type": "changed", "revision": 1}
 
         assert runtime.task_manager.has_reactive_watchers() is False
@@ -1030,7 +1039,7 @@ def test_task_event_websocket_coalesces_changes_before_loop_dispatch(tmp_path):
     try:
         with patch.object(WebSocket, "send_json", send_json):
             with client.websocket_connect("/api/tasks/events") as websocket:
-                assert websocket.receive_json() == {"type": "ready", "revision": 0}
+                assert _receive_stream_data(websocket) == {"type": "ready", "revision": 0}
                 loop = loops[0]
                 with patch.object(loop, "call_soon_threadsafe", side_effect=RuntimeError("loop unavailable")):
                     runtime.task_manager.trigger_update()
@@ -1047,9 +1056,9 @@ def test_task_event_websocket_coalesces_changes_before_loop_dispatch(tmp_path):
                         assert dispatch.call_count == 1
                 finally:
                     release.set()
-                assert websocket.receive_json() == {"type": "changed", "revision": 1}
+                assert _receive_stream_data(websocket) == {"type": "changed", "revision": 1}
                 runtime.task_manager.trigger_update()
-                assert websocket.receive_json() == {"type": "changed", "revision": 2}
+                assert _receive_stream_data(websocket) == {"type": "changed", "revision": 2}
         assert runtime.task_manager.has_reactive_watchers() is False
     finally:
         release.set()
@@ -1064,7 +1073,7 @@ def test_task_event_websocket_ignores_close_after_client_disconnect(tmp_path):
     try:
         with patch.object(WebSocket, "close", side_effect=WebSocketDisconnect(1006)):
             with client.websocket_connect("/api/tasks/events") as websocket:
-                assert websocket.receive_json()["type"] == "ready"
+                assert _receive_stream_data(websocket)["type"] == "ready"
         assert runtime.task_manager.has_reactive_watchers() is False
     finally:
         runtime.shutdown()
@@ -1106,10 +1115,10 @@ def test_task_event_websocket_slow_context_does_not_block_http(tmp_path, monkeyp
             with client.websocket_connect("/api/tasks/events") as websocket:
                 if operation == "abandon_acquire":
                     return  # Disconnect before the background lookup returns.
-                assert websocket.receive_json()["type"] == "ready"
+                assert _receive_stream_data(websocket)["type"] == "ready"
                 if operation == "check":
                     runtime.task_manager.trigger_update()
-                    assert websocket.receive_json()["type"] == "changed"
+                    assert _receive_stream_data(websocket)["type"] == "changed"
                 if operation != "release":
                     assert close.wait(10)
 
@@ -1248,7 +1257,7 @@ def test_task_event_websocket_closes_when_workspace_changes(tmp_path, monkeypatc
             with ThreadPoolExecutor(max_workers=1) as worker:
                 with client.websocket_connect("/api/tasks/events") as websocket:
                     if not before_subscription:
-                        assert websocket.receive_json()["type"] == "ready"
+                        assert _receive_stream_data(websocket)["type"] == "ready"
                         runtime.change_run_root(str(target))
                     closed = worker.submit(websocket.receive_json)
                     try:
@@ -1755,6 +1764,36 @@ def test_main_explicit_browser_overrides_tmux_default(monkeypatch):
     web_app.main(open_browser=True, access_token="test-token")
 
     assert captured["browser_url"] == "http://127.0.0.1:8099/?token=test-token"
+
+
+def test_run_input_endpoints_read_only_selected_history_and_validate_runs(tmp_path):
+    from pyruns.core.run_inputs import save_run_input
+    from pyruns.utils.info_io import ensure_run_slot
+
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "saved", status="completed")
+    task_dir = workspace / TASKS_DIR / "saved"
+    update_task_info(str(task_dir), lambda info: ensure_run_slot(info, 3))
+    for run in (2, 3):
+        save_run_input(str(task_dir), run, {
+            "task_kind": "config", "payload_text": f"historical-value: {run}\n", "environment": {},
+        })
+    client = TestClient(create_app(_build_runtime(workspace)))
+    ordinary = client.get("/api/tasks/saved?include_tracks=false")
+    assert ordinary.status_code == 200
+    assert "historical-value" not in ordinary.text
+    saved = client.get("/api/tasks/saved/runs/2/input")
+    assert saved.status_code == 200
+    assert saved.json()["input"]["payload_text"] == "historical-value: 2\n"
+    old = client.get("/api/tasks/saved/runs/1/input")
+    assert old.status_code == 200 and old.json()["input"] is None
+    diff = client.get("/api/tasks/saved/runs/3/diff?other_run=2")
+    assert diff.status_code == 200
+    assert "+historical-value: 3" in diff.json()["diff"]
+    assert not client.get("/api/tasks/saved/runs/3/diff?other_run=1").json()["available"]
+    assert client.get("/api/tasks/saved/runs/4/input").status_code == 404
+    assert client.get("/api/tasks/saved/runs/0/input").status_code == 422
+    assert client.get("/api/tasks/missing/runs/1/input").status_code == 404
 
 
 def test_workspace_endpoint_returns_metadata(tmp_path):
@@ -2339,7 +2378,7 @@ def test_log_reads_and_queue_stream_skip_curve_history(tmp_path, monkeypatch):
             ) as websocket:
                 assert queue_checked.wait(2)
                 update_task_metadata(str(task_dir), lambda info: info.update(status="completed"))
-                payload = websocket.receive_json()
+                payload = _receive_stream_data(websocket)
                 assert payload["log_file_name"] == "run1.log"
                 assert payload["content"].replace("\r\n", "\n") == "run output\n"
             read.assert_not_called()
@@ -3120,12 +3159,18 @@ def test_search_limit_is_shared_across_fields_and_stream_reports_truncation(tmp_
         assert error["type"] == "error" and error["status"] == 422
 
 
-def test_mixed_search_limit_is_consistent_for_normal_and_streaming_responses(tmp_path):
+@pytest.mark.parametrize("batch_size,warm_late_file", [(1, False), (7, False), (128, False), (128, True)])
+def test_mixed_search_limit_is_consistent_for_normal_and_streaming_responses(tmp_path, monkeypatch, batch_size, warm_late_file):
+    import pyruns.web.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_LOG_SEARCH_TASK_BATCH_SIZE", batch_size)
     workspace = _make_workspace(tmp_path, "main")
     names = [f"needle-{index:03d}" for index in range(70)]
     for name in names:
         _add_task(workspace, name, log_text="needle\n")
     runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    if warm_late_file:
+        runtime._log_search.search(str(workspace / TASKS_DIR / names[-1]), "needle", threading.Event())
     with TestClient(create_app(runtime)) as client:
         params = {"query": "needle", "include_logs": True, "sort": "name_asc", "refresh": False,
                   "max_results": 66, "limit": 70, "summary": True}
@@ -3170,7 +3215,7 @@ def test_search_publishes_matches_before_file_finishes_and_can_cancel(tmp_path, 
         try:
             for event in events:
                 yield event
-                if not entered.is_set():
+                if event["type"] == "match" and not entered.is_set():
                     entered.set()
                     assert release.wait(5)
         finally:
@@ -3753,6 +3798,59 @@ def test_ui_requests_share_inflight_scan_without_losing_invalidation(tmp_path, f
         page = request.result(timeout=5)
     assert len(calls) == (1 if followup == "cached" else 2)
     assert page.total == (3 if followup == "invalidated" else 2)
+
+
+def test_background_refresh_limits_history_io_and_targeted_invalidations(tmp_path, monkeypatch):
+    import pyruns.core.task_manager as task_manager_module
+
+    clock = MagicMock(wraps=time)
+    clock.monotonic.return_value = 100.0
+    monkeypatch.setattr(task_manager_module, "time", clock)
+    workspace = _make_workspace(tmp_path, "main")
+    for name in ("active", "history", "edited"):
+        _add_task(workspace, name)
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    try:
+        runtime.ensure_tasks_loaded()
+        manager = runtime.task_manager
+        # Model a locally owned run; the unchanged disk signature must not
+        # cause the refresh to mistake it for an orphaned external process.
+        manager._tasks_by_name["active"]["status"] = "running"
+        manager._running_ids.add("active")
+        changed_config = workspace / TASKS_DIR / "history" / CONFIG_FILENAME
+        changed_config.write_text("epochs: 42\n", encoding="utf-8")
+        with patch.object(manager, "_probe_refresh_task", wraps=manager._probe_refresh_task) as probe:
+            clock.monotonic.return_value = 101.0
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert [call.args[0]["name"] for call in probe.call_args_list] == ["active"]
+            assert not probe.call_args.kwargs["check_payload"]
+            probe.reset_mock()
+
+            clock.monotonic.return_value = 104.0
+            _add_task(workspace, "new")
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert manager.get_task("new") is not None
+            assert [call.args[0]["name"] for call in probe.call_args_list] == ["active"]
+            assert manager.get_task("history")["config"].get("epochs") != 42
+            probe.reset_mock()
+
+            update_task_info(str(workspace / TASKS_DIR / "edited"), lambda info: info.update(notes="changed"))
+            manager.invalidate_ui_snapshot(["edited"])
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert [call.args[0]["name"] for call in probe.call_args_list] == ["edited"]
+            assert manager.get_task("edited")["notes"] == "changed"
+            probe.reset_mock()
+
+            clock.monotonic.return_value = 130.0
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert {call.args[0]["name"] for call in probe.call_args_list} == {"active", "history", "edited", "new"}
+            assert all(call.kwargs["check_payload"] for call in probe.call_args_list)
+            assert manager.get_task("history")["config"]["epochs"] == 42
+            changed_config.write_text("epochs: 43\n", encoding="utf-8")
+            runtime.list_tasks(summary=True, force_refresh=True)
+            assert manager.get_task("history")["config"]["epochs"] == 43
+    finally:
+        runtime.shutdown()
 
 
 def test_metadata_search_cancels_between_lines_without_holding_task_lock(tmp_path, monkeypatch):
@@ -6438,6 +6536,59 @@ def test_task_metadata_endpoint_rejects_stale_write_without_overwriting_disk(
     assert load_task_info(str(task_dir))[field] == first_value
 
 
+@pytest.mark.parametrize("field, baseline, edited", [
+    ("notes", "original note", "updated note"),
+    ("env", {"DATA": "original"}, {"DATA": "updated"}),
+])
+def test_task_metadata_endpoint_rejects_replaced_task_after_manager_refresh(tmp_path, field, baseline, edited):
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "alpha")
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    client = TestClient(create_app(runtime))
+    endpoint = f"/api/tasks/alpha/{field}?include_tracks=false"
+    task_dir = workspace / TASKS_DIR / "alpha"
+    original_dir = workspace / "original-alpha"
+    try:
+        original = client.get("/api/tasks/alpha?include_tracks=false").json()
+        original_identity = original["task_identity"]
+        assert original_identity
+        saved = client.patch(endpoint, json={
+            field: baseline, f"expected_{field}": {} if field == "env" else "",
+            "expected_task_identity": original_identity,
+        })
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["task"]["task_identity"] == original_identity
+
+        # Another writer replaces the directory with an otherwise identical task.
+        task_dir.rename(original_dir)
+        _add_task(workspace, "alpha")
+        update_task_info(str(task_dir), lambda info: info.update({field: baseline}))
+        runtime.task_manager.scan_disk()
+        refreshed = client.get("/api/tasks/alpha?include_tracks=false").json()
+        assert refreshed["task_identity"] != original_identity
+        assert refreshed[field] == baseline
+        before = (task_dir / TASK_INFO_FILENAME).read_bytes()
+
+        stale = client.patch(endpoint, json={
+            field: edited, f"expected_{field}": baseline,
+            "expected_task_identity": original_identity,
+        })
+        assert stale.status_code == 409, stale.text
+        assert "identity changed" in stale.json()["detail"].lower()
+        assert (task_dir / TASK_INFO_FILENAME).read_bytes() == before
+        assert load_task_info(str(original_dir))[field] == baseline
+
+        current = client.patch(endpoint, json={
+            field: edited, f"expected_{field}": baseline,
+            "expected_task_identity": refreshed["task_identity"],
+        })
+        assert current.status_code == 200, current.text
+        assert current.json()["task"][field] == edited
+        assert current.json()["task"]["task_identity"] == refreshed["task_identity"]
+    finally:
+        runtime.shutdown()
+
+
 @pytest.mark.parametrize(
     "env",
     [
@@ -6585,7 +6736,7 @@ def test_logs_websocket_streams_live_chunks(tmp_path):
             offset=log_file.stat().st_size,
             task_dir=str(workspace / TASKS_DIR / "alpha"),
         )
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -6606,7 +6757,7 @@ def test_logs_websocket_closes_when_active_workspace_changes(tmp_path):
         assert initialized.wait(2)
         runtime.change_run_root(str(workspace_b))
         with pytest.raises(WebSocketDisconnect):
-            websocket.receive_json()
+            _receive_stream_data(websocket)
 
 
 def test_logs_websocket_stream_catches_up_from_client_offset(tmp_path):
@@ -6624,7 +6775,7 @@ def test_logs_websocket_stream_catches_up_from_client_offset(tmp_path):
         handle.write("gap-before-ws\n")
 
     with client.websocket_connect(f"/api/tasks/alpha/logs/stream?log_file_name=run1.log&offset={offset}") as websocket:
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -6665,7 +6816,7 @@ def test_logs_websocket_replays_backlog_without_poll_delay(tmp_path):
             "/api/tasks/alpha/logs/stream?log_file_name=run1.log&offset=0"
         ) as websocket:
             assert reads_complete.wait(1.5)
-            chunks = [websocket.receive_json() for _ in range(5)]
+            chunks = [_receive_stream_data(websocket) for _ in range(5)]
 
     assert "".join(chunk["content"] for chunk in chunks) == "A" * (5 * 1024)
     assert all(chunk["type"] == "chunk" for chunk in chunks)
@@ -6718,9 +6869,9 @@ def test_logs_websocket_replay_waits_for_full_send_queue(tmp_path):
                 assert reads_complete.wait(2)
             finally:
                 release_send.set()
-            first_three = [websocket.receive_json() for _ in range(3)]
+            first_three = [_receive_stream_data(websocket) for _ in range(3)]
             assert [item["content"] for item in first_three] == [char * 1024 for char in "ABC"]
-            fourth = websocket.receive_json()
+            fourth = _receive_stream_data(websocket)
 
     assert fourth["content"] == "D" * 1024
     assert fourth["offset"] == log_file.stat().st_size
@@ -6774,9 +6925,9 @@ def test_logs_websocket_replays_live_chunks_when_send_queue_fills(tmp_path, log_
                 assert delivered.wait(2)
             finally:
                 release_send.set()
-            first_three = [websocket.receive_json() for _ in range(3)]
+            first_three = [_receive_stream_data(websocket) for _ in range(3)]
             assert [item["content"] for item in first_three] == ["A", "B", "C"]
-            fourth = websocket.receive_json()
+            fourth = _receive_stream_data(websocket)
 
     assert fourth["content"] == "D"
     assert fourth["offset"] == 4
@@ -6853,7 +7004,8 @@ def test_logs_websocket_recovers_dispatch_overflow(tmp_path, during_initial_read
                 assert delivered.wait(3)
                 release_initial.set()
                 assert sent_all.wait(3)
-                messages = [websocket.receive_json() for _ in sent_messages]
+                messages = [_receive_stream_data(websocket) for message in sent_messages
+                            if message.get("type") not in {"ready", "heartbeat"}]
             finally:
                 release_loop.set()
                 release_initial.set()
@@ -6903,7 +7055,7 @@ def test_logs_websocket_replay_preserves_order_when_emitter_fires(tmp_path):
                 assert delivered.wait(2)
             finally:
                 release_read.set()
-            chunks = [websocket.receive_json() for _ in range(3)]
+            chunks = [_receive_stream_data(websocket) for _ in range(3)]
 
     assert "".join(chunk["content"] for chunk in chunks) == "A" * 2048 + "B" * 1024
     assert [chunk["offset"] for chunk in chunks] == [1024, 2048, 3072]
@@ -6936,12 +7088,12 @@ def test_logs_websocket_keeps_emitter_chunk_during_initial_selection(tmp_path):
             stale_read.set()
         return payload
 
-    def track_identity(path):
+    def track_identity(path, **kwargs):
         nonlocal poll_count
         poll_count += 1
         if poll_count >= 3:
             polled.set()
-        return log_file_identity(path)
+        return log_file_identity(path, **kwargs)
 
     with (
         patch.object(runtime, "get_task_logs", side_effect=pause_initial_read),
@@ -6965,7 +7117,7 @@ def test_logs_websocket_keeps_emitter_chunk_during_initial_selection(tmp_path):
                 assert delivered.wait(2)
             finally:
                 release_read.set()
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
             assert polled.wait(2)
 
     assert payload["content"] == "live\r\n"
@@ -7010,7 +7162,7 @@ def test_logs_websocket_replays_gap_during_initial_selection(tmp_path):
                 assert delivered.wait(2)
             finally:
                 release_read.set()
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["content"].replace("\r", "") == "silent\nlive\n"
@@ -7045,7 +7197,7 @@ def test_logs_websocket_replays_file_gap_before_emitter_chunk(tmp_path, file_suf
                 "alpha", emitter_text, offset=log_file.stat().st_size,
                 log_file_name="run1.log", task_dir=str(task_dir),
             )
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["content"].replace("\r", "") == file_suffix
@@ -7077,7 +7229,7 @@ def test_logs_websocket_uses_written_byte_length_for_crlf_emitter(tmp_path, log_
                 "alpha", "raw\r\n", offset=log_file.stat().st_size,
                 byte_length=len(b"raw\r\n"), log_file_name="run1.log", task_dir=str(task_dir),
             )
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
             assert get_logs.call_count == 1
 
     assert payload["content"] == "raw\r\n"
@@ -7107,7 +7259,7 @@ def test_logs_websocket_ignores_emitter_for_another_run_log(tmp_path, log_stream
             )
             with run_log.open("a", encoding="utf-8") as handle:
                 handle.write("current run\n")
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["log_file_name"] == "run1.log"
@@ -7136,7 +7288,7 @@ def test_logs_websocket_initial_lookup_does_not_block_http(tmp_path, monkeypatch
             with client.websocket_connect(
                 "/api/tasks/alpha/logs/stream?log_file_name=run1.log&offset=0"
             ) as websocket:
-                return websocket.receive_json()
+                return _receive_stream_data(websocket)
 
         with ThreadPoolExecutor(max_workers=2) as workers:
             stream = workers.submit(receive_log)
@@ -7203,7 +7355,7 @@ def test_logs_websocket_slow_poll_does_not_block_http(tmp_path, monkeypatch, log
                 f"/api/tasks/alpha/logs/stream?log_file_name={filename}{resume}"
             ) as websocket:
                 sessions.append(websocket)
-                message = websocket.receive_json()
+                message = _receive_stream_data(websocket)
                 assert close.wait(10)
                 return message
 
@@ -7277,7 +7429,7 @@ def test_logs_websocket_discards_poll_size_older_than_a_live_chunk(tmp_path, mon
                     handle.write("live\n")
                 log_emitter.emit("alpha", "live\r\n", offset=log.stat().st_size,
                                  log_file_name="run1.log", task_dir=str(task_dir))
-                first = workers.submit(websocket.receive_json).result(timeout=2)
+                first = workers.submit(_receive_stream_data, websocket).result(timeout=2)
                 assert first["type"] == "chunk" and first["content"] == "live\r\n"
                 received = True
             finally:
@@ -7351,7 +7503,7 @@ def test_logs_websocket_buffers_run_switch_with_bounded_disk_fallback(
             def receive_all():
                 messages = []
                 while True:
-                    message = websocket.receive_json()
+                    message = _receive_stream_data(websocket)
                     messages.append(message)
                     if message.get("log_file_name") == "run1.log" and message.get("offset") == len(expected.encode()):
                         return messages
@@ -7383,7 +7535,7 @@ def test_logs_websocket_rejects_invalid_log_file_name(tmp_path):
         "/api/tasks/alpha/logs/stream?log_file_name=..%2Fsecret.log&offset=0"
     ) as websocket:
         with pytest.raises(WebSocketDisconnect):
-            websocket.receive_json()
+            _receive_stream_data(websocket)
 
 
 def test_logs_websocket_resets_after_live_log_is_truncated(tmp_path):
@@ -7418,7 +7570,7 @@ def test_logs_websocket_resets_after_live_log_is_truncated(tmp_path):
     with client.websocket_connect(stream_url) as websocket:
         assert initialized.wait(2)
         log_file.write_text("new\n", encoding="utf-8")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "reset"
     assert payload["task_name"] == "alpha"
@@ -7441,7 +7593,7 @@ def test_logs_websocket_stream_tails_run_log_file_without_emitter(tmp_path):
         assert initialized.wait(2)
         with log_file.open("a", encoding="utf-8") as handle:
             handle.write("file fallback chunk\n")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7461,12 +7613,12 @@ def test_logs_websocket_idle_tail_skips_log_listing_but_catches_up(tmp_path):
     polled = threading.Event()
     identity_calls = 0
 
-    def track_identity(path):
+    def track_identity(path, **kwargs):
         nonlocal identity_calls
         identity_calls += 1
         if identity_calls >= 3:
             polled.set()
-        return log_file_identity(path)
+        return log_file_identity(path, **kwargs)
 
     with (
         patch.object(runtime, "get_task_logs", wraps=runtime.get_task_logs) as get_logs,
@@ -7481,7 +7633,7 @@ def test_logs_websocket_idle_tail_skips_log_listing_but_catches_up(tmp_path):
             assert get_logs.call_count == 1
             with log_file.open("a", encoding="utf-8") as handle:
                 handle.write("after idle\n")
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["content"].replace("\r", "") == "after idle\n"
@@ -7520,7 +7672,7 @@ def test_logs_websocket_stream_tails_queued_gpu_log_from_client_offset(tmp_path)
         assert initialized.wait(2)
         with queue_log.open("a", encoding="utf-8", newline="") as handle:
             handle.write("\rstill waiting")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7543,12 +7695,12 @@ def test_logs_websocket_idle_queue_skips_log_listing_until_run_starts(tmp_path):
     polled = threading.Event()
     identity_calls = 0
 
-    def track_identity(path):
+    def track_identity(path, **kwargs):
         nonlocal identity_calls
         identity_calls += 1
         if identity_calls >= 3:
             polled.set()
-        return log_file_identity(path)
+        return log_file_identity(path, **kwargs)
 
     with (
         patch.object(runtime, "get_task_logs", wraps=runtime.get_task_logs) as get_logs,
@@ -7567,7 +7719,7 @@ def test_logs_websocket_idle_queue_skips_log_listing_until_run_starts(tmp_path):
                 current["run_index"] = 1
             run_log = task_dir / "run_logs" / "run1.log"
             run_log.write_text("running after queue\n", encoding="utf-8")
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["log_file_name"] == "run1.log"
@@ -7603,10 +7755,10 @@ def test_logs_websocket_drains_queue_log_before_run_emitter(tmp_path, log_stream
                 byte_length=run_log.stat().st_size,
                 log_file_name="run1.log", task_dir=str(task_dir),
             )
-            queue_chunk = websocket.receive_json()
+            queue_chunk = _receive_stream_data(websocket)
             assert queue_chunk["log_file_name"] == "queue.log"
             assert queue_chunk["content"].replace("\r", "") == "assigned\n"
-            run_chunk = websocket.receive_json()
+            run_chunk = _receive_stream_data(websocket)
 
     assert run_chunk["log_file_name"] == "run1.log"
     assert run_chunk["content"].replace("\r", "") == "run start\n"
@@ -7624,7 +7776,7 @@ def test_logs_websocket_stream_tails_active_run_log_created_after_connect(tmp_pa
     with client.websocket_connect("/api/tasks/alpha/logs/stream") as websocket:
         assert initialized.wait(2)
         log_file.write_text("created after connect\n", encoding="utf-8")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7655,7 +7807,7 @@ def test_logs_websocket_stream_finds_queue_log_created_after_connect(tmp_path):
             assert initialized.wait(2)
             queue_log.write_text("queued after connect\n", encoding="utf-8")
             assert discovered.wait(2)
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["log_file_name"] == "queue.log"
@@ -7680,7 +7832,7 @@ def test_logs_websocket_stream_switches_from_queue_log_to_active_run_log(tmp_pat
             current["status"] = "running"
             current["run_index"] = 1
         run_log.write_text("running after queue\n", encoding="utf-8")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7713,7 +7865,7 @@ def test_logs_websocket_stream_accepts_run_log_emitter_chunk_after_queue_offset(
             log_file_name="run1.log",
             task_dir=str(task_dir),
         )
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7925,17 +8077,17 @@ def test_runtime_task_operation_error_branches(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="bad pin"):
         runtime.set_task_pin("alpha", True)
 
-    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected: (False, "Task not found"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected, **kw: (False, "Task not found"))
     with pytest.raises(KeyError):
         runtime.update_task_notes("alpha", "note", "")
-    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected: (False, "bad notes"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected, **kw: (False, "bad notes"))
     with pytest.raises(ValueError, match="bad notes"):
         runtime.update_task_notes("alpha", "note", "")
 
-    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected: (False, "Task not found"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected, **kw: (False, "Task not found"))
     with pytest.raises(KeyError):
         runtime.update_task_env("alpha", {}, {})
-    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected: (False, "bad env"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected, **kw: (False, "bad env"))
     with pytest.raises(ValueError, match="bad env"):
         runtime.update_task_env("alpha", {}, {})
 
@@ -7954,7 +8106,7 @@ def test_runtime_task_operation_error_branches(tmp_path, monkeypatch):
         runtime.reorder_tasks([])
 
 
-def test_runtime_cancel_binds_the_refreshed_runner_and_run(tmp_path, monkeypatch):
+def test_runtime_cancel_binds_the_refreshed_runner_run_and_attempt(tmp_path, monkeypatch):
     workspace = _make_workspace(tmp_path, "main")
     _add_task(workspace, "alpha", status="running")
     runtime = _build_runtime(workspace)
@@ -7976,7 +8128,90 @@ def test_runtime_cancel_binds_the_refreshed_runner_and_run(tmp_path, monkeypatch
         "name": "alpha",
         "expected_runner_id": info["runner_id"],
         "expected_run_index": 1,
+        "expected_attempt_id": str(info.get("_attempt_id", "") or ""),
     }
+
+
+@pytest.mark.parametrize("replacement_state", ["queued", "cancelled", "cancel_requested", "local_stop_terminal"])
+def test_runtime_cancel_rejects_replacement_attempt_with_same_owner_and_index(tmp_path, monkeypatch, replacement_state):
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "alpha")
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    manager = runtime.task_manager
+    monkeypatch.setattr(manager, "trigger_update", lambda: None)
+    assert manager._sync_status_to_disk("alpha", "queued", expected_statuses={"pending"})
+    task_dir = workspace / TASKS_DIR / "alpha"
+    info_path = task_dir / TASK_INFO_FILENAME
+    original_info = load_task_info(str(task_dir))
+    original_request = manager.request_task_cancel
+    replacement = {}
+
+    def requeue_before_cancel(name, **identity):
+        manager._mark_failed_on_disk(manager.get_task(name), final_status="cancelled")
+        manager.scan_disk()
+        assert manager.rerun_task(name)
+        info = load_task_info(str(task_dir))
+        assert info["_attempt_id"] != original_info["_attempt_id"]
+        assert info["runner_id"] == original_info["runner_id"]
+        assert active_task_run_index(info) == active_task_run_index(original_info)
+        if replacement_state in {"cancelled", "local_stop_terminal"}:
+            assert manager._sync_status_to_disk(name, "running", expected_statuses={"queued"})
+            manager._mark_failed_on_disk(manager.get_task(name), final_status="cancelled")
+        elif replacement_state == "cancel_requested":
+            update_task_info(str(task_dir), lambda current: current.update({"cancel_requested_at": "2026-10-15"}))
+        replacement["bytes"] = info_path.read_bytes()
+        # A durable request can be returned after a local stop has to retry.
+        if replacement_state in {"cancel_requested", "local_stop_terminal"}:
+            return False
+        return original_request(name, **identity)
+
+    if replacement_state == "local_stop_terminal":
+        monkeypatch.setattr(manager, "cancel_task", requeue_before_cancel)
+    else:
+        monkeypatch.setattr(manager, "request_task_cancel", requeue_before_cancel)
+
+    with pytest.raises(ValueError, match="cannot be cancelled"):
+        runtime.cancel_task("alpha")
+    assert info_path.read_bytes() == replacement["bytes"]
+
+
+def test_runtime_cancel_rejects_replacement_after_expired_local_stop(tmp_path, monkeypatch):
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "alpha")
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    manager = runtime.task_manager
+    monkeypatch.setattr(manager, "trigger_update", lambda: None)
+    monkeypatch.setattr(manager, "_running_info_has_live_owner", lambda _info: True)
+    assert manager._sync_status_to_disk("alpha", "running", expected_statuses={"pending"})
+    task_dir = workspace / TASKS_DIR / "alpha"
+    info_path = task_dir / TASK_INFO_FILENAME
+    update_task_info(str(task_dir), lambda info: info.update({
+        "runner_id": f"{manager.runner_host}:123:expired", "runner_host": manager.runner_host,
+        "lease_until": time.time() - 60, "pids": [987654321], "pid_create_times": [1.0],
+    }))
+    original_info = load_task_info(str(task_dir))
+    replacement = {}
+
+    def replace_after_stop(pid, *, expected_create_time):
+        assert (pid, expected_create_time) == (987654321, 1.0)
+        manager._mark_failed_on_disk(manager.get_task("alpha"), final_status="cancelled")
+        manager.scan_disk()
+        assert manager.rename_task("alpha", "original-renamed")[0]
+        _add_task(workspace, "alpha")
+        manager.scan_disk()
+        assert manager._sync_status_to_disk("alpha", "running", expected_statuses={"pending"})
+        manager._mark_failed_on_disk(manager.get_task("alpha"), final_status="cancelled")
+        info = load_task_info(str(task_dir))
+        assert info["_attempt_id"] != original_info["_attempt_id"]
+        assert active_task_run_index(info) == active_task_run_index(original_info)
+        replacement["bytes"] = info_path.read_bytes()
+        return True
+
+    monkeypatch.setattr("pyruns.core.task_manager.kill_process", replace_after_stop)
+
+    with pytest.raises(ValueError, match="cannot be cancelled"):
+        runtime.cancel_task("alpha")
+    assert info_path.read_bytes() == replacement["bytes"]
 
 
 def test_runtime_cancel_returns_a_task_that_finished_during_the_request(tmp_path, monkeypatch):

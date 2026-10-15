@@ -128,7 +128,7 @@ def _ripgrep_events(paths, cwd, needle, matcher, cancelled):
     command = [
         ripgrep_path(), "--no-config", "--json", "--text", "--encoding", "none",
         "--no-mmap", "--no-ignore", "--hidden", "--no-follow", "--crlf",
-        "--line-buffered",
+        "--line-buffered", "--threads=1",
         "--case-sensitive" if matcher.match_case else "--ignore-case",
     ]
     if matcher.use_regex or matcher.whole_word or matcher.multiline:
@@ -174,7 +174,7 @@ def _ripgrep_events(paths, cwd, needle, matcher, cancelled):
                 if not line.endswith(b"\n"):
                     raise SearchQueryError("A matching log line exceeds the 16 MiB search result limit.")
                 event = json.loads(line)
-                if event["type"] == "match":
+                if event["type"] in {"begin", "match", "end"}:
                     yield event
             code = process.wait()
             if cancelled.is_set():
@@ -240,7 +240,7 @@ class LogSearch:
         return self.search_many([task_dir], query, cancelled, matcher)[task_dir]
 
     def search_many(self, task_dirs, query, cancelled, matcher=None, *, budget=None,
-                    on_progress=None) -> dict[str, LogSearchResult]:
+                    on_progress=None, on_task_start=None) -> dict[str, LogSearchResult]:
         """Search uncached files in batches, stopping at the shared match limit."""
         matcher = matcher or SearchQuery(query)
         budget = budget if budget is not None else SearchBudget()
@@ -252,7 +252,7 @@ class LogSearch:
         with self._lock:
             matches, misses = self._query_cache(matcher.cache_key)
             cache_snapshot = {**misses, **matches}
-        files, contents, pending = {}, {}, []
+        files, contents, pending, steps = {}, {}, [], []
 
         def snapshot():
             # Stable queue/run1/run2/.../error previews, regardless of worker order.
@@ -269,19 +269,23 @@ class LogSearch:
             return current
 
         last_progress = None
+        last_progress_count = 0
 
         def publish_progress():
-            nonlocal last_progress
+            nonlocal last_progress, last_progress_count
             if on_progress is None:
                 return
             now = time.monotonic()
-            if last_progress is None or now - last_progress >= 0.1:
+            count = sum(result["match_count"] for result in contents.values())
+            if last_progress is None or (not last_progress_count and count) or now - last_progress >= 0.1:
                 on_progress(snapshot())
                 last_progress = now
+                last_progress_count = count
 
         for task_dir in results:
             if cancelled.is_set():
                 raise CancelledError()
+            steps.append((True, task_dir))
             try:
                 entries = get_log_entries(task_dir, cancelled=cancelled)
             except OSError:
@@ -289,54 +293,83 @@ class LogSearch:
                 continue
             for name, (path, info) in entries.items():
                 files[path] = (task_dir, name, info)
+                steps.append((False, path))
                 cached = cache_snapshot.get(path)
                 if cached is not None and cached[0] == _signature(info):
                     contents[path] = cached[1]
-                    accepted = budget.take(cached[1]["match_count"])
-                    if accepted < cached[1]["match_count"]:
-                        contents[path] = {**cached[1], "match_count": accepted, "matches": cached[1]["matches"][:accepted]}
                 else:
                     pending.append(path)
                     contents[path] = _empty_result()
-                if budget.limit_hit:
+        # Keep cached hits invisible until their turn. Otherwise a warmed
+        # later file could consume the limit before an earlier uncached file.
+        pending_set = set(pending)
+        cached_contents = {path: value for path, value in contents.items() if path not in pending_set}
+        contents = {path: _empty_result() for path in files}
+        cursor = 0
+
+        def advance(path=None, completed=()):
+            nonlocal cursor
+            while cursor < len(steps) and not budget.limit_hit:
+                if cancelled.is_set():
+                    raise CancelledError()
+                is_task, current = steps[cursor]
+                if is_task:
+                    if on_task_start is not None:
+                        on_task_start(current)
+                elif current in cached_contents:
+                    cached = cached_contents[current]
+                    accepted = budget.take(cached["match_count"])
+                    contents[current] = {**cached, "match_count": accepted, "matches": cached["matches"][:accepted]}
+                elif current == path:
                     break
-            if budget.limit_hit:
-                break
-        if any(result["match_count"] for result in contents.values()):
-            publish_progress()
+                elif path is None and current not in completed:
+                    break
+                # ripgrep omits begin/end for non-matching files. With one
+                # worker, a later file's event proves preceding files finished.
+                cursor += 1
+
+        advance()
+        publish_progress()
         failed = set()
         if pending and not budget.limit_hit:
             # Retain the task name in ripgrep errors even for a one-task batch.
             cwd = os.path.commonpath([os.path.dirname(os.path.abspath(task_dir)) for task_dir in results])
-            for needle in matcher.needles:
-                pattern = matcher.raw_needles[needle]
-                for batch in _batches(pending, cwd, pattern):
-                    events = _ripgrep_events(batch, cwd, pattern, matcher, cancelled)
-                    try:
-                        for event in events:
-                            if event["type"] == "error":
-                                failed.update(os.path.normpath(os.path.join(cwd, path)) for path in batch)
-                                task_dir = files[os.path.normpath(os.path.join(cwd, batch[0]))][0]
-                                results[task_dir]["errors"].append(event["data"])
-                                continue
-                            data = event["data"]
-                            if not data["submatches"]:
-                                continue
+            needle = matcher.needles[0]
+            pattern = matcher.raw_needles[needle]
+            for batch in _batches(pending, cwd, pattern):
+                batch_paths = {os.path.normpath(os.path.join(cwd, value)) for value in batch}
+                events = _ripgrep_events(batch, cwd, pattern, matcher, cancelled)
+                try:
+                    for event in events:
+                        if event["type"] == "error":
+                            failed.update(batch_paths)
+                            task_dir = files[os.path.normpath(os.path.join(cwd, batch[0]))][0]
+                            results[task_dir]["errors"].append(event["data"])
+                            continue
+                        data = event["data"]
+                        path = os.path.normpath(os.path.join(cwd, os.fsdecode(_json_bytes(data["path"]))))
+                        advance(path)
+                        if budget.limit_hit:
+                            break
+                        if event["type"] == "end":
+                            cursor += 1
+                            advance()
+                        elif event["type"] == "match" and data["submatches"]:
                             accepted = budget.take(len(data["submatches"]))
                             data = {**data, "submatches": data["submatches"][:accepted]}
-                            path = os.path.normpath(os.path.join(cwd, os.fsdecode(_json_bytes(data["path"]))))
                             _, name, info = files[path]
                             contents[path]["found"].add(needle)
                             _append_match(contents[path], data, name, info)
-                            publish_progress()
-                            if budget.limit_hit:
-                                break
-                    finally:
-                        events.close()
-                    if budget.limit_hit:
-                        break
+                        publish_progress()
+                        if budget.limit_hit:
+                            break
+                finally:
+                    events.close()
+                advance(completed=batch_paths)
                 if budget.limit_hit:
                     break
+        advance()
+        publish_progress()
         if cancelled.is_set():
             raise CancelledError()
         with self._lock:

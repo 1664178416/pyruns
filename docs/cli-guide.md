@@ -342,9 +342,9 @@ pyr exec --name train --detach -c "python train.py --epochs 100"
 pyr -w shell wait train
 ```
 
-### 等待 GPU：`--gpu-wait`
+### 等待 GPU：`--gpu-wait` {#gpu-wait}
 
-`exec` 和 `run` 使用同一条紧凑规则，裸数字的单位与 Web UI 一致：
+`exec` 和 `run` 使用同一条规则，必须完整填写五项；裸数字的单位与 Web UI 一致：
 
 ```text
 卡数-每卡空闲GiB-最低GPU空闲率%-连续满足秒数-最长等待小时
@@ -353,8 +353,8 @@ pyr -w shell wait train
 ```bash
 pyr exec -nt train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
 pyr exec -nt pipeline -d --gpu-wait 2-20-70-15-2 --stdin < pipeline.sh
-pyr -w shell run pipeline --gpu-wait 1-8
-pyr -w train run --config sweep.yaml --gpu-wait 1-8
+pyr -w shell run pipeline --gpu-wait 1-8-70-15-2
+pyr -w train run --config sweep.yaml --gpu-wait 1-8-70-15-2
 ```
 
 `2-20-70-15-2` 表示需要两张卡，每张至少空闲 20 GiB、GPU 空闲率至少 70%，连续满足
@@ -362,18 +362,20 @@ pyr -w train run --config sweep.yaml --gpu-wait 1-8
 该卡恢复后重新计算连续满足时长。空闲率等于 `100 - GPU 利用率`；70% 空闲对应利用率
 不超过 30%。超时仅限制启动前的排队时间，不限制命令执行时长，也不会自动退回 CPU。
 
-- 可以省略尾项：`1-8` 默认空闲率 70%、持续 15 秒、最多等待 48 小时。
+CLI 的 `--gpu-wait` 仅对本次运行生效，再次 `run` 时需要重新传入。
+不传 `--gpu-wait` 就不进行 GPU 等待，不继承 UI 设置或旧任务中的规则。
+UI 的 Runtime 开关只影响之后从 UI 提交的任务。
+
+- 五项都必须提供；`1-8` 等不完整规则会报用法错误。
 - 持续时间 `0` 表示一旦满足条件即启动；超时 `0` 表示无限等待。
-- `off` 显式停用此任务的 GPU 等待；`device=0,1-20-70-15-2` 指定两张物理卡的索引。
+- `device=0,1-20-70-15-2` 指定两张物理卡的索引。
 - 显式单位不区分大小写：`G/GiB`、`M/MiB` 为二进制，`GB/MB` 为十进制；时间接受
   `s/sec`、`m/min`、`h/hr`，例如 `2-20480MiB-70%-15SEC-120MIN`。
-- 规则保存到任务，后续 CLI 和 UI 重跑会复用；再次传 `--gpu-wait` 可以更新规则。
-  没有显式或已保存规则时使用项目 GPU 设置；任务规则不会修改项目设置文件。
 - 调度尊重 `CUDA_VISIBLE_DEVICES`，只选择请求的卡数。需要保存可见卡范围时使用 `-e`。
   每张卡在同一工作区只分配给一个 Pyruns 任务，外部任务通过实时指标检测。
 
 ```bash
-pyr -w shell show pipeline --json   # 已保存规则、当前等待原因与时间
+pyr -w shell show pipeline --json   # 本次规则、当前等待原因与时间
 pyr -w shell log pipeline -f        # 跟随排队和执行日志
 pyr metrics                        # 当前 GPU 指标
 pyr ui shell                       # GPU 设置和任务监控面板
@@ -382,6 +384,23 @@ pyr ui shell                       # GPU 设置和任务监控面板
 UI 使用 `GPUs required`、`Minimum free memory (GiB)`、`Minimum GPU idle (%)`、
 `Stable for (sec)`、`Maximum wait (hr)`。旧配置的最大利用率会迁移为最低空闲率；
 显存占用百分比和每卡任务数已停用。
+
+等待输出会逐项对照当前值与要求，显示 `ready` / `blocked` 状态及具体阻塞原因：
+
+| 规则字段 | 等待时查看什么 | 如何判断 |
+| --- | --- | --- |
+| 卡数 | 已就绪卡数 / 所需卡数 | 所需数量的 GPU 必须同时满足全部条件，并且可分配；`candidates` 只表示候选卡数 |
+| 每卡空闲 GiB | 每张卡的 `free memory` 当前值与最低要求 | 每张所需卡都必须达到显存要求 |
+| 最低 GPU 空闲率 % | 每张卡的 `idle` 当前值与最低要求 | `idle = 100 - utilization`；利用率 93% 就是空闲率 7%，要求空闲率 100% 则必须是利用率 0% |
+| 连续满足秒数 | `stable` 已连续达标秒数 / 要求秒数 | 达到显存和空闲率要求后累计；阈值失守、指标缺失或采样中断时重置 |
+| 最长等待小时 | `Wait` 已排队时长 / 超时上限及剩余时间 | `ready` 表示尚未超时；到期仍未就绪则超时，不限制任务执行时长；`0` 表示无限等待 |
+
+未采集到 GPU 指标、不在 `CUDA_VISIBLE_DEVICES` 可见范围内，或已被同一工作区的其他任务预留，
+都会显示对应原因。缺失的指标不会当成空闲；同一张卡的多个阻塞项会一起显示。
+达到显存要求但空闲率不足，或两项均达标但 `stable` 时间不足，都仍需等待。
+被其他任务预留的 GPU 可以显示 `stable 15/15 s [ready]`，同时因无法分配而显示 `blocked`。
+
+在终端中，完整等待状态会原位换行更新；重定向到文件或管道时保留普通文本，便于记录和查看。
 
 ## 6. 添加配置任务：`add`
 
@@ -471,6 +490,19 @@ pyr -w train show baseline --run 2
 
 `show` 包含置顶状态、任务目录、payload、run index、PID、最新日志、配置、环境变量、备注和加载错误。`show --json` 还提供对齐的运行时长、退出码、源码状态、record 和 track 历史。`TASK@RUN` 与 `TASK --run RUN` 都可选择一个历史运行，并显示该次运行的开始时间、结束时间、时长、原始退出码、PID、源码状态、record、track 和日志路径。
 
+新运行会在启动前保存脚本或配置正文、工作目录、任务环境覆盖值，并使用捕获的输入执行。
+`show TASK@RUN --json` 的 `selected_run.input` 返回该次快照；旧记录或尚未启动的运行可能为 `null`。
+任务当前输入可继续编辑，历史快照不会被后续运行覆盖。
+
+```bash
+pyr -w train diff baseline@1 baseline@2
+pyr -w train diff baseline@1 candidate@1 --json
+```
+
+`diff` 比较同一工作区内两次运行的输入，成功比较返回 `0`（包含有差异的情况），缺少快照返回 `1`。
+展示最多 256 KiB 或 4000 行；截断时终端会提示，JSON 返回 `truncated=true`，完整输入仍可通过 `show TASK@RUN --json` 读取。
+快照不复制外部脚本、数据集或全部继承环境；`-c "bash train.sh"` 记录该命令，`--stdin < train.sh` 才保存脚本正文。
+
 ## 9. 日志：`log`
 
 打印最新一次运行日志：
@@ -483,7 +515,12 @@ pyr -w train log baseline
 
 ```bash
 pyr -w train log baseline --follow
+pyr -w train log baseline --tail 100 -f
+pyr -w train log baseline --tail 0 -f
 ```
+
+`--tail N` 只显示最后 N 行；配合 `-f` 会接着输出新增内容，`--tail 0 -f` 仅看新增内容。
+默认仍输出完整日志。历史 run 也支持 `--tail`，但不能与 `--path` 组合。
 
 查看历史 run 或只获取路径：
 
@@ -579,6 +616,17 @@ pyr metrics --json
 ```
 
 它输出一次 CPU、内存和 GPU 快照并退出，不进入持续刷新的仪表盘。
+
+安装或运行异常时可执行一次诊断：
+
+```bash
+pyr doctor
+pyr doctor --json
+pyr -w shell doctor
+```
+
+`doctor` 检查依赖及运行模块导入、Shell、ripgrep 和可选 NVIDIA GPU；不需要先初始化项目。
+已有工作区使用临时文件检查读写、原子替换和文件锁，不改写任务或配置。缺少 GPU 不判定安装失败；必要检查失败返回 `1`，输出修复提示。
 
 ## 15. 显式 Web 入口：`ui`、`dev`
 

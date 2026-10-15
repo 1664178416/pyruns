@@ -47,6 +47,7 @@ from pyruns.cli.runner import (
     submit_cli_tasks,
 )
 from pyruns.core.report import build_export_csv, build_export_json
+from pyruns.core.run_inputs import compare_run_inputs, load_run_input
 from pyruns.core.system_metrics import SystemMonitor
 from pyruns.core.task_generator import TaskGenerator
 from pyruns.core.task_manager import TaskManager
@@ -60,21 +61,24 @@ from pyruns.launcher import (
 from pyruns.utils.batch_utils import generate_batch_configs
 from pyruns.utils.config_utils import load_yaml_strict, parse_yaml_value, safe_filename, to_container
 from pyruns.utils.env_utils import is_valid_environment_name, normalize_environment
+from pyruns.utils.file_io import regular_file_opener
 from pyruns.utils.info_io import (
     MAX_RUN_HISTORY_SLOTS,
     load_script_info,
     load_task_info,
     load_task_metadata,
+    read_run_attempt_id,
     resolve_log_path,
-    run_slot_count,
+    run_history_status,
     task_info_lock,
+    task_attempt_matches,
     validate_task_directory,
     validate_task_log_path,
     validate_task_name,
     validate_tasks_root,
     validate_workspace_directory,
 )
-from pyruns.utils.log_io import safe_read_log
+from pyruns.utils.log_io import log_file_identity, safe_read_log
 from pyruns.utils.log_utils import configure_project_root_logger
 from pyruns.utils.parse_utils import resolve_config_path
 from pyruns.utils.process_utils import (
@@ -134,6 +138,7 @@ class _TaskRunIdentity:
     run_index: int
     runner_id: str | None
     started_queued: bool = False
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -465,7 +470,7 @@ def _selected_run_record(
 
     task_dir = str(task.get("dir", "") or "")
     current_info = info if info is not None else (load_task_info(task_dir, raise_error=True) or task)
-    total = run_slot_count(current_info)
+    total = TaskManager._effective_run_slot_count(current_info)
     if run_index > total:
         name = str(task.get("name", "") or "")
         message = (
@@ -479,11 +484,7 @@ def _selected_run_record(
         values = list(current_info.get(key, []) or [])
         return values[run_index - 1] if run_index <= len(values) else None
 
-    status = str(value_at("run_statuses") or "").lower() or None
-    if status is None and run_index == _latest_run_index(task, current_info):
-        current_status = str(current_info.get("status", "") or "").lower()
-        if current_status != "queued":
-            status = current_status or None
+    status = run_history_status(current_info, run_index)
     log_reference = _resolve_log_reference(
         task,
         run_index=run_index,
@@ -499,6 +500,7 @@ def _selected_run_record(
         "exit_code": value_at("exit_codes"),
         "source_state": value_at("source_states") or None,
         "environment": value_at("run_environments") or None,
+        "input": load_run_input(task_dir, run_index),
         "gpu_wait": (current_info.get("gpu_wait_runs", {}) or {}).get(str(run_index)),
         "record": value_at("records") or {},
         "track": value_at("tracks") or {},
@@ -584,6 +586,7 @@ def _task_record(
     latest_log = latest_log_reference.path
     pids = info.get("pids", task.get("pids", [])) or []
     latest_pid = next((pid for pid in reversed(pids) if pid), None)
+    gpu_wait_rule = TaskManager._active_gpu_wait_rule(info)
 
     record: dict[str, Any] = {
         "name": str(task.get("name", "") or os.path.basename(task_dir)),
@@ -597,7 +600,7 @@ def _task_record(
         "payload": _normalized_path(payload_path) if payload_path else None,
         "latest_log": _normalized_path(latest_log) if latest_log and os.path.isfile(latest_log) else None,
         "load_error": task.get("_load_error"),
-        "gpu_wait_rule": info.get("gpu_wait_rule", task.get("gpu_wait_rule")),
+        "gpu_wait_rule": None if gpu_wait_rule == "off" else gpu_wait_rule,
         "gpu_wait": TaskManager._serialized_gpu_wait(info),
     }
     if detailed:
@@ -856,10 +859,18 @@ def _capture_task_run_identity(task: dict[str, Any]) -> _TaskRunIdentity:
         else _latest_run_index(task, info)
     )
     runner_id = str(info.get("runner_id", "") or "")
+    attempt_id = str(info.get("_attempt_id", "") or "") or None
+    unstarted_terminal = (
+        status in _FINAL_STATUSES and attempt_id is not None
+        and read_run_attempt_id(info, run_index) != attempt_id
+    )
+    if unstarted_terminal:
+        run_index += 1
     return _TaskRunIdentity(
         run_index=run_index,
         runner_id=runner_id if status in _ACTIVE_STATUSES else None,
-        started_queued=status == "queued",
+        started_queued=status == "queued" or unstarted_terminal,
+        attempt_id=attempt_id,
     )
 
 
@@ -874,6 +885,10 @@ def _bound_task_record(
     name = str(task.get("name", "") or "")
     if not info:
         raise CliError(f"cannot read task state: {name}")
+
+    observed_attempt = read_run_attempt_id(info, identity.run_index) or str(info.get("_attempt_id", "") or "")
+    if identity.attempt_id is not None and observed_attempt != identity.attempt_id:
+        raise CliError(f"task run identity changed while observing '{name}'")
 
     current_status = str(info.get("status", "pending") or "pending").lower()
     latest_run = _latest_run_index(task, info)
@@ -942,6 +957,8 @@ def _has_persisted_cancel_request(
         return False
     if _active_run_index(info) != identity.run_index:
         return False
+    if not task_attempt_matches(info, identity.attempt_id):
+        return False
     if str(info.get("runner_id", "") or "") != str(identity.runner_id or ""):
         return False
     return bool(info.get("cancel_requested_at"))
@@ -955,27 +972,80 @@ def _wait_for_task_records(
     require_started: bool = False,
 ) -> list[dict[str, Any]]:
     deadline = time.monotonic() + timeout if timeout > 0 else None
+    remaining = list(tasks)
+    results: dict[str, dict[str, Any]] = {}
+    previous_statuses: dict[str, str] = {}
+    interval = 0.1
     while True:
-        records = [
-            _bound_task_record(task, identities[str(task["name"])])
-            for task in tasks
-        ]
-        statuses = [str(record["status"]) for record in records]
-        if require_started and any(status == "pending" for status in statuses):
-            raise CliError("one or more tasks were not accepted by a runner")
-        if all(status in _FINAL_STATUSES for status in statuses):
-            return records
-        if deadline is not None and time.monotonic() >= deadline:
-            active = [record["name"] for record in records if record["status"] in _ACTIVE_STATUSES]
+        pending = []
+        progressed = False
+        for task in remaining:
+            name = str(task["name"])
+            record = _bound_task_record(task, identities[name])
+            results[name] = record
+            status = str(record["status"])
+            if require_started and status == "pending":
+                raise CliError("one or more tasks were not accepted by a runner")
+            if status in _FINAL_STATUSES:
+                # This result belongs to the captured run, even after the task reruns.
+                progressed = True
+            else:
+                pending.append(task)
+                progressed |= name in previous_statuses and previous_statuses[name] != status
+                previous_statuses[name] = status
+        if not pending:
+            return [results[str(task["name"])] for task in tasks]
+        now = time.monotonic()
+        if deadline is not None and now >= deadline:
+            active = [str(task["name"]) for task in pending]
             raise CliError("timed out waiting for: " + ", ".join(active))
-        time.sleep(0.1)
+        if progressed:
+            interval = 0.1
+        time.sleep(interval if deadline is None else min(interval, deadline - now))
+        interval = min(1.0, interval * 1.5)
+        remaining = pending
 
 
 class _QueueProgressOutput:
-    """Fit carriage-return GPU updates to one terminal row, leaving stored logs intact."""
+    """Redraw complete carriage-return GPU updates within the terminal."""
 
     def __init__(self) -> None:
         self.line: str | None = None
+        self._rows: list[str] = []
+
+    @staticmethod
+    def _wrap(text: str, columns: int) -> list[str]:
+        rows = [""]
+        width = 0
+        for char in text:
+            if not char.isprintable():
+                continue
+            char_width = (
+                0 if unicodedata.combining(char) else
+                2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+            )
+            if rows[-1] and width + char_width > columns:
+                rows.append("")
+                width = 0
+            rows[-1] += char
+            width += char_width
+        return rows
+
+    def _draw(self) -> str:
+        size = shutil.get_terminal_size()
+        columns = max(1, size.columns)
+        # Hard line breaks keep the existing block stable when widening. When
+        # narrowing, terminals may reflow each old hard line onto several rows.
+        old_rows = sum(len(self._wrap(row, columns)) for row in self._rows)
+        old_rows = min(old_rows, max(0, size.lines - 1))
+        clear = "\r\x1b[2K"
+        clear += "\x1b[1A\r\x1b[2K" * old_rows
+        # Leave the last column unused to avoid the terminal's pending autowrap
+        # state; trailing padding in queue.log does not need its own rows.
+        self._rows = self._wrap((self.line or "").rstrip(), max(1, columns - 1))
+        # Keep the cursor below the block. Some terminals do not reflow the
+        # cursor's own line on resize, so leaving it on a status row is unsafe.
+        return clear + "\r\n".join(self._rows) + "\r\n"
 
     def render(self, content: str) -> str:
         output = []
@@ -986,55 +1056,87 @@ class _QueueProgressOutput:
                 output.append(part)
             elif part == "\n":
                 self.line = None
-                output.append(part)
+                if not self._rows:
+                    output.append("\r\n")
+                self._rows = []
             elif part:
-                columns = max(1, shutil.get_terminal_size().columns - 1)
-                self.line = (self.line + part)[:columns + 1]
-                characters = [
-                    (char, 0 if unicodedata.combining(char) else
-                     2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1)
-                    for char in self.line if char.isprintable()
-                ]
-                suffix = "." * min(3, columns) if sum(width for _, width in characters) > columns else ""
-                budget = columns - len(suffix)
-                visible = ""
-                width = 0
-                for char, char_width in characters:
-                    if width + char_width > budget:
-                        break
-                    visible += char
-                    width += char_width
-                output.append("\r" + visible + suffix + " " * (columns - width - len(suffix)))
+                self.line += part
+                output.append(self._draw())
         return "".join(output)
 
     def finish(self) -> None:
         if self.line is not None:
-            sys.stdout.write("\n")
+            if not self._rows:
+                sys.stdout.write("\r\n")
             sys.stdout.flush()
             self.line = None
+            self._rows = []
+
+
+def _log_tail_offset(path: str, lines: int) -> int:
+    """Find a line-aligned starting offset using bounded reverse reads."""
+    try:
+        with open(path, "rb", opener=regular_file_opener) as handle:
+            position = os.fstat(handle.fileno()).st_size
+            if lines == 0:
+                return position
+            needed = lines
+            first = True
+            while position:
+                read_size = min(position, 65536)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                if len(chunk) != read_size:
+                    # The log was truncated after the size snapshot; restart safely.
+                    return 0
+                if first:
+                    needed += int(chunk.endswith(b"\n"))
+                    first = False
+                breaks = chunk.count(b"\n")
+                if breaks >= needed:
+                    end = len(chunk)
+                    for _ in range(needed):
+                        end = chunk.rfind(b"\n", 0, end)
+                    return position + end + 1
+                needed -= breaks
+        return 0
+    except (OSError, ValueError) as exc:
+        raise CliError(f"cannot read log tail: {exc}") from exc
+
+
+def _print_log_chunk(content: str, progress: _QueueProgressOutput | None) -> None:
+    if progress is not None:
+        content = progress.render(content)
+    try:
+        sys.stdout.write(content)
+    except UnicodeEncodeError:
+        encoding = str(getattr(sys.stdout, "encoding", "") or "utf-8")
+        safe_content = content.encode(encoding, errors="replace").decode(encoding)
+        sys.stdout.write(safe_content)
+    sys.stdout.flush()
 
 
 def _write_available_log(path: str, offset: int, progress: _QueueProgressOutput | None = None) -> int:
+    pending_cr = ""
     while True:
         content, next_offset = safe_read_log(path, offset, max_bytes=65536)
         if next_offset < offset:
             offset = 0
+            pending_cr = ""
             continue
         if next_offset == offset:
+            if pending_cr:
+                _print_log_chunk(pending_cr, progress)
             return offset
         if not content:
             offset = next_offset
             continue
-        content = content.replace("\r\n", "\n")
-        if progress is not None:
-            content = progress.render(content)
-        try:
-            sys.stdout.write(content)
-        except UnicodeEncodeError:
-            encoding = str(getattr(sys.stdout, "encoding", "") or "utf-8")
-            safe_content = content.encode(encoding, errors="replace").decode(encoding)
-            sys.stdout.write(safe_content)
-        sys.stdout.flush()
+        content = pending_cr + content
+        pending_cr = "\r" if content.endswith("\r") else ""
+        if pending_cr:
+            content = content[:-1]
+        _print_log_chunk(content.replace("\r\n", "\n"), progress)
         offset = next_offset
 
 
@@ -1043,10 +1145,22 @@ def _follow_task(
     *,
     identity: _TaskRunIdentity,
     initial_queue_offset: int = 0,
+    tail: int | None = None,
 ) -> dict[str, Any]:
     progress = _QueueProgressOutput() if sys.stdout.isatty() else None
+    first_read = True
+    previous_path = ""
+    previous_identity = ""
 
     def write_log(path: str, position: int) -> int:
+        nonlocal first_read, previous_path, previous_identity
+        current_identity = log_file_identity(path)
+        if path == previous_path and current_identity and previous_identity != current_identity:
+            position = 0
+        if first_read and tail is not None:
+            position = _log_tail_offset(path, tail)
+        first_read = False
+        previous_path, previous_identity = path, current_identity
         if progress is not None:
             if os.path.basename(path) == QUEUE_LOG_FILENAME:
                 return _write_available_log(path, position, progress)
@@ -1076,8 +1190,11 @@ def _follow_task_logs(
                 run_index=identity.run_index,
             )
             next_path = reference.path
-            if current_path and not os.path.isfile(next_path):
-                next_path = current_path
+            if not os.path.isfile(next_path):
+                if current_path:
+                    next_path = current_path
+                elif identity.started_queued and latest_record["status"] in _FINAL_STATUSES:
+                    next_path = latest_record.get("latest_log") or next_path
             next_offset = 0
         else:
             next_path = _resolve_log_reference(task).path
@@ -1123,6 +1240,7 @@ def _cancel_submitted_tasks_after_interrupt(
             requested = manager.request_task_cancel(
                 name,
                 expected_runner_id=identity.runner_id,
+                expected_attempt_id=identity.attempt_id,
                 expected_run_index=identity.run_index,
             )
         except Exception:
@@ -1184,6 +1302,7 @@ def _tasks_owned_by_submission(
             len(parts) != 3
             or parts[1] != str(runner_pid)
             or parts[2] != submission_token
+            or not task_attempt_matches(info, submission_token)
         ):
             continue
         name = str(task.get("name", "") or "")
@@ -1194,6 +1313,7 @@ def _tasks_owned_by_submission(
         identities[name] = _TaskRunIdentity(
             run_index=expected_run,
             runner_id=str(info.get("runner_id", "") or ""),
+            attempt_id=submission_token,
             started_queued=str(info.get("status", "") or "").lower() == "queued",
         )
     return owned, identities
@@ -1308,6 +1428,7 @@ def _submit_and_wait(
             name: _TaskRunIdentity(
                 run_index=expected_runs[name],
                 runner_id=submission.runner_id,
+                attempt_id=submission.attempt_id,
                 started_queued=True,
             )
             for name in names
@@ -1353,6 +1474,7 @@ def _submit_and_wait(
                     name: _TaskRunIdentity(
                         run_index=expected_runs[name],
                         runner_id=submission.runner_id,
+                        attempt_id=submission.attempt_id,
                         started_queued=True,
                     )
                     for name in names
@@ -1619,7 +1741,6 @@ def cmd_exec(context: Any, args: Any) -> int:
                     shell_executable=shell_executable,
                     shell_kind=shell_kind,
                     env=env,
-                    gpu_wait_rule=getattr(args, "gpu_wait", None),
                 )
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
@@ -1631,6 +1752,7 @@ def cmd_exec(context: Any, args: Any) -> int:
                 [task],
                 workers=1,
                 detach=bool(args.detach),
+                gpu_wait_rule=getattr(args, "gpu_wait", None),
             )
 
 
@@ -1807,9 +1929,11 @@ def cmd_ls(context: Any, args: Any, manager: TaskManager) -> int:
         tasks = [task for task in tasks if bool(task.get("pinned"))] + [
             task for task in tasks if not bool(task.get("pinned"))
         ]
-        records = [_task_record(task) for task in tasks]
+        if args.limit is not None:
+            tasks = tasks[: args.limit]
+        records = [_task_record(task, info_snapshot=task) for task in tasks]
 
-    if args.limit is not None:
+    if args.trash and args.limit is not None:
         records = records[: args.limit]
     if context.json_output:
         _json_dump({"tasks": records, "count": len(records), "trash": bool(args.trash)})
@@ -1896,17 +2020,29 @@ def cmd_show(context: Any, args: Any, manager: TaskManager) -> int:
         print(f"Exit code:  {exit_code}" if exit_code is not None else "Exit code:  -")
         print(f"Source:     {run['source_state'] or '-'}")
         print(f"Run log:    {run['log'] or '-'}")
+        saved_input = run["input"]
+        if saved_input is None:
+            print("Saved input: unavailable (not captured for this run)")
+        else:
+            print("Saved input:")
+            print(saved_input["payload_text"].rstrip())
+            print(f"Saved cwd:  {saved_input.get('workdir') or '-'}")
+            if saved_input.get("shell_executable"):
+                print(f"Saved shell: {saved_input['shell_executable']}")
+            print("Saved overrides: " + json.dumps(saved_input["environment"], ensure_ascii=False, sort_keys=True))
     if record["command"]:
-        print(f"Command:    {record['command']}")
+        label = "Current command" if selected_run is not None else "Command"
+        print(f"{label}:    {record['command']}")
     if record["workdir"]:
-        print(f"Workdir:    {_normalized_path(record['workdir'])}")
+        label = "Current workdir" if selected_run is not None else "Workdir"
+        print(f"{label}:    {_normalized_path(record['workdir'])}")
     if record["shell_kind"]:
         print(f"Shell:      {record['shell_kind']}")
     if record["config"]:
-        print("Config:")
+        print("Current config:" if selected_run is not None else "Config:")
         print(OmegaConf.to_yaml(OmegaConf.create(record["config"]), resolve=False).rstrip())
     if record["env"]:
-        print("Environment:")
+        print("Current environment:" if selected_run is not None else "Environment:")
         for key, value in sorted(record["env"].items()):
             print(f"  {key}={value}")
     if record["notes"]:
@@ -1914,6 +2050,33 @@ def cmd_show(context: Any, args: Any, manager: TaskManager) -> int:
     if record["load_error"]:
         print(f"Load error: {record['load_error']}")
     return 0
+
+
+def cmd_diff(context: Any, args: Any, manager: TaskManager) -> int:
+    inputs = []
+    for reference in (args.left, args.right):
+        task, run_index = _resolve_task_run_reference(manager, reference)
+        if run_index is None:
+            raise CliUsageError("diff requires two TASK@RUN references")
+        inputs.append(_selected_run_record(task, run_index, info=load_task_metadata(task["dir"], raise_error=True))["input"])
+    result = compare_run_inputs(inputs[0], inputs[1], left_label=args.left, right_label=args.right)
+    if context.json_output:
+        _json_dump(result)
+    elif not result["available"]:
+        print("Saved input unavailable for: " + ", ".join(
+            side["reference"] for side in (result["left"], result["right"]) if not side["available"]
+        ))
+    elif result["equal"]:
+        print("Run inputs are identical.")
+    else:
+        print(result["diff"], end="")
+        if result["truncated"]:
+            print(
+                "Diff shortened for display (256 KiB / 4000 lines). "
+                "Read full saved inputs with 'pyr show TASK@RUN --json'.",
+                file=sys.stderr,
+            )
+    return 0 if result["available"] else 1
 
 
 def cmd_log(context: Any, args: Any, manager: TaskManager) -> int:
@@ -1925,6 +2088,8 @@ def cmd_log(context: Any, args: Any, manager: TaskManager) -> int:
         raise CliUsageError("log accepts either --follow or --run, not both")
     if args.follow and args.path:
         raise CliUsageError("log accepts either --follow or --path, not both")
+    if args.path and args.tail is not None:
+        raise CliUsageError("log accepts either --tail or --path, not both")
     if context.json_output and not args.path:
         raise CliUsageError("--json is only supported by log together with --path")
     log_info = None
@@ -1954,11 +2119,12 @@ def cmd_log(context: Any, args: Any, manager: TaskManager) -> int:
         return 0
 
     if not args.follow:
-        _write_available_log(reference.path, 0)
+        offset = _log_tail_offset(reference.path, args.tail) if args.tail is not None else 0
+        _write_available_log(reference.path, offset)
         return 0
 
     assert identity is not None
-    record = _follow_task(task, identity=identity)
+    record = _follow_task(task, identity=identity, **({"tail": args.tail} if args.tail is not None else {}))
     return 0 if record["status"] == "completed" else 1
 
 
@@ -2006,6 +2172,7 @@ def cmd_stop(context: Any, args: Any, manager: TaskManager) -> int:
         if not manager.request_task_cancel(
             name,
             expected_runner_id=identity.runner_id,
+            expected_attempt_id=identity.attempt_id,
             expected_run_index=identity.run_index,
         ):
             if not _has_persisted_cancel_request(task, identity):
@@ -2642,6 +2809,8 @@ def dispatch(context: Any, args: Any) -> int:
             raise CliUsageError("--follow cannot be combined with --run")
         if args.follow and args.path:
             raise CliUsageError("--follow cannot be combined with --path")
+        if args.tail is not None and args.path:
+            raise CliUsageError("--tail cannot be combined with --path")
         if context.json_output and not args.path:
             raise CliUsageError("log --json requires --path")
     if handler == "config" and not args.config_action:
@@ -2678,6 +2847,8 @@ def dispatch(context: Any, args: Any) -> int:
             return cmd_status(context, manager, workspace)
         if handler == "show":
             return cmd_show(context, args, manager)
+        if handler == "diff":
+            return cmd_diff(context, args, manager)
         if handler == "log":
             return cmd_log(context, args, manager)
         if handler == "wait":

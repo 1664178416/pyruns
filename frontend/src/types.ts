@@ -75,6 +75,7 @@ export interface Task {
   name: string
   status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
   dir: string
+  task_identity?: string | null
   config: Record<string, any>
   config_text: string
   config_file: string
@@ -303,9 +304,10 @@ export interface TaskLogs {
 }
 
 export interface LogStreamMessage {
-  type: 'chunk' | 'reset'
+  type: 'chunk' | 'reset' | 'ready' | 'heartbeat' | 'error'
   task_name: string
-  content: string
+  content?: string
+  detail?: string
   offset?: number
   log_file_name?: string
   log_identity?: string
@@ -405,4 +407,53 @@ export interface PathValidationResult {
   normalized_path: string
   path_type: 'file' | 'directory' | ''
   message: string
+}
+
+export interface RunInput {
+  schema_version: 1
+  run_index: number
+  captured_at: string
+  task_kind: string
+  payload_file: string
+  payload_text: string
+  script: string | null
+  command: string[] | string | null
+  workdir: string
+  shell_executable: string | null
+  environment: Record<string, string>
+  launch_argv: string[]
+}
+
+export interface RunInputDiff {
+  schema_version: 1
+  left: { reference: string; available: boolean }
+  right: { reference: string; available: boolean }
+  available: boolean
+  equal: boolean | null
+  changed_fields: string[]
+  diff: string
+  truncated?: boolean
+}
+
+export interface RunSummary {
+  task_name: string
+  run_index: number
+  reference: string
+  status: string | null
+  start_time: string | number | null
+  finish_time: string | number | null
+  duration_seconds: number | null
+  exit_code: number | null
+  source_state: string | null
+  environment: RunEnvironment | null
+  record: unknown
+  input_available: boolean
+}
+
+export interface RunComparison {
+  schema_version: 1
+  left: RunSummary
+  right: RunSummary
+  input_diff: RunInputDiff
+  metric_rows?: { key: string; left: string; right: string; changed: boolean; delta: string | null }[]
 }

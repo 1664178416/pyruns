@@ -54,6 +54,7 @@ _RUN_HISTORY_KEYS = (
     "pids",
     "pid_create_times",
     "run_statuses",
+    "run_attempt_ids",
     "durations",
     "exit_codes",
     "source_states",
@@ -102,12 +103,16 @@ def namespace_operation_is_live(operation: Any, *, local_host: str = _LOCK_OWNER
     return is_pid_running(pid) or lease_live
 
 
-def guard_task_metric_write(info: Dict[str, Any]) -> None:
+def guard_task_metric_write(
+    info: Dict[str, Any], *, run_index: int | None = None, expected_attempt_id: str = "",
+) -> None:
     """Reject SDK writes under the task lock before opening a metric store."""
     operation = info.get(NAMESPACE_OPERATION_KEY)
     if isinstance(operation, dict) and namespace_operation_is_live(operation):
         kind = str(operation.get("kind", "move") or "move")
         raise RuntimeError(f"task directory is being prepared for {kind}")
+    if expected_attempt_id and (run_index is None or read_run_attempt_id(info, run_index) != expected_attempt_id):
+        raise RuntimeError("task run identity changed; SDK data belongs to a different execution")
 
 
 def _thread_lock_for(task_dir: str) -> threading.RLock:
@@ -842,14 +847,20 @@ def update_task_metadata(
     return update_task_info(task_dir, updater, timeout_sec=timeout_sec, include_tracks=False)
 
 
-def append_task_track(task_dir: str, data: Dict[str, Any], *, run_index: int | None = None) -> None:
+def append_task_track(
+    task_dir: str, data: Dict[str, Any], *, run_index: int | None = None, expected_attempt_id: str = "",
+) -> None:
     """Persist one SDK track update without rewriting a large history."""
     from pyruns.utils.track_store import encode_values
 
-    append_task_track_payloads(task_dir, (encode_values(data),), run_index=run_index)
+    append_task_track_payloads(
+        task_dir, (encode_values(data),), run_index=run_index, expected_attempt_id=expected_attempt_id,
+    )
 
 
-def append_task_track_payloads(task_dir: str, payloads: tuple[str, ...], *, run_index: int | None = None) -> None:
+def append_task_track_payloads(
+    task_dir: str, payloads: tuple[str, ...], *, run_index: int | None = None, expected_attempt_id: str = "",
+) -> None:
     """Persist already validated JSON points together under the task write lock."""
     from pyruns.utils.track_store import TRACK_STORE_KEY, append_point, append_points
 
@@ -857,7 +868,7 @@ def append_task_track_payloads(task_dir: str, payloads: tuple[str, ...], *, run_
         return
     with task_info_lock(task_dir, create_dir=False):
         info = load_task_metadata(task_dir, raise_error=True)
-        guard_task_metric_write(info)
+        guard_task_metric_write(info, run_index=run_index, expected_attempt_id=expected_attempt_id)
         previous_slots = run_slot_count(info)
         target = run_index if run_index is not None else max(1, previous_slots)
         slot = ensure_run_slot(info, target)
@@ -913,6 +924,7 @@ def ensure_run_slot(meta: Dict[str, Any], run_index: int) -> int:
     meta["pids"] = list(meta.get("pids", []) or [])
     meta["pid_create_times"] = list(meta.get("pid_create_times", []) or [])
     meta["run_statuses"] = list(meta.get("run_statuses", []) or [])
+    meta["run_attempt_ids"] = list(meta.get("run_attempt_ids", []) or [])
     meta["durations"] = list(meta.get("durations", []) or [])
     meta["exit_codes"] = list(meta.get("exit_codes", []) or [])
     meta["source_states"] = list(meta.get("source_states", []) or [])
@@ -930,6 +942,8 @@ def ensure_run_slot(meta: Dict[str, Any], run_index: int) -> int:
         meta["pid_create_times"].append(None)
     while len(meta["run_statuses"]) < target:
         meta["run_statuses"].append("")
+    while len(meta["run_attempt_ids"]) < target:
+        meta["run_attempt_ids"].append("")
     while len(meta["durations"]) < target:
         meta["durations"].append(None)
     while len(meta["exit_codes"]) < target:
@@ -1100,6 +1114,7 @@ def normalize_run_history(meta: Dict[str, Any]) -> int:
     pids = list(meta.get("pids", []) or [])
     pid_create_times = list(meta.get("pid_create_times", []) or [])
     run_statuses = list(meta.get("run_statuses", []) or [])
+    run_attempt_ids = list(meta.get("run_attempt_ids", []) or [])
     durations = list(meta.get("durations", []) or [])
     exit_codes = list(meta.get("exit_codes", []) or [])
     source_states = list(meta.get("source_states", []) or [])
@@ -1117,6 +1132,8 @@ def normalize_run_history(meta: Dict[str, Any]) -> int:
         pid_create_times.append(None)
     while len(run_statuses) < total:
         run_statuses.append("")
+    while len(run_attempt_ids) < total:
+        run_attempt_ids.append("")
     while len(durations) < total:
         durations.append(None)
     while len(exit_codes) < total:
@@ -1135,6 +1152,7 @@ def normalize_run_history(meta: Dict[str, Any]) -> int:
     meta["pids"] = pids[:total]
     meta["pid_create_times"] = pid_create_times[:total]
     meta["run_statuses"] = run_statuses[:total]
+    meta["run_attempt_ids"] = run_attempt_ids[:total]
     meta["durations"] = durations[:total]
     meta["exit_codes"] = exit_codes[:total]
     meta["source_states"] = source_states[:total]
@@ -1144,6 +1162,47 @@ def normalize_run_history(meta: Dict[str, Any]) -> int:
     meta["run_index"] = total
     meta.pop("_run_index", None)
     return total
+
+
+def read_run_attempt_id(meta: Dict[str, Any], run_index: int) -> str:
+    """Return the immutable admission token stored for one realized run."""
+    values = meta.get("run_attempt_ids", []) or []
+    if isinstance(values, (list, tuple)) and 0 < run_index <= len(values):
+        return str(values[run_index - 1] or "")
+    return ""
+
+
+def task_attempt_matches(
+    meta: Dict[str, Any], expected_attempt_id: str | None, *, run_index: int | None = None,
+) -> bool:
+    """Compare an admission token; callers without one retain legacy behavior."""
+    if expected_attempt_id is None:
+        return True
+    actual = read_run_attempt_id(meta, run_index) if run_index is not None else str(meta.get("_attempt_id", "") or "")
+    return actual == expected_attempt_id
+
+
+def run_history_status(meta: Dict[str, Any], run_index: int) -> str | None:
+    """Resolve one run's state without assigning a new queue state to old history."""
+    total = run_slot_count(meta)
+    if not 1 <= run_index <= total:
+        return None
+    statuses = meta.get("run_statuses", []) or []
+    recorded = str(statuses[run_index - 1] or "").strip().lower() if run_index <= len(statuses) else ""
+    if recorded in {"completed", "failed", "cancelled"}:
+        return recorded
+    codes = meta.get("exit_codes", []) or []
+    code = codes[run_index - 1] if run_index <= len(codes) else None
+    if code is not None and code != "":
+        try:
+            value = int(code)
+        except (TypeError, ValueError, OverflowError):
+            return "failed"
+        return "completed" if value == 0 else "cancelled" if value == 130 else "failed"
+    status = str(meta.get("status", "") or "").strip().lower()
+    if run_index == total and status in {"pending", "running", "completed", "failed", "cancelled"}:
+        return status
+    return None
 
 
 def _serialize_task_info(info_path: str, payload: Dict[str, Any]) -> str:

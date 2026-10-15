@@ -67,8 +67,8 @@ def parse_gpu_wait_rule(value: str) -> GpuWaitRule:
         if text == "off":
             return GpuWaitRule(enabled=False)
         parts = text.split("-")
-        if not 2 <= len(parts) <= 5 or any(not part for part in parts):
-            raise ValueError("provide 2 to 5 non-empty fields")
+        if len(parts) != 5 or any(not part for part in parts):
+            raise ValueError("provide all 5 non-empty fields")
         selector = parts[0]
         device_ids: tuple[int, ...] = ()
         if selector.startswith("device="):
@@ -84,13 +84,13 @@ def parse_gpu_wait_rule(value: str) -> GpuWaitRule:
                 raise ValueError("GPU count must be a positive integer")
             count = int(selector)
         free_memory = _quantity(parts[1], _MEMORY_UNITS, "free memory (GiB)")
-        idle = _quantity(parts[2] if len(parts) > 2 else "70", {"": 1, "%": 1}, "idle percent")
+        idle = _quantity(parts[2], {"": 1, "%": 1}, "idle percent")
         if not 0 <= idle <= 100:
             raise ValueError("idle percent must be between 0 and 100")
-        stable = _quantity(parts[3] if len(parts) > 3 else "15", {"": 1, **_TIME_UNITS}, "stable time")
-        timeout = _quantity(parts[4] if len(parts) > 4 else "48", {"": 3600, **_TIME_UNITS}, "wait timeout")
+        stable = _quantity(parts[3], {"": 1, **_TIME_UNITS}, "stable time")
+        timeout = _quantity(parts[4], {"": 3600, **_TIME_UNITS}, "wait timeout")
         return GpuWaitRule(True, count, device_ids, free_memory, idle, stable, timeout)
     except ValueError as exc:
         raise ValueError(
-            f"invalid --gpu-wait: {exc}; use {GPU_WAIT_FORMAT}, e.g. 2-20-70-15-2, or off"
+            f"invalid --gpu-wait: {exc}; use {GPU_WAIT_FORMAT}, e.g. 2-20-70-15-2"
         ) from exc

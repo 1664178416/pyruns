@@ -15,8 +15,9 @@ import {
   RefreshCw, RotateCcw, Rows3, Search, Square, Terminal, Trash2,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { useShallow } from 'zustand/react/shallow'
 import { useMonitorStore, useSearchSettingsStore, useTaskStore, useToastStore, useWorkspaceStore } from '@/store'
-import { usePolling } from '@/hooks/usePolling'
+import { useTaskRefresh } from '@/hooks/useTaskRefresh'
 import TaskSearchInput from '@/components/shared/TaskSearchInput'
 import TaskSearchMatches from '@/components/shared/TaskSearchMatches'
 import SelectionIndicator from '@/components/shared/SelectionIndicator'
@@ -193,7 +194,18 @@ export default function ManagerPage() {
     setQuery, searchField, setSearchField, setStatusFilter, setSortMode, setOffset, setColumns, fetchTasks,
     searchOptions, setSearchOptions, searchLimitHit,
     toggleSelect, selectAll, clearSelection,
-  } = useTaskStore()
+  } = useTaskStore(useShallow(state => ({
+    tasks: state.tasks, total: state.total, statusCounts: state.statusCounts,
+    offset: state.offset, limit: state.limit, query: state.query,
+    statusFilter: state.statusFilter, sortMode: state.sortMode,
+    selectedIds: state.selectedIds, loading: state.loading, error: state.error, columns: state.columns,
+    setQuery: state.setQuery, searchField: state.searchField, setSearchField: state.setSearchField,
+    setStatusFilter: state.setStatusFilter, setSortMode: state.setSortMode,
+    setOffset: state.setOffset, setColumns: state.setColumns, fetchTasks: state.fetchTasks,
+    searchOptions: state.searchOptions, setSearchOptions: state.setSearchOptions,
+    searchLimitHit: state.searchLimitHit, toggleSelect: state.toggleSelect,
+    selectAll: state.selectAll, clearSelection: state.clearSelection,
+  })))
   const maxResults = useSearchSettingsStore(state => state.maxResults)
 
   const [maxWorkersInput, setMaxWorkersInput] = useState('2')
@@ -235,10 +247,13 @@ export default function ManagerPage() {
     return true
   }, [notify])
 
-  const hasActive = statusCounts
-    ? statusCounts.running + statusCounts.queued > 0
-    : tasks.some(task => task.status === 'running' || task.status === 'queued')
-  usePolling(() => fetchTasks({ background: true }), hasActive ? 3000 : 10000, !query, false)
+  const workspaceKey = useWorkspaceStore(state => String(state.workspace?.run_root || ''))
+  useTaskRefresh(
+    fromDisk => fetchTasks({ background: true, refresh: fromDisk }),
+    workspaceKey,
+    Boolean(query),
+    loading,
+  )
 
   useEffect(() => {
     void fetchTasks()

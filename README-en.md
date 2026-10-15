@@ -76,12 +76,44 @@ pyr ui shell
 - Every task has a stable directory instead of disappearing into terminal scrollback.
 - Commands, arguments, environment variables, logs, metrics, and artifacts stay together.
 - Shell commands and Python configuration experiments share one lifecycle.
+- `--gpu-wait` starts work automatically when the requested GPUs meet free-memory and idle thresholds.
 - One command performs one operation, making the same interface useful to people, scripts, CI, and AI agents.
 - Foreground execution returns the real task result; a batch returns non-zero if any task fails.
 - Detached runners outlive the invoking terminal and do not open extra console windows on Windows.
 - The CLI and Web UI share the same disk state.
 
 ![Home](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/tab_home.png)
+
+## Run automatically when GPUs are free
+
+Both `exec` and `run` accept `--gpu-wait` with all five startup fields in order:
+
+```text
+COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS
+```
+
+```bash
+pyr exec -n gpu-train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
+# Save a complete multiline script and run it after GPUs become available
+pyr exec -nt gpu-pipeline -d --gpu-wait 1-8-70-15-2 --stdin < pipeline.sh
+```
+
+`2-20-70-15-2` requires two GPUs, each with at least **20 GiB free** and **70% idle**,
+qualifying together for **15 seconds**, with at most **2 hours** of queueing.
+Idle percent is `100 - GPU utilization`; the timeout does not limit command runtime.
+All five fields are required; trailing fields cannot be omitted.
+`-d` detaches both waiting and execution.
+
+Waiting output compares current values with all five requirements: GPU count, per-GPU free memory and idle percent,
+continuous qualifying time, and queueing time, with `ready` / `blocked` states and reasons.
+For example, 93% GPU utilization means 7% idle, which does not meet a 100% idle requirement.
+
+The CLI rule applies only to this invocation and does not become a task default.
+Pass it again on a rerun. Omitting `--gpu-wait` skips GPU waiting.
+The UI Runtime switch affects only future tasks submitted from the UI.
+Inspect this run's rule and waiting state with
+`pyr show gpu-train`, or current GPU metrics with `pyr metrics`.
+See the [CLI guide](docs/cli-guide.md) or `pyr exec --help` for device selection and units.
 
 ## Git-style CLI
 

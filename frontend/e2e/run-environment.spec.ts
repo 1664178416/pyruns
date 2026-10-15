@@ -21,6 +21,14 @@ for (const runCount of [1, 3]) {
       run_statuses: ['failed', 'completed', 'failed'].slice(-runCount), records: [], tracks: [],
       run_environments: [null, { ...environment, host: 'gpu-server-01' }, environment].slice(-runCount),
     }
+    let inputRequests = 0
+    await page.route('**/api/tasks/training/runs/*/input', route => {
+      inputRequests += 1
+      const run = Number(route.request().url().match(/runs\/(\d+)\/input/)?.[1])
+      return route.fulfill({ json: { schema_version: 1, task_name: 'training', run_index: run, input: run === 1 ? null : {
+        payload_text: `echo captured-run-${run}\n`, workdir: '/app/original-project', shell_executable: '/usr/bin/bash', environment: { SEED: String(run) },
+      } } })
+    })
     await page.route('**/api/tasks?*', route => route.fulfill({ json: {
       items: [task], total: 1, offset: 0, limit: 50, has_more: false,
       status_counts: { pending: 0, queued: 0, running: 0, completed: 0, failed: 1, cancelled: 0 },
@@ -42,7 +50,12 @@ for (const runCount of [1, 3]) {
     await expect(panel.getByText('gpu-server-02', { exact: true })).toHaveCount(1)
     await expect(current.getByText('60.000s', { exact: true })).toHaveCount(1)
     await expect(current.getByText('(empty)', { exact: true })).toHaveCount(0)
+    expect(inputRequests).toBe(0)
     if (runCount > 1) {
+      await current.getByRole('button', { name: 'Saved input', exact: true }).click()
+      await expect(current).toContainText('echo captured-run-3')
+      await expect(current).toContainText('/app/original-project')
+      expect(inputRequests).toBe(1)
       const second = panel.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Run #2' }) })
       await second.locator('summary').click()
       await expect(second).toContainText('gpu-server-01')
@@ -51,6 +64,8 @@ for (const runCount of [1, 3]) {
       await first.locator('summary').click()
       await expect(first).toContainText('Environment was not recorded for this run.')
       await expect(first).not.toContainText('gpu-server-02')
+      await first.getByRole('button', { name: 'Saved input', exact: true }).click()
+      await expect(first).toContainText('Input was not saved for this run.')
     }
     await latest.scrollIntoViewIfNeeded()
     await expect(page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).resolves.toBe(true)

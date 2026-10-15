@@ -156,7 +156,10 @@ def _gpu_wait_argument(value: str) -> str:
     from pyruns.utils.gpu_wait import parse_gpu_wait_rule
 
     try:
-        return parse_gpu_wait_rule(value).canonical
+        rule = parse_gpu_wait_rule(value)
+        if not rule.enabled:
+            raise ValueError("--gpu-wait requires all 5 fields; omit --gpu-wait to run without GPU waiting")
+        return rule.canonical
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
@@ -164,7 +167,7 @@ def _gpu_wait_argument(value: str) -> str:
 def _add_gpu_wait_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gpu-wait", type=_gpu_wait_argument, metavar="RULE",
-        help="wait for GPUs: COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS; or off",
+        help="GPU wait for this run: COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS (all required)",
     )
 
 
@@ -176,21 +179,30 @@ def _gpu_wait_help(program: str) -> str:
         "  Example 2-20-70-15-2: two GPUs, each with >=20 GiB free and >=70% idle,\n"
         "  continuously eligible for 15 seconds; wait at most 2 hours before starting.\n"
         "  GPU idle percent = 100 - reported GPU utilization. All thresholds are per GPU.\n"
+        "  For example, 93% utilization means 7% idle; 100% idle requires 0% utilization.\n"
         "  All requested GPUs must qualify together.\n"
-        "  Omit trailing fields: 1-8 defaults to 70% idle, 15 seconds stable, 48 hours timeout.\n"
+        "  All five fields are required; incomplete rules such as 1-8 are usage errors.\n"
         "  Stability 0 starts as soon as eligible; timeout 0 waits indefinitely.\n"
         "  Optional units are case-insensitive: G/GiB, M/MiB (binary); GB/MB (decimal);\n"
         "  s/sec, m/min, h/hr for time. For example 2-20GiB-70%-15s-2hr.\n"
         "  Use device=0,1-20-70-15-2 to select exactly GPU indices 0 and 1.\n"
-        "  Use off to disable waiting for this task. Never falls back to CPU while waiting.\n"
+        "  Execution never falls back to CPU while waiting.\n"
         "  Each GPU is reserved for one task in this workspace; live metrics detect other work.\n"
-        "  Rules are saved with the task; reruns reuse them unless --gpu-wait overrides them.\n"
-        "  Without this option or a saved rule, project GPU settings apply. Overrides are per task.\n"
+        "  This rule applies only to this invocation; it does not become a task default.\n"
+        "  Pass it again on reruns. Omitting --gpu-wait skips GPU waiting.\n"
+        "  The UI Runtime switch affects only future tasks submitted from the UI.\n"
+        "  Legacy rules stored with tasks are not automatically reused.\n"
         "  CUDA_VISIBLE_DEVICES is respected; unavailable devices remain queued until timeout.\n"
         "  GPU timeout limits queueing only, not the running command's duration.\n"
+        "  Waiting output compares current values with requirements: ready/required GPU count,\n"
+        "  per-GPU free memory and idle %, stable elapsed/required seconds, and wait elapsed/timeout.\n"
+        "  ready/blocked states explain each condition; all blocking reasons are shown.\n"
+        "  Stability resets on failed memory/idle thresholds, missing metrics, or interrupted sampling.\n"
+        "  A reserved GPU can meet the stability target and still be blocked from allocation.\n"
+        "  Missing metrics, devices outside the visible set, and workspace reservations are explicit.\n"
         f"  {program} exec --gpu-wait 2-20-70-15-2 -c \"python train.py --epochs 10\"\n"
-        f"  {program} -w shell run TASK --gpu-wait off\n"
-        f"  {program} -w shell show TASK --json    saved rule and current GPU wait details\n"
+        f"  {program} -w shell run TASK --gpu-wait 1-8-70-15-2\n"
+        f"  {program} -w shell show TASK --json    current run's rule and GPU wait details\n"
         f"  Inspect devices with '{program} metrics'; use '{program} ui shell' for GPU settings."
     )
 
@@ -306,6 +318,16 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a non-negative integer: {value}") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be zero or greater")
+    return parsed
+
+
 def _run_index(value: str) -> int:
     from pyruns.utils.info_io import MAX_RUN_HISTORY_SLOTS
 
@@ -415,9 +437,9 @@ def build_parser(
     command_overview = (
         "All command groups:\n"
         "  task setup       init  exec  add  run\n"
-        "  inspect          ls  status  show  log\n"
+        "  inspect          ls  status  show  diff  log\n"
         "  wait/control     wait  stop  rm  restore  mv  pin\n"
-        "  output/settings  export  config  metrics\n"
+        "  output/settings  export  config  metrics  doctor\n"
         "  optional Web UI  ui  dev\n\n"
         if show_all_commands
         else ""
@@ -777,7 +799,7 @@ def build_parser(
         help_text="show one task's metadata, command, and paths",
         description=(
             "Show one exact task's status, pin, payload, command, working directory, environment, runtime\n"
-            "history, and log paths. Use --run RUN or append @RUN to select one historical run."
+            "history, and log paths. Use --run RUN or append @RUN for a historical run's saved input."
         ),
         epilog=_example_block(
             program,
@@ -791,12 +813,31 @@ def build_parser(
                 "TASK@RUN cannot be combined with --run.",
                 "With --json and a run selector, selected_run contains that run's status, index, exit_code, and log.",
                 "Top-level JSON fields still describe the current task.",
+                "selected_run.input preserves launch-time script/config and task environment overrides; older runs may have null input.",
                 "Use 'log TASK[@RUN]' to print the corresponding log content.",
             ),
         ),
     )
     show.add_argument("task", metavar="TASK[@RUN]", help="exact task name, optionally at one run number")
     show.add_argument("--run", type=_run_index, help="select a historical run number")
+
+    diff = command(
+        "diff",
+        help_text="compare the saved inputs of two runs",
+        description="Compare launch-time script/config, task environment overrides, interpreter, and working directory.",
+        epilog=_example_block(
+            program, "diff train@1 train@2", "diff baseline@1 candidate@1 --json",
+            notes=(
+                "Both references require @RUN and belong to the selected workspace.",
+                "Returns 0 for a successful comparison (including differences), 1 if an input is unavailable.",
+                "Snapshots contain task inputs, not external files or all inherited environment variables.",
+                "Large diffs are shortened (256 KiB / 4000 lines); --json reports truncated.",
+                "Use 'show TASK@RUN --json' to read the complete saved input.",
+            ),
+        ),
+    )
+    diff.add_argument("left", metavar="TASK@RUN", help="first run")
+    diff.add_argument("right", metavar="TASK@RUN", help="second run")
 
     logs = command(
         "log",
@@ -809,6 +850,7 @@ def build_parser(
             program,
             "log smoke",
             "log smoke -f",
+            "log smoke --tail 100 -f",
             "log smoke@2",
             "log smoke --run 2",
             "log smoke --path",
@@ -817,6 +859,7 @@ def build_parser(
                 "TASK@RUN cannot be combined with --run or --follow.",
                 "--follow cannot be combined with --run or --path and rejects a pending task.",
                 "Raw log output is intentionally not JSON; combine --json with --path instead.",
+                "--tail N starts with the last N lines; --tail 0 -f shows only new output. Cannot combine with --path.",
                 "--follow streams bytes until the task finishes; it is not an interactive terminal.",
                 "Plain log returns 0 when read successfully; --follow returns 0 for completed tasks, 1 for failed or cancelled tasks.",
                 "Ctrl+C stops following and returns 130; it does not stop the task.",
@@ -826,6 +869,7 @@ def build_parser(
     )
     logs.add_argument("task", metavar="TASK[@RUN]", help="exact task name, optionally at one run number")
     logs.add_argument("-f", "--follow", action="store_true", help="wait for new output until the task finishes")
+    logs.add_argument("--tail", type=_non_negative_int, metavar="N", help="print the last N lines, then follow if -f; zero skips existing output")
     logs.add_argument("--run", type=_run_index, help="select a historical run number")
     logs.add_argument("--path", action="store_true", help="print only the selected log path")
 
@@ -1107,6 +1151,20 @@ def build_parser(
         ),
     )
 
+    command(
+        "doctor",
+        help_text="check installation, runtimes, and optional workspace storage",
+        description="Check Python/dependency imports, shell, ripgrep, optional NVIDIA GPUs, and existing workspace storage.",
+        epilog=_example_block(
+            program, "doctor", "doctor --json", "-w shell doctor",
+            notes=(
+                "Works without an initialized project. Does not install packages or change task/settings files.",
+                "An existing workspace is checked with disposable read/write, atomic-replace, and lock probes.",
+                "Missing optional NVIDIA GPUs do not fail the check. Exit 1 means a required check failed.",
+            ),
+        ),
+    )
+
     ui = command(
         "ui",
         help_text="start the optional Web UI",
@@ -1269,6 +1327,11 @@ def _main(argv: Sequence[str] | None = None, *, prog: str | None = None) -> int:
             debug=bool(args.debug),
             program=parser.prog,
         )
+
+        if args.handler == "doctor":
+            from pyruns.cli.doctor import cmd_doctor
+
+            return cmd_doctor(context)
 
         from pyruns.cli.commands import dispatch
 

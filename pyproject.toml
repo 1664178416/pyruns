@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyruns"
-version = "0.3.15"
+version = "0.3.16"
 description = "Git-style CLI and web UI for reproducible Python experiments and terminal workloads."
 readme = "README.md"
 license = "MIT"
@@ -34,6 +34,7 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=3.4,<5",
+    "diff-match-patch==20241021",
     "fastapi>=0.110",
     # YAML acceleration supports the tested 2.3 and 2.4 internal APIs.
     "omegaconf>=2.3,<2.5",

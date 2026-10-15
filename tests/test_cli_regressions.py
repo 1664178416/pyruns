@@ -198,7 +198,9 @@ def test_foreground_interrupt_cancels_only_the_tasks_just_submitted(tmp_path, mo
             *,
             expected_runner_id: str | None = None,
             expected_run_index: int | None = None,
+            expected_attempt_id: str | None = None,
         ) -> bool:
+            assert expected_attempt_id == "foreground-attempt"
             cancel_requests.append((name, expected_runner_id, expected_run_index))
             return True
 
@@ -210,6 +212,7 @@ def test_foreground_interrupt_cancels_only_the_tasks_just_submitted(tmp_path, mo
             ("foreground",),
             (),
             runner_id=runner_id,
+            attempt_id="foreground-attempt",
         ),
     )
     monkeypatch.setattr(
@@ -225,6 +228,7 @@ def test_foreground_interrupt_cancels_only_the_tasks_just_submitted(tmp_path, mo
                 run_index=1,
                 runner_id=runner_id,
                 started_queued=True,
+                attempt_id="foreground-attempt",
             )
         }
         waits.append(([str(item["name"]) for item in tasks], float(timeout)))
@@ -430,6 +434,7 @@ def test_stop_rejects_a_run_identity_change_before_cancellation(monkeypatch):
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
             assert name == "race"
             assert expected_runner_id == identity.runner_id
@@ -483,6 +488,7 @@ def test_stop_reports_partial_cancellation_when_one_run_identity_changes(
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
             requests.append((name, expected_runner_id, expected_run_index))
             return name == "first"
@@ -977,9 +983,11 @@ def test_detached_runner_exits_when_claimed_task_state_disappears(tmp_path, monk
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             assert max_workers == 1
             assert expected_run_indices == {"lost": 1}
+            assert gpu_wait_rule == "off"
             return ["lost"] if names == ["lost"] else []
 
         def shutdown(self):
@@ -1043,10 +1051,12 @@ def test_detached_runner_observes_submitted_run_after_new_rerun_starts(
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             assert names == ["repeat"]
             assert max_workers == 1
             assert expected_run_indices == {"repeat": 1}
+            assert gpu_wait_rule == "off"
             return ["repeat"]
 
         def shutdown(self):
@@ -1069,6 +1079,7 @@ def test_detached_runner_observes_submitted_run_after_new_rerun_starts(
             "status": "running",
             "run_index": 2,
             "run_statuses": ["completed", "running"],
+            "_attempt_id": "newer-attempt", "run_attempt_ids": [token, "newer-attempt"],
         },
     )
     monkeypatch.setattr(
@@ -1091,6 +1102,72 @@ def test_detached_runner_observes_submitted_run_after_new_rerun_starts(
     assert receipt is not None
     assert receipt.status == "accepted"
     assert receipt.run_indices == (1,)
+
+
+@pytest.mark.parametrize("first_outcome", ["queued-cancelled", "missing", "foreign", "completed"])
+def test_detached_runner_settled_task_does_not_abort_or_follow_other_attempts(
+    tmp_path, monkeypatch, first_outcome,
+):
+    from pyruns.cli import detached_runner
+
+    names = ["first", "remaining"]
+    tasks = {
+        name: {"name": name, "dir": str(tmp_path / TASKS_DIR / name), "status": "pending"}
+        for name in names
+    }
+    token = "4" * 32
+    _write_test_submission(tmp_path, token, names, [1, 1])
+    first_states = {
+        "queued-cancelled": {"status": "cancelled", "run_index": 0, "run_statuses": [], "_attempt_id": token},
+        "missing": {},
+        "foreign": {"status": "running", "run_index": 1, "runner_id": "foreign"},
+        "completed": {"status": "completed", "run_index": 1, "run_statuses": ["completed"], "run_attempt_ids": [token]},
+    }
+    reads = {name: 0 for name in names}
+    events = []
+
+    class FakeTaskManager:
+        runner_id = "submitted-owner"
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def get_task(self, name):
+            return tasks[name]
+
+        def start_batch_tasks(self, selected, **_kwargs):
+            assert _kwargs["gpu_wait_rule"] == "off"
+            return selected
+
+        def shutdown(self):
+            events.append("shutdown")
+
+    def read(task_dir):
+        name = Path(task_dir).name
+        reads[name] += 1
+        if name == "first":
+            assert reads[name] == 1, "a settled submission must not follow a later attempt"
+            return first_states[first_outcome]
+        return {
+            "status": "completed" if events else "running", "run_index": 1,
+            "runner_id": "submitted-owner", "run_statuses": ["completed"] if events else [],
+            "_attempt_id": token,
+        }
+
+    def finish_remaining(_seconds):
+        assert not events, "the original remaining run should finish after one poll"
+        events.append("remaining-finished")
+
+    monkeypatch.setattr(detached_runner, "_parse_args", lambda: SimpleNamespace(
+        workspace=str(tmp_path), jobs=1, submission_token=token,
+    ))
+    monkeypatch.setattr(detached_runner, "TaskManager", FakeTaskManager)
+    monkeypatch.setattr(detached_runner, "load_task_metadata", read)
+    monkeypatch.setattr(detached_runner.time, "sleep", finish_remaining)
+
+    assert detached_runner.main() == (0 if first_outcome == "completed" else 1)
+    assert events == ["remaining-finished", "shutdown"]
+    assert reads == {"first": 1, "remaining": 2}
 
 
 def test_detached_runner_rejects_run_completed_before_claim(tmp_path, monkeypatch):
@@ -1123,10 +1200,12 @@ def test_detached_runner_rejects_run_completed_before_claim(tmp_path, monkeypatc
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             assert names == ["race"]
             assert max_workers == 1
             assert expected_run_indices == {"race": 1}
+            assert gpu_wait_rule == "off"
             update_task_info(task["dir"], complete_first_run)
             events.append("claim-rejected")
             return []
@@ -1924,7 +2003,9 @@ def test_unresolved_interrupt_cancels_only_exact_submission_owner(
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
+            assert expected_attempt_id == token
             cancel_requests.append((name, expected_runner_id, expected_run_index))
             return True
 
@@ -1942,6 +2023,7 @@ def test_unresolved_interrupt_cancels_only_exact_submission_owner(
             "name": name,
             "status": "queued",
             "runner_id": f"host:{owner}:{token}",
+            "_attempt_id": token,
         }
 
     def wait_for_cancelled(tasks, identities, **_kwargs):
@@ -2034,11 +2116,13 @@ def test_detached_runner_cancels_claimed_tasks_before_reporting_partial(tmp_path
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             name = names[0]
             events.append(f"claim:{name}")
             assert max_workers == 1
             assert expected_run_indices == {name: 1}
+            assert gpu_wait_rule == "off"
             if name == "batch-a":
                 states[task_a["dir"]] = {
                     "status": "queued",
@@ -2053,6 +2137,7 @@ def test_detached_runner_cancels_claimed_tasks_before_reporting_partial(tmp_path
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
             assert expected_runner_id == self.runner_id
             assert expected_run_index == 1

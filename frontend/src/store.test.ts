@@ -49,6 +49,16 @@ function deferred<T>() {
 describe('monitor log text coordinates', () => {
   const empty = { logContent: '', logTextVersion: 0, logTextEnd: 0 }
 
+  it('retains visible output when terminal history is disabled', () => {
+    const text = 'visible output\n'
+    expect(trimMonitorLogContent(text, 0)).toBe(text)
+    useWorkspaceStore.setState({ workspace: { ...workspace('zero-scrollback'), settings: { monitor_scrollback: 0 } } })
+    const next = appendMonitorLogContent(empty, text)
+    expect(next.logContent).toBe(text)
+    expect(monitorLogAppendDelta(empty, next)).toBe(text)
+    useWorkspaceStore.setState({ workspace: null })
+  })
+
   it('appends repeated text even when trimming leaves an identical full window', () => {
     const row = 'same line '.padEnd(127, 'x') + '\n'
     const previous = replaceMonitorLogContent(empty, trimMonitorLogContent(row.repeat(40_000)))

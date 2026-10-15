@@ -19,7 +19,7 @@ from pyruns.cli.submission_protocol import (
     write_submission_receipt,
 )
 from pyruns.core.task_manager import TaskManager, active_task_run_index
-from pyruns.utils.info_io import load_task_metadata
+from pyruns.utils.info_io import load_task_metadata, read_run_attempt_id, task_attempt_matches
 from pyruns.utils.settings import ensure_settings_file, load_settings
 from pyruns.update_coordination import EnvironmentActivityLease
 
@@ -38,8 +38,15 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _submitted_run_status(info: dict[str, Any], run_index: int) -> str | None:
+def _submitted_run_status(
+    info: dict[str, Any], run_index: int, *, expected_runner_id: str | None = None,
+    expected_attempt_id: str | None = None,
+) -> str | None:
     """Return only the lifecycle state belonging to the submitted run."""
+
+    observed_attempt = read_run_attempt_id(info, run_index) or str(info.get("_attempt_id", "") or "")
+    if expected_attempt_id is not None and observed_attempt != expected_attempt_id:
+        return None
 
     run_statuses = info.get("run_statuses", [])
     if isinstance(run_statuses, (list, tuple)) and run_index <= len(run_statuses):
@@ -49,12 +56,17 @@ def _submitted_run_status(info: dict[str, Any], run_index: int) -> str | None:
 
     current = str(info.get("status", "") or "").lower()
     if current in _ACTIVE_STATUSES and active_task_run_index(info) == run_index:
+        if expected_runner_id is not None and info.get("runner_id") != expected_runner_id:
+            return None
         return current
     try:
         current_run_index = int(info.get("run_index", 0) or 0)
     except (TypeError, ValueError, OverflowError):
         return None
-    if current in _FINAL_STATUSES and current_run_index == run_index:
+    if current in _FINAL_STATUSES and (
+        current_run_index == run_index
+        or (expected_attempt_id is not None and current_run_index < run_index)
+    ):
         return current
     return None
 
@@ -94,6 +106,7 @@ def _claimed_tasks_stopped(
     expected_runner_id = str(getattr(tm, "runner_id", "") or "")
     if not expected_runner_id:
         return False
+    attempt_id = getattr(tm, "_submission_attempt_id", None)
     requested: set[str] = set()
     deadline = time.monotonic() + max(0.05, _CLEANUP_TIMEOUT_SEC)
     while True:
@@ -103,6 +116,8 @@ def _claimed_tasks_stopped(
             task_dir = str(task.get("dir", "") or "")
             info = load_task_metadata(task_dir) if task_dir else None
             if not info:
+                return False
+            if not task_attempt_matches(info, attempt_id):
                 return False
             status = str(info.get("status", "") or "").lower()
             if status in _FINAL_STATUSES:
@@ -124,6 +139,7 @@ def _claimed_tasks_stopped(
                         name,
                         expected_runner_id=expected_runner_id,
                         expected_run_index=expected_run_index,
+                        expected_attempt_id=attempt_id,
                     ):
                         requested.add(name)
                 except Exception:
@@ -283,7 +299,8 @@ def main() -> int:
                 [name],
                 max_workers=args.jobs,
                 expected_run_indices={name: expected_run_index},
-                **({"gpu_wait_rule": payload.gpu_wait_rule} if payload.gpu_wait_rule is not None else {}),
+                # UI scheduler settings do not enable GPU waiting for CLI submissions.
+                gpu_wait_rule=payload.gpu_wait_rule or "off",
             )
             if claimed_now != [name]:
                 status = "partial" if claimed else "rejected"
@@ -330,6 +347,8 @@ def main() -> int:
             claimed=claimed,
         )
         accepted_reported = True
+        settled: dict[str, str | None] = {}
+        expected_runner_id = str(getattr(tm, "runner_id", "") or "") or None
         while True:
             if abort_requested(abort_file, token=token):
                 return _stop_and_report(
@@ -344,16 +363,19 @@ def main() -> int:
                     detail="accepted submission was aborted during handoff",
                 )
 
-            infos = [load_task_metadata(str(selected[name]["dir"])) or {} for name in names]
-            if any(not info for info in infos):
-                return 1
-            statuses = [
-                _submitted_run_status(info, run_index)
-                for info, run_index in zip(infos, run_indices, strict=True)
-            ]
-            if any(status is None for status in statuses):
-                return 1
-            if all(status in _FINAL_STATUSES for status in statuses):
+            for name, run_index in zip(names, run_indices, strict=True):
+                if name in settled:
+                    continue
+                info = load_task_metadata(str(selected[name]["dir"])) or {}
+                status = _submitted_run_status(
+                    info, run_index, expected_runner_id=expected_runner_id, expected_attempt_id=token,
+                )
+                if status not in _ACTIVE_STATUSES:
+                    # An unstarted queue cancellation has no realized run slot.
+                    # Lost identities also fail this task, while the remaining
+                    # submitted tasks keep running under this runner's ownership.
+                    settled[name] = status
+            if len(settled) == len(names):
                 if abort_requested(abort_file, token=token):
                     return _stop_and_report(
                         tm,
@@ -366,7 +388,7 @@ def main() -> int:
                         stopped_status="aborted",
                         detail="accepted submission was aborted during handoff",
                     )
-                return 0 if all(status == "completed" for status in statuses) else 1
+                return 0 if all(status == "completed" for status in settled.values()) else 1
             time.sleep(_POLL_INTERVAL_SEC)
     except Exception as exc:
         if receipt_file and not accepted_reported:

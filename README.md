@@ -74,12 +74,40 @@ pyr ui shell
 - 每个任务都有稳定目录，不再靠终端滚屏和记忆找结果。
 - 命令、参数、环境变量、日志、指标和 artifacts 一起落盘。
 - Shell 命令与 Python 配置实验使用同一套任务生命周期。
+- `--gpu-wait` 按卡数、每卡空闲显存和空闲率等待 GPU 达标后自动运行。
 - CLI 一次调用完成一件事，适合人、脚本、CI 和 AI agent。
 - 前台执行返回真实结果；批量任务任一失败，整体退出非零。
 - detached runner 独立于调用终端；Windows 上的任务进程和后台探测也不会弹出额外控制台窗口。
 - Web UI 与 CLI 共享磁盘状态，不存在两套数据源。
 
 ![Home](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/tab_home.png)
+
+## 等待 GPU 空闲后自动运行
+
+`exec` 和 `run` 都支持 `--gpu-wait`，按顺序完整填写五项启动条件：
+
+```text
+卡数-每卡空闲GiB-最低GPU空闲率%-连续满足秒数-最长等待小时
+```
+
+```bash
+pyr exec -n gpu-train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
+# 也可保存完整的多行脚本，等待 GPU 后运行
+pyr exec -nt gpu-pipeline -d --gpu-wait 1-8-70-15-2 --stdin < pipeline.sh
+```
+
+`2-20-70-15-2` 表示两张卡同时各自至少空闲 **20 GiB**、GPU 空闲率至少 **70%**，
+连续满足 **15 秒**后启动，最多排队 **2 小时**。空闲率是 `100 - GPU 利用率`；
+超时只限制排队，不限制命令运行时长。五项都必须提供，不能省略尾项。
+`-d` 让排队和运行都在后台进行。
+
+等待输出会逐项显示卡数、每卡空闲显存与空闲率、连续达标时间、排队时长的当前值和要求，
+并标明 `ready` / `blocked` 及原因。例如 GPU 利用率 93% 对应空闲率 7%，未达到 100% 空闲的要求。
+
+CLI 规则仅本次运行生效，再次 `run` 时需要重新传入；不传 `--gpu-wait` 就不进行 GPU 等待。
+UI 的 Runtime 开关只影响之后从 UI 提交的任务。
+用 `pyr show gpu-train` 查看本次规则和等待状态，`pyr metrics` 查看当前 GPU 指标。
+指定卡、单位等完整说明见 [CLI 指南](docs/cli-guide.md) 或 `pyr exec --help`。
 
 ## Git 式 CLI
 
@@ -380,7 +408,9 @@ pyr -w train status
 pyr -w train show baseline
 pyr -w train show baseline@2
 pyr -w train show baseline --run 2
+pyr -w train diff baseline@1 baseline@2
 pyr -w train log baseline -f
+pyr -w train log baseline --tail 100 -f
 pyr -w train log baseline@2
 pyr -w train wait baseline --timeout 600
 pyr -w train stop baseline
@@ -392,6 +422,8 @@ pyr -w train restore baseline-lr1e3
 ```
 
 `ls` 会用 `PIN` 标记置顶任务并始终将其排在普通任务之前；`--reverse` 只反转两组各自内部的顺序。JSON 列表和 `show` 都包含明确的 `pinned` 字段。
+
+`log --tail N` 只看最后 N 行，可配合 `-f` 继续跟随；`--tail 0 -f` 仅输出新增内容。省略 `--tail` 则打印完整日志。
 
 `rm` 会立即执行，不询问确认，但它只是可恢复的软删除。
 
@@ -410,6 +442,7 @@ pyr -w shell log smoke --path --json
 pyr -w shell log smoke@2 --path --json
 pyr config list --json
 pyr metrics --json
+pyr doctor --json
 ```
 
 日志默认原样写 stdout；需要结构化引用时使用 `log --path`。导出默认写 stdout：
@@ -471,8 +504,6 @@ Pyruns 不是代码沙箱。任务命令和 Python 脚本会继承当前用户�
 - Monitor：查看实时或历史日志、搜索日志、运行或停止任务，并打开详情或导出记录。
 - 侧栏 Workspace 用于切换工作区；Runtime 用于设置 Python、环境变量、GPU 与运行方式。
 - 侧栏底部的语言图标切换简体中文 / English，太阳或月亮图标切换日间 / 夜间主题；也可在偏好设置中选择，刷新后保留。
-
-源码结构、Windows 本地安装、前后端开发与中英文实现见[项目讲解与本地开发](docs/local-development.md)。
 
 ![Monitor](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/tab_monitor.png)
 

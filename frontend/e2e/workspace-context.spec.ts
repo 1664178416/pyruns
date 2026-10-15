@@ -211,6 +211,9 @@ test('a drag gesture is cancelled when another tab selects a new workspace', asy
 
 test('another tab cannot redirect a notes save to a same-name task', async ({ page }) => {
   await withWorkspaces(page, async ({ first, second, taskName, other }) => {
+    // Exercise HTTP binding while this tab is disconnected. The event tests
+    // below separately cover immediate workspace-change notification.
+    await page.routeWebSocket('**/api/tasks/events*', socket => socket.close())
     await page.clock.install()
     await page.goto('/manager')
     await page.getByRole('button', { name: `Open details for ${taskName}` }).click()
