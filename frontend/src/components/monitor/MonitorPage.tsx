@@ -247,6 +247,7 @@ export default function MonitorPage() {
   const livePollingKeyRef = useRef('')
   const livePollInFlightRef = useRef(false)
   const livePollControllerRef = useRef<AbortController | null>(null)
+  const selectedTaskControllerRef = useRef<AbortController | null>(null)
   const liveStreamVersionRef = useRef(0)
   const wsStreamActiveRef = useRef(false)
   const followedLiveTaskRef = useRef('')
@@ -314,10 +315,15 @@ export default function MonitorPage() {
       return
     }
     const requestedWorkspaceKey = workspaceKey
+    selectedTaskControllerRef.current?.abort()
+    const controller = new AbortController()
+    selectedTaskControllerRef.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 10_000)
     try {
-      const task = await api.getTask(selectedTaskName, false, true)
+      const task = await api.getTask(selectedTaskName, false, true, controller.signal)
       if (
-        task.name === selectedTaskNameRef.current
+        !controller.signal.aborted
+        && task.name === selectedTaskNameRef.current
         && workspaceKeyRef.current === requestedWorkspaceKey
       ) {
         selectedTaskSnapshotWorkspaceKeyRef.current = requestedWorkspaceKey
@@ -326,7 +332,8 @@ export default function MonitorPage() {
       }
     } catch (error) {
       if (
-        /not found/i.test(errorMessage(error))
+        !controller.signal.aborted
+        && /not found/i.test(errorMessage(error))
         && selectedTaskNameRef.current === selectedTaskName
         && workspaceKeyRef.current === requestedWorkspaceKey
       ) {
@@ -345,8 +352,12 @@ export default function MonitorPage() {
         })
       }
       // Keep the selected log visible for transient transport failures.
+    } finally {
+      window.clearTimeout(timeout)
+      if (selectedTaskControllerRef.current === controller) selectedTaskControllerRef.current = null
     }
   }, [selectedTaskFromList, selectedTaskName, workspaceKey])
+  useEffect(() => () => selectedTaskControllerRef.current?.abort(), [workspaceKey, selectedTaskName, pageVisible])
   const refreshMonitorSnapshot = useCallback(async (refresh: boolean) => {
     if (sidebarQuery) {
       await refreshDetachedSelectedTask(true)
@@ -362,7 +373,7 @@ export default function MonitorPage() {
       refreshDetachedSelectedTask(),
     ])
   }, [fetchMonitorTasks, refreshDetachedSelectedTask, sidebarQuery, workspaceKey])
-  const taskEventStatus = useTaskRefresh(refreshMonitorSnapshot, workspaceKey, Boolean(sidebarQuery))
+  const taskEventStatus = useTaskRefresh(refreshMonitorSnapshot, workspaceKey, Boolean(sidebarQuery), monitorLoading)
   useEffect(() => {
     setStopConfirmTask('')
     setTaskActionPending(null)

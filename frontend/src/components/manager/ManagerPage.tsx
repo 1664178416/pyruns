@@ -250,6 +250,7 @@ export default function ManagerPage() {
     fromDisk => fetchTasks({ background: true, refresh: fromDisk }),
     workspaceKey,
     Boolean(query),
+    loading,
   )
 
   useEffect(() => {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import shutil
@@ -118,6 +119,41 @@ _GPU_SCHEDULER_PAYLOAD_KEYS = {
     "respect_cuda_visible_devices": "gpu_scheduler_respect_cuda_visible_devices",
     "require_same_gpu_model": "gpu_scheduler_require_same_gpu_model",
 }
+
+
+def _comparison_metric_rows(left: Any, right: Any) -> List[Dict[str, Any]]:
+    """Format metrics before JSON transport can round large integers in browsers."""
+    def fields(value: Any) -> Dict[str, Any]:
+        if value is None:
+            return {}
+        return value if isinstance(value, dict) else {"Record": value}
+
+    missing = object()
+
+    def display(value: Any) -> str:
+        if value is missing:
+            return "Not recorded"
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
+
+    before, after = fields(left), fields(right)
+    rows = []
+    for key in sorted(before.keys() | after.keys()):
+        a, b = before.get(key, missing), after.get(key, missing)
+        left_text, right_text = display(a), display(b)
+        delta = None
+        if type(a) is int and type(b) is int:
+            delta = str(b - a)
+        elif type(a) in (int, float) and type(b) in (int, float):
+            # Mixing a float with an unsafe integer loses precision or overflows.
+            if not any(type(value) is int and abs(value) > 2**53 - 1 for value in (a, b)):
+                difference = b - a
+                if math.isfinite(difference):
+                    delta = format(difference, ".8g")
+        rows.append({
+            "key": key, "left": left_text, "right": right_text,
+            "changed": left_text != right_text, "delta": delta,
+        })
+    return rows
 
 
 class WorkspaceChangedError(RuntimeError):
@@ -1504,6 +1540,7 @@ class PyrunsRuntime:
         right, right_input = read(task_name, run_index)
         return {
             "schema_version": 1, "left": left, "right": right,
+            "metric_rows": _comparison_metric_rows(left["record"], right["record"]),
             "input_diff": compare_run_inputs(
                 left_input, right_input, left_label=left["reference"], right_label=right["reference"],
             ),

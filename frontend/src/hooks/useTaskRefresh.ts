@@ -12,11 +12,15 @@ export function useTaskRefresh(
   refresh: (fromDisk: boolean) => Promise<void>,
   generationKey: string,
   searching = false,
+  foregroundLoading = false,
 ) {
   const [status, setStatus] = useState<TaskEventStreamStatus>('idle')
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
   const scheduleRef = useRef<(fromDisk?: boolean) => void>(() => {})
+  const foregroundLoadingRef = useRef(foregroundLoading)
+  foregroundLoadingRef.current = foregroundLoading
+  const resumeRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     let disposed = false
@@ -27,7 +31,7 @@ export function useTaskRefresh(
 
     const run = async () => {
       if (disposed || pageHidden()) return
-      if (inFlight) {
+      if (inFlight || foregroundLoadingRef.current) {
         queued = true
         return
       }
@@ -40,7 +44,7 @@ export function useTaskRefresh(
           try {
             await refreshRef.current(fromDisk)
           } catch { /* The store exposes errors; fallback polling retries. */ }
-        } while (!disposed && queued && !pageHidden())
+        } while (!disposed && queued && !pageHidden() && !foregroundLoadingRef.current)
       } finally {
         inFlight = false
       }
@@ -49,7 +53,7 @@ export function useTaskRefresh(
       if (disposed) return
       needsDisk ||= fromDisk
       if (pageHidden()) return
-      if (inFlight) {
+      if (inFlight || foregroundLoadingRef.current) {
         queued = true
       } else if (timer === undefined) {
         timer = setTimeout(() => {
@@ -58,11 +62,18 @@ export function useTaskRefresh(
         }, 120)
       }
     }
+    resumeRef.current = () => {
+      if (queued) scheduleRef.current()
+    }
     return () => {
       disposed = true
       clearTimeout(timer)
     }
   }, [generationKey])
+
+  useEffect(() => {
+    if (!foregroundLoading) resumeRef.current()
+  }, [foregroundLoading])
 
   useTaskEvents({
     onInvalidate: () => scheduleRef.current(),

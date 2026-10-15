@@ -270,8 +270,8 @@ async function streamTaskSearch(url: string, onProgress: (page: TaskPage) => voi
   }
 }
 
-export const getTask = (name: string, refresh = true, summary = false) =>
-  request<Task>(`/api/tasks/${encodeURIComponent(name)}?refresh=${refresh}&include_tracks=false${summary ? '&summary=true' : ''}`)
+export const getTask = (name: string, refresh = true, summary = false, signal?: AbortSignal) =>
+  request<Task>(`/api/tasks/${encodeURIComponent(name)}?refresh=${refresh}&include_tracks=false${summary ? '&summary=true' : ''}`, { signal })
 
 export const getRunInput = (name: string, run: number, signal?: AbortSignal) =>
   request<{ schema_version: 1; task_name: string; run_index: number; input: RunInput | null }>(

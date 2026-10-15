@@ -7,9 +7,14 @@ import { comparisonValue, metricRows, runDuration } from '@/utils/runComparison'
 import ActionButton from '@/components/shared/ActionButton'
 import CopyButton from '@/components/shared/CopyButton'
 
+function signedDelta(value: string | number): string {
+  const text = typeof value === 'string' ? value : String(Number(value.toPrecision(8)))
+  return text.startsWith('-') || text === '0' ? text : `+${text}`
+}
+
 function ComparisonTable({ comparison, rows }: {
   comparison: RunComparison
-  rows: { key: string; left: string; right: string; changed?: boolean; delta?: number | null }[]
+  rows: { key: string; left: string; right: string; changed?: boolean; delta?: string | number | null }[]
 }) {
   return (
     <table className="w-full table-fixed text-left text-xs">
@@ -28,7 +33,7 @@ function ComparisonTable({ comparison, rows }: {
             <td className="px-2 py-2 align-top"><pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs text-txt-primary [overflow-wrap:anywhere]">{row.left}</pre></td>
             <td className="py-2 pl-2 align-top">
               <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs text-txt-primary [overflow-wrap:anywhere]">{row.right}</pre>
-              {changed && <span className="mt-1 block text-2xs text-txt-secondary">Changed{row.delta != null ? ` · Δ ${row.delta > 0 ? '+' : ''}${Number(row.delta.toPrecision(8))}` : ''}</span>}
+              {changed && <span className="mt-1 block text-2xs text-txt-secondary">Changed{row.delta != null ? ` · Δ ${signedDelta(row.delta)}` : ''}</span>}
             </td>
           </tr>
         )
@@ -118,7 +123,7 @@ export default function RunComparisonView({ name, run }: { name: string; run: nu
     }
   }
 
-  const metrics = comparison ? metricRows(comparison.left.record ?? {}, comparison.right.record ?? {}) : []
+  const metrics = comparison ? comparison.metric_rows ?? metricRows(comparison.left.record ?? {}, comparison.right.record ?? {}) : []
   const diff = comparison?.input_diff
   return (
     <section className="space-y-3 border-t border-border-subtle pt-3" aria-label={`Compare runs for ${name}@${run}`}>

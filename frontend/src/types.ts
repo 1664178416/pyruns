@@ -453,4 +453,5 @@ export interface RunComparison {
   left: RunSummary
   right: RunSummary
   input_diff: RunInputDiff
+  metric_rows?: { key: string; left: string; right: string; changed: boolean; delta: string | null }[]
 }

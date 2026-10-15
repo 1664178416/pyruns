@@ -97,6 +97,45 @@ def test_compare_runs_validates_reserved_slots_names_and_corrupt_inputs(tmp_path
     assert corrupt.status_code == 400 and "Invalid run input" in corrupt.text
 
 
+def test_compare_runs_preserves_metric_precision_types_and_exact_export(tmp_path, monkeypatch):
+    workspace = _workspace(tmp_path, "workspace")
+    large = 2**53
+    records = [
+        {"samples": large, "nested": {"samples": large, "same": True}, "optional": None,
+         "enabled": False, "label": "1", "accuracy": 0.1, "overflow": -1e308,
+         "mixed": 10**400, "difference": 0, "same": {"a": 1, "b": 2}},
+        {"samples": large + 1, "nested": {"same": True, "samples": large + 1},
+         "enabled": 0, "label": 1, "accuracy": 0.3, "overflow": 1e308,
+         "mixed": 1.0, "difference": large + 1, "same": {"b": 2, "a": 1}},
+    ]
+    task = _task(workspace, "precise", records=records)
+    before = (task / "task_info.json").read_bytes()
+    client = _client(_runtime(workspace, monkeypatch))
+    response = client.get("/api/tasks/precise/runs/2/compare?other_run=1")
+    assert response.status_code == 200, response.text
+    compared = response.json()
+    rows = {row["key"]: row for row in compared["metric_rows"]}
+    assert rows["samples"] == {
+        "key": "samples", "left": str(large), "right": str(large + 1), "changed": True, "delta": "1",
+    }
+    assert str(large + 1) in rows["nested"]["right"] and rows["nested"]["changed"]
+    assert rows["nested"]["delta"] is None
+    assert rows["optional"]["left"] == "null" and rows["optional"]["right"] == "Not recorded"
+    assert rows["optional"]["changed"] and rows["optional"]["delta"] is None
+    assert rows["enabled"]["left"] == "false" and rows["enabled"]["right"] == "0"
+    assert rows["enabled"]["changed"] and rows["enabled"]["delta"] is None
+    assert rows["label"]["left"] == '"1"' and rows["label"]["right"] == "1"
+    assert rows["label"]["changed"] and rows["label"]["delta"] is None
+    assert rows["accuracy"]["delta"] == "0.2"
+    assert rows["overflow"]["delta"] is None and rows["mixed"]["delta"] is None
+    assert rows["difference"]["delta"] == str(large + 1)
+    assert not rows["same"]["changed"]
+    assert [compared[side]["record"] for side in ("left", "right")] == records
+    exported = json.loads(build_export_json([{"name": "precise", "dir": str(task)}]))
+    assert [{key: row[key] for key in record} for row, record in zip(exported, records)] == records
+    assert (task / "task_info.json").read_bytes() == before
+
+
 @pytest.mark.parametrize("status,recorded,codes,expected", [
     ("completed", ["", ""], [0, 0], ["completed", "completed"]),
     ("completed", ["", ""], [7, 0], ["failed", "completed"]),

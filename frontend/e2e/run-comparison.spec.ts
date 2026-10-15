@@ -131,3 +131,31 @@ test('edits and task switches abort pending comparisons and discard late results
   await expect(region.getByLabel('Baseline task')).toHaveValue('baseline')
   await expect(region.getByLabel('Run comparison results')).toHaveCount(0)
 })
+
+test('displays exact metric strings and deltas when JSON numbers exceed browser precision', async ({ page }) => {
+  await page.route('**/api/tasks/candidate/runs/2/compare?*', route => route.fulfill({
+    json: {
+      ...comparison(),
+      // These raw records deliberately round to the same JavaScript number.
+      left: { ...comparison().left, record: { samples: Number('9007199254740992') } },
+      right: { ...comparison().right, record: { samples: Number('9007199254740993') } },
+      metric_rows: [
+        { key: 'samples', left: '9007199254740992', right: '9007199254740993', changed: true, delta: '1' },
+        { key: 'total', left: '0', right: '9007199254740993', changed: true, delta: '9007199254740993' },
+        { key: 'nested', left: '{\n  "samples": 9007199254740992\n}', right: '{\n  "samples": 9007199254740993\n}', changed: true, delta: null },
+        { key: 'removed', left: '4', right: '1', changed: true, delta: '-3' },
+      ],
+    },
+  }))
+  await page.goto('/manager?token=pyruns-e2e-access-token')
+  const region = await openComparison(page)
+  await region.getByRole('button', { name: 'Compare', exact: true }).click()
+  const row = (name: string) => region.getByRole('row').filter({ has: page.getByRole('rowheader', { name, exact: true }) })
+  await expect(row('samples')).toContainText('9007199254740992')
+  await expect(row('samples')).toContainText('9007199254740993')
+  await expect(row('samples')).toContainText('Changed · Δ +1')
+  await expect(row('total')).toContainText('Changed · Δ +9007199254740993')
+  await expect(row('nested')).toContainText('9007199254740993')
+  await expect(row('nested')).not.toContainText('Δ')
+  await expect(row('removed')).toContainText('Changed · Δ -3')
+})
