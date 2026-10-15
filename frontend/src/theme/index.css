@@ -272,8 +272,25 @@ summary::-webkit-details-marker {
 .xterm { padding: 6px 0 0 10px; }
 .xterm-viewport::-webkit-scrollbar { width: 6px; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
+.monitor-header {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 96%, var(--accent-ink)), var(--surface-raised));
+}
+.monitor-action-toolbar {
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 80%, transparent);
+  border-radius: 0.75rem;
+  padding: 0.25rem;
+  background: color-mix(in srgb, var(--surface-overlay) 42%, transparent);
+}
 .monitor-terminal-shell { background: var(--xterm-bg); }
+.monitor-terminal-shell > .xterm { background: var(--xterm-bg); }
 .monitor-loading-overlay { background: color-mix(in srgb, var(--xterm-bg) 70%, transparent); }
+
+@media (max-width: 700px) {
+  .monitor-action-toolbar {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
 
 /* CodeMirror overrides */
 .cm-editor { font-size: 13px !important; }

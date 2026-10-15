@@ -1808,11 +1808,11 @@ export default function MonitorPage() {
         />
       )}
 
-      <div className="monitor-terminal-shell flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
-        <div className="flex min-h-16 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle bg-surface-raised px-3 py-3 sm:px-5">
+      <div className="monitor-terminal-shell flex min-h-0 min-w-0 max-w-full flex-1 flex-col border-l border-border-subtle">
+        <div className="monitor-header flex min-h-16 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle bg-surface-raised px-3 py-3 shadow-sm sm:px-5">
           {selectedTask ? (
             <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <div className="flex min-w-0 flex-1 basis-[24rem] items-center gap-2.5">
+              <div className="monitor-task-context flex min-w-0 flex-1 basis-[24rem] items-center gap-2.5 border-l-2 border-accent/55 pl-2.5">
                 {compactMonitorLayout && compactSearchFocused && selectedTaskName && (
                   <ActionButton
                     aria-label={t("Search results")}
@@ -1864,7 +1864,7 @@ export default function MonitorPage() {
 
               <div
                 className={clsx(
-                  'flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5',
+                  'monitor-action-toolbar flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5',
                   compactMonitorLayout ? 'w-full' : 'ml-auto flex-none',
                 )}
                 role="toolbar"
@@ -1878,7 +1878,7 @@ export default function MonitorPage() {
                       title={t("Select log file")}
                       aria-label={t("Select task log file")}
                       disabled={loading}
-                      className="touch-input h-11 max-w-36 appearance-none truncate rounded-md border border-border bg-surface-raised px-2.5 pr-7 text-xs text-txt-primary transition-colors hover:bg-surface-overlay sm:h-9"
+                      className="touch-input h-11 max-w-36 appearance-none truncate rounded-md border border-border bg-surface-overlay/55 px-2.5 pr-7 text-xs text-txt-primary transition-colors hover:bg-surface-overlay sm:h-9"
                     >
                       {availableLogs.map(log => (
                         <option key={log} value={log}>{log}</option>
@@ -2156,17 +2156,18 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
   return (
     <section
       aria-labelledby="gpu-wait-heading"
-      className="border-b border-border-subtle bg-surface-raised px-3 py-2.5"
+      className="gpu-wait-panel border-b border-border-subtle bg-surface-raised px-3 py-3 sm:px-4"
     >
+      <div className="rounded-xl border border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-surface-raised to-surface-raised p-3 shadow-sm dark:from-amber-500/10">
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-2.5">
-          <span className="mt-0.5 inline-flex h-8 w-8 flex-none items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
+          <span className="mt-0.5 inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300">
             <Cpu className="h-4 w-4" />
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <h2 id="gpu-wait-heading" className="text-xs font-semibold text-txt-primary">{t("Waiting for GPU capacity")}</h2>
-              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-2xs font-medium text-amber-700 dark:text-amber-300">
+              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-2xs font-medium text-amber-700 dark:text-amber-300">
                 {eligible === null ? t("Checking eligibility") : t('{{eligible}}/{{requested}} eligible', { eligible, requested })}
               </span>
             </div>
@@ -2176,18 +2177,18 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
           </div>
         </div>
 
-        <dl className="grid min-w-[15rem] flex-none grid-cols-2 gap-x-4 gap-y-1 text-2xs sm:grid-cols-3">
-          <div>
+        <dl className="grid min-w-[15rem] flex-none grid-cols-2 gap-1.5 text-2xs sm:grid-cols-3">
+          <div className="rounded-lg bg-surface-overlay/45 px-2.5 py-1.5">
             <dt className="text-txt-tertiary">{t("Waited")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">{formatDuration(waitedSeconds)}</dd>
           </div>
-          <div>
+          <div className="rounded-lg bg-surface-overlay/45 px-2.5 py-1.5">
             <dt className="text-txt-tertiary">{t("Time left")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">
               {remainingSeconds === null ? t("No limit") : formatDuration(remainingSeconds)}
             </dd>
           </div>
-          <div className="col-span-2 sm:col-span-1">
+          <div className="col-span-2 rounded-lg bg-surface-overlay/45 px-2.5 py-1.5 sm:col-span-1">
             <dt className="text-txt-tertiary">{t("Visible GPUs")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">
               {wait?.total_gpu_count ?? (devices.length || '—')}
@@ -2197,14 +2198,14 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
       </div>
 
       {devices.length > 0 && (
-        <details className="group mt-2 rounded-md border border-border-subtle bg-surface-overlay/60">
+        <details className="group mt-3 rounded-lg border border-border-subtle bg-surface-overlay/60">
           <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-1.5 text-2xs font-medium text-txt-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35">
             <span>{t("Why each GPU is waiting")}</span>
             <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
           </summary>
           <ul className="grid gap-1 border-t border-border-subtle p-2 sm:grid-cols-2" aria-label={t("GPU eligibility details")}>
             {devices.map(device => (
-              <li key={device.uuid || device.index} className="flex min-w-0 items-start gap-2 rounded-md bg-surface-raised px-2 py-1.5 text-2xs">
+              <li key={device.uuid || device.index} className="flex min-w-0 items-start gap-2 rounded-lg bg-surface-raised/65 px-2.5 py-2 text-2xs">
                 <span className={clsx(
                   'mt-1 h-2 w-2 flex-none rounded-full',
                   device.eligible ? 'bg-emerald-500' : 'bg-amber-500',
@@ -2225,6 +2226,7 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
           </ul>
         </details>
       )}
+      </div>
     </section>
   )
 }
