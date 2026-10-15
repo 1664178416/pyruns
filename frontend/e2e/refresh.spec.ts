@@ -446,6 +446,7 @@ test('monitor pauses background streams and resumes logs with one reconciled sna
     logConnections.push(socket.url())
     socket.onClose(() => { logCloses++ })
     sendLog = value => socket.send(value)
+    socket.send(JSON.stringify({ type: 'ready', task_name: task.name }))
   })
   const reads = () => page.evaluate(() => (window as typeof window & {
     monitorRefreshTest: { reads: number; refreshes: string[]; logReads: number }
@@ -501,7 +502,10 @@ test('monitor pauses background streams and resumes logs with one reconciled sna
   await expect(terminal).toContainText('while hidden')
   await expect(terminal.getByRole('listitem').filter({ hasText: 'before hiding' })).toHaveCount(1)
   expect(await reads()).toBe(before + 1)
-  await page.clock.runFor(60_001)
+  await page.clock.runFor(30_000)
+  // Model the server heartbeat while this test keeps the live log idle.
+  sendLog(JSON.stringify({ type: 'heartbeat', task_name: task.name }))
+  await page.clock.runFor(30_001)
   await expect.poll(reads).toBe(before + 2)
   expect((await refreshes()).at(-1)).toBe('true')
   await visibility('hidden')

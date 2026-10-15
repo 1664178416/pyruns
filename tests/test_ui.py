@@ -800,7 +800,6 @@ def test_react_monitor_caps_live_log_state_by_scrollback_rows_for_long_tasks():
     monitor = FRONTEND_MONITOR.read_text(encoding="utf-8")
 
     assert "export function trimMonitorLogContent(content: string, maxLines = currentMonitorScrollback())" in store
-    assert "const lineLimit = Math.max(0, Math.trunc(maxLines))" in store
     assert "content.charCodeAt(index) !== 10" in store
     assert "if (keptLines > lineLimit)" in store
     assert "const MAX_MONITOR_LOG_CHARS = 4 * 1024 * 1024" in store

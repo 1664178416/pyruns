@@ -28,6 +28,7 @@ import time
 import traceback
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_opener
 
 
@@ -215,6 +216,36 @@ def _verify_ui(project, report, scripts, env, identities, package):
             entry["run_comparison"] = comparison
 
             cookie_header = "; ".join(f"{cookie.name}={cookie.value}" for cookie in cookies)
+            log_query = urlencode({"log_file_name": "run2.log", "tail_lines": 0})
+            with opener.open(base_url + "/api/tasks/wheel-shell/logs?" + log_query, timeout=10) as response:
+                log_cursor = json.load(response)
+            assert log_cursor["content"] == "" and log_cursor["offset"] > 0, log_cursor
+            log_selection = {
+                "log_file_name": "run2.log", "log_identity": log_cursor["log_identity"],
+                "expected_workspace": workspace["run_root"],
+            }
+            download_url = base_url + "/api/tasks/wheel-shell/logs/download?" + urlencode(log_selection)
+            with opener.open(download_url, timeout=10) as response:
+                downloaded = response.read()
+                assert len(downloaded) == int(response.headers["Content-Length"]) == log_cursor["offset"]
+                assert response.headers["X-Pyruns-Log-Identity"] == log_cursor["log_identity"]
+                assert response.headers["Accept-Ranges"] == "none"
+                assert "wheel-shell--run2.log" in response.headers["Content-Disposition"]
+            with opener.open(
+                base_url + "/api/tasks/wheel-shell/logs?" + urlencode({"log_file_name": "run2.log", "offset": 0}),
+                timeout=10,
+            ) as response:
+                log_content = json.load(response)
+            assert downloaded.decode("utf-8", errors="replace").replace("\r\n", "\n") == log_content["content"]
+            log_stream_query = urlencode({**log_selection, "offset": log_cursor["offset"]})
+            with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+                with connect(f"ws://127.0.0.1:{port}/api/tasks/wheel-shell/logs/stream?{log_stream_query}",
+                             sock=connection, origin=Origin(base_url), additional_headers={"Cookie": cookie_header},
+                             open_timeout=10, close_timeout=5) as logs:
+                    ready = json.loads(logs.recv(timeout=10))
+                    assert ready == {"type": "ready", "task_name": "wheel-shell"}, ready
+            entry["log_download"] = {"bytes": len(downloaded), "identity": log_cursor["log_identity"]}
+            report["checks"].append("installed complete log download, zero-line cursor, and log stream readiness")
             # A supplied socket bypasses proxy auto-detection across websockets 12-15.
             with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
                 with connect(f"ws://127.0.0.1:{port}/api/tasks/events", sock=connection,
@@ -330,8 +361,13 @@ def _verify(project, report, identities):
     assert shell["status"] == "completed" and shell["exit_codes"] == [0]
     assert Path(shell["payload"]).read_text(encoding="utf-8") == script_text
     assert shell["command_mode"] == "shell" and shell["command_argv"] is None
-    shell_log = re.sub(r"\x1b\[[0-9;]*m", "", cli("-w", "shell", "log", "wheel-shell"))
+    shell_raw_log = cli("-w", "shell", "log", "wheel-shell")
+    shell_log = re.sub(r"\x1b\[[0-9;]*m", "", shell_raw_log)
     assert json.dumps(arguments, ensure_ascii=False) in shell_log.splitlines()
+    shell_tail = cli("-w", "shell", "log", "wheel-shell", "--tail", "1")
+    assert shell_tail and shell_raw_log.endswith(shell_tail)
+    assert len(shell_tail.rstrip("\n").split("\n")) == 1
+    assert cli("-w", "shell", "log", "wheel-shell", "--tail", "0") == ""
     cli("-w", "shell", "run", "wheel-shell")
     shell = show("shell", "wheel-shell")
     assert shell["exit_codes"] == [0, 0]
