@@ -266,6 +266,16 @@ shell 工作区：
 
 比较同一任务的两次历史输入，返回 `schema_version: 1`、`available`、`equal`、`changed_fields` 和 unified diff。缺少快照时 `available=false`、`equal=null`；不读取曲线数据。
 
+#### `GET /api/tasks/{task_name}/runs/{run_index}/compare?other_run=RUN&other_task=TASK`
+
+比较同一工作区中任意两次运行。`other_task` 省略时使用当前任务；`other_run` 指定基准运行。
+返回 `schema_version: 1`、基准 `left`、当前 `right` 和 `input_diff`。两侧包含运行引用、状态、
+起止时间、耗时、退出码、汇总记录 `record`、Git 来源 `source_state`、运行环境 `environment`
+和输入是否存在的 `input_available`。
+
+缺少输入快照不影响其余信息比较；不存在的任务或运行返回 404。只读取运行元数据与所选输入，
+不读取训练曲线；两侧分别取得快照，正在运行的指标可能继续变化。
+
 #### `POST /api/tasks/{task_name}/run`
 
 运行单个任务。

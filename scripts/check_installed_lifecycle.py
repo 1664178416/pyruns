@@ -197,6 +197,23 @@ def _verify_ui(project, report, scripts, env, identities, package):
             assert updated["ok"] and updated["task"]["notes"] == notes, updated
             entry["notes_roundtrip"] = True
 
+            with opener.open(
+                base_url + "/api/tasks/wheel-shell/runs/2/compare?other_task=wheel-shell&other_run=1",
+                timeout=10,
+            ) as response:
+                comparison = json.load(response)
+            assert comparison["schema_version"] == 1, comparison
+            assert comparison["left"]["reference"] == "wheel-shell@1", comparison
+            assert comparison["right"]["reference"] == "wheel-shell@2", comparison
+            for side in ("left", "right"):
+                run = comparison[side]
+                assert run["status"] == "completed" and run["exit_code"] == 0, run
+                assert run["input_available"] and run["duration_seconds"] >= 0, run
+                assert "environment" in run and "source_state" in run and "record" in run, run
+                assert "tracks" not in run, run
+            assert comparison["input_diff"]["available"] and comparison["input_diff"]["equal"], comparison
+            entry["run_comparison"] = comparison
+
             cookie_header = "; ".join(f"{cookie.name}={cookie.value}" for cookie in cookies)
             # A supplied socket bypasses proxy auto-detection across websockets 12-15.
             with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
@@ -207,6 +224,7 @@ def _verify_ui(project, report, scripts, env, identities, package):
                     assert ready == {"type": "ready", "revision": 0}, ready
                     entry["event"] = ready
             report["checks"].append("installed UI server, authentication, frontend assets, API read/write, and WebSocket")
+            report["checks"].append("installed historical run comparison without curve expansion")
         finally:
             if process.poll() is None:
                 process.terminate()

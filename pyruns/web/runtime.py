@@ -1449,6 +1449,55 @@ class PyrunsRuntime:
             left, right, left_label=f"{task_name}@{other_run}", right_label=f"{task_name}@{run_index}",
         )
 
+    @_with_stable_workspace
+    def compare_runs(
+        self, task_name: str, run_index: int, other_run: int, *, other_task: str | None = None,
+    ) -> Dict[str, Any]:
+        """Read two run summaries and their saved inputs without payloads or curves."""
+        from pyruns.core.run_inputs import compare_run_inputs, load_run_input
+
+        metadata: Dict[str, Dict[str, Any]] = {}
+
+        def read(name: str, index: int) -> tuple[Dict[str, Any], Dict[str, Any] | None]:
+            error = validate_task_name(name)
+            if error:
+                raise ValueError(error)
+            task_dir = os.path.join(self.tasks_dir, name)
+            if name not in metadata:
+                try:
+                    metadata[name] = load_task_metadata(task_dir, raise_error=True)
+                except FileNotFoundError as exc:
+                    raise KeyError(name) from exc
+            info = metadata[name]
+            if index < 1 or index > TaskManager._effective_run_slot_count(info):
+                raise KeyError(f"{name}@{index}")
+
+            def at(key: str) -> Any:
+                values = info.get(key, []) or []
+                return values[index - 1] if index <= len(values) else None
+
+            status = str(at("run_statuses") or "").lower() or None
+            if status is None and index == info.get("run_index") and info.get("status") != "queued":
+                status = str(info.get("status") or "").lower() or None
+            saved = load_run_input(task_dir, index)
+            return {
+                "task_name": name, "run_index": index, "reference": f"{name}@{index}",
+                "status": status, "start_time": at("start_times") or None,
+                "finish_time": at("finish_times") or None, "duration_seconds": at("durations"),
+                "exit_code": at("exit_codes"), "source_state": at("source_states") or None,
+                "environment": at("run_environments"), "record": at("records"),
+                "input_available": saved is not None,
+            }, saved
+
+        left, left_input = read(task_name if other_task is None else other_task, other_run)
+        right, right_input = read(task_name, run_index)
+        return {
+            "schema_version": 1, "left": left, "right": right,
+            "input_diff": compare_run_inputs(
+                left_input, right_input, left_label=left["reference"], right_label=right["reference"],
+            ),
+        }
+
     def require_task(
         self, task_name: str, *, refresh: bool = True, summary: bool = False, include_tracks: bool = True,
     ) -> Dict[str, Any]:

@@ -25,6 +25,7 @@ import type {
   UiVersionCheck,
   RunInput,
   RunInputDiff,
+  RunComparison,
 } from './types'
 
 const BASE = ''
@@ -279,6 +280,11 @@ export const getRunInput = (name: string, run: number, signal?: AbortSignal) =>
 
 export const getRunInputDiff = (name: string, run: number, previous: number, signal?: AbortSignal) =>
   request<RunInputDiff>(`/api/tasks/${encodeURIComponent(name)}/runs/${run}/diff?other_run=${previous}`, { signal })
+
+export const compareRuns = (name: string, run: number, otherTask: string, otherRun: number, signal?: AbortSignal) => {
+  const params = new URLSearchParams({ other_task: otherTask, other_run: String(otherRun) })
+  return request<RunComparison>(`/api/tasks/${encodeURIComponent(name)}/runs/${run}/compare?${params}`, { signal })
+}
 
 function createWorkspaceStream(path: string, params = new URLSearchParams()): WebSocket {
   const context = workspaceContext

@@ -29,11 +29,6 @@ for (const runCount of [1, 3]) {
         payload_text: `echo captured-run-${run}\n`, workdir: '/app/original-project', shell_executable: '/usr/bin/bash', environment: { SEED: String(run) },
       } } })
     })
-    await page.route('**/api/tasks/training/runs/*/diff?*', route => route.fulfill({ json: {
-      schema_version: 1, available: true, equal: false, changed_fields: ['payload_text'],
-      left: { reference: 'training@2', available: true }, right: { reference: 'training@3', available: true },
-      diff: '--- training@2\n+++ training@3\n-echo captured-run-2\n+echo captured-run-3\n',
-    } }))
     await page.route('**/api/tasks?*', route => route.fulfill({ json: {
       items: [task], total: 1, offset: 0, limit: 50, has_more: false,
       status_counts: { pending: 0, queued: 0, running: 0, completed: 0, failed: 1, cancelled: 0 },
@@ -61,9 +56,6 @@ for (const runCount of [1, 3]) {
       await expect(current).toContainText('echo captured-run-3')
       await expect(current).toContainText('/app/original-project')
       expect(inputRequests).toBe(1)
-      await current.getByRole('button', { name: 'Compare with previous run' }).click()
-      await expect(current).toContainText('-echo captured-run-2')
-      await expect(current).toContainText('+echo captured-run-3')
       const second = panel.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Run #2' }) })
       await second.locator('summary').click()
       await expect(second).toContainText('gpu-server-01')

@@ -1091,6 +1091,20 @@ def create_app(
         except (ValueError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/tasks/{task_name}/runs/{run_index}/compare")
+    def compare_runs(
+        task_name: str,
+        run_index: Annotated[int, PathParam(ge=1, le=MAX_RUN_HISTORY_SLOTS)],
+        other_run: Annotated[int, Query(ge=1, le=MAX_RUN_HISTORY_SLOTS)],
+        other_task: Annotated[str | None, Query(max_length=255)] = None,
+    ) -> dict[str, Any]:
+        try:
+            return get_runtime().compare_runs(task_name, run_index, other_run, other_task=other_task)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Run '{exc.args[0]}' not found") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/tasks/batch/run")
     def run_tasks_batch(payload: TaskBatchActionRequest, include_tracks: bool = True) -> dict[str, Any]:
         try:

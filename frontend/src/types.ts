@@ -431,3 +431,25 @@ export interface RunInputDiff {
   changed_fields: string[]
   diff: string
 }
+
+export interface RunSummary {
+  task_name: string
+  run_index: number
+  reference: string
+  status: string | null
+  start_time: string | number | null
+  finish_time: string | number | null
+  duration_seconds: number | null
+  exit_code: number | null
+  source_state: string | null
+  environment: RunEnvironment | null
+  record: unknown
+  input_available: boolean
+}
+
+export interface RunComparison {
+  schema_version: 1
+  left: RunSummary
+  right: RunSummary
+  input_diff: RunInputDiff
+}

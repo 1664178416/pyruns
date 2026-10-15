@@ -152,7 +152,8 @@ Manager 和 Monitor 均支持 `Ctrl/Cmd+Shift+F` 聚焦并选中查询。在首�
 其中：
 
 - `Info` 显示任务模式、目录和完整 Run History
-- 展开一条运行记录后，点击 `Saved input` 查看启动前保存的脚本或配置；`Compare with previous run` 比较与上一次的输入变化。正文仅在点击时读取，旧记录会注明未保存输入。
+- 展开一条运行记录后，点击 `Saved input` 查看启动前保存的脚本或配置；点击 `Compare runs`，选择同一工作区中的任务名与运行编号，比较输入、汇总指标、耗时、状态、Git 来源与运行环境。默认选择本任务的上一次运行，可直接输入其他任务名与编号。
+- 比较内容仅在点击时读取，不加载训练曲线。旧运行没有保存输入时会明确提示，其余已记录信息仍可比较；正在运行的记录显示本次读取时的值。
 - `python` 任务显示 `config.yaml`
 - `shell` 任务显示当前 runtime 对应的 `config.ps1` / `config.cmd` / `config.sh`
 
