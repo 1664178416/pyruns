@@ -23,6 +23,7 @@ import AppShell from '@/components/layout/AppShell'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
 import ConfirmationHost from '@/components/shared/ConfirmationHost'
 import ToastHost from '@/components/shared/ToastHost'
+import { t, useTranslation, translateMessage } from '@/i18n'
 import { ApiError, beginAuthorizationAttempt, recoverSession, subscribeUnauthorized, subscribeWorkspaceChanged } from '@/api'
 import {
   applyThemeClass,
@@ -89,16 +90,16 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, { failed: bo
     return (
       <div role="alert" className="flex min-h-dvh items-center justify-center bg-surface-base p-6">
         <div className="w-full max-w-md rounded-lg border border-border-default bg-surface-raised p-6 text-center shadow-lg">
-          <h1 className="text-base font-semibold text-txt-primary">Reconnect to the interface</h1>
+          <h1 className="text-base font-semibold text-txt-primary">{t('Reconnect to the interface')}</h1>
           <p className="mt-2 text-sm leading-6 text-txt-secondary">
-            This screen could not finish loading. The interface may have been updated while it was open.
+            {t('This screen could not finish loading. The interface may have been updated while it was open.')}
           </p>
           <button
             type="button"
             onClick={() => window.location.reload()}
             className="touch-target mt-5 inline-flex min-h-11 items-center justify-center rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover sm:min-h-10"
           >
-            Reload interface
+            {t('Reload interface')}
           </button>
         </div>
       </div>
@@ -109,7 +110,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, { failed: bo
 function RouteLoadingFallback() {
   return (
     <div role="status" aria-live="polite" className="flex h-full min-h-[16rem] items-center justify-center bg-surface-base text-sm text-txt-tertiary">
-      Loading workspace...
+      {t('Loading workspace...')}
     </div>
   )
 }
@@ -123,9 +124,9 @@ type ConnectionState =
 
 function describeUnsavedChanges(changes: string[]) {
   if (changes.length <= 1) {
-    return changes[0] || 'local changes'
+    return t(changes[0] || 'local changes')
   }
-  return `${changes.slice(0, -1).join(', ')} and ${changes[changes.length - 1]}`
+  return t('{{changes}} and {{last}}', { changes: changes.slice(0, -1).map(change => t(change)).join(', '), last: t(changes[changes.length - 1]) })
 }
 
 function ConnectionScreen({
@@ -142,7 +143,7 @@ function ConnectionScreen({
         aria-live="polite"
         className="flex min-h-dvh items-center justify-center bg-surface-base p-6 text-sm text-txt-tertiary"
       >
-        Connecting to the Pyruns server...
+        {t('Connecting to the Pyruns server...')}
       </main>
     )
   }
@@ -154,17 +155,17 @@ function ConnectionScreen({
       <div className="w-full max-w-md text-center">
         <ShieldAlert aria-hidden="true" className="mx-auto h-8 w-8 text-amber-700 dark:text-amber-300" />
         <h1 className="mt-4 text-lg font-semibold text-txt-primary">
-          {workspaceChanged ? 'Workspace changed' : unauthorized ? 'Session expired' : 'Unable to connect'}
+          {t(workspaceChanged ? 'Workspace changed' : unauthorized ? 'Session expired' : 'Unable to connect')}
         </h1>
         <p className="mt-2 text-sm leading-6 text-txt-secondary">
           {workspaceChanged
-            ? `The server selected another workspace. Reconnecting will discard these unsaved changes: ${describeUnsavedChanges(state.unsavedChanges)}.`
+            ? t('The server selected another workspace. Reconnecting will discard these unsaved changes: {{changes}}.', { changes: describeUnsavedChanges(state.unsavedChanges) })
             : unauthorized
-            ? 'This browser no longer has access to the local Pyruns server. Open the latest UI link shown in the terminal, or retry after restoring the session.'
-            : 'The local Pyruns server did not finish loading the workspace. Check that it is still running, then try again.'}
+            ? t('This browser no longer has access to the local Pyruns server. Open the latest UI link shown in the terminal, or retry after restoring the session.')
+            : t('The local Pyruns server did not finish loading the workspace. Check that it is still running, then try again.')}
         </p>
         {state.status === 'failed' && (
-          <p className="mt-2 break-words font-mono text-xs leading-5 text-txt-tertiary">{state.message}</p>
+          <p className="mt-2 break-words font-mono text-xs leading-5 text-txt-tertiary">{translateMessage(state.message)}</p>
         )}
         <button
           type="button"
@@ -172,7 +173,7 @@ function ConnectionScreen({
           className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
         >
           <RefreshCw aria-hidden="true" className="h-4 w-4" />
-          {workspaceChanged ? 'Discard drafts and reconnect' : 'Retry connection'}
+          {t(workspaceChanged ? 'Discard drafts and reconnect' : 'Retry connection')}
         </button>
       </div>
     </main>
@@ -222,19 +223,19 @@ function ConnectionOverlay({
           ? <RefreshCw aria-hidden="true" className="mx-auto h-8 w-8 animate-spin text-accent" />
           : <ShieldAlert aria-hidden="true" className="mx-auto h-8 w-8 text-amber-700 dark:text-amber-300" />}
         <h1 id="connection-overlay-title" className="mt-4 text-lg font-semibold text-txt-primary">
-          {title}
+          {t(title)}
         </h1>
         <p id="connection-overlay-description" className="mt-2 text-sm leading-6 text-txt-secondary">
           {connecting
-            ? 'Checking the local Pyruns server...'
+            ? t('Checking the local Pyruns server...')
             : workspaceChanged
-              ? `The server selected another workspace. Your local edits are still intact: ${describeUnsavedChanges(state.unsavedChanges)}. Discard them only when you are ready to reconnect.`
+              ? t('The server selected another workspace. Your local edits are still intact: {{changes}}. Discard them only when you are ready to reconnect.', { changes: describeUnsavedChanges(state.unsavedChanges) })
               : unauthorized
-              ? 'Open the latest UI link shown in the terminal, then retry here. Unsaved edits on this page are being kept.'
-              : 'Check that the local Pyruns server is still running, then try again. Unsaved edits on this page are being kept.'}
+              ? t('Open the latest UI link shown in the terminal, then retry here. Unsaved edits on this page are being kept.')
+              : t('Check that the local Pyruns server is still running, then try again. Unsaved edits on this page are being kept.')}
         </p>
         {state.status === 'failed' && (
-          <p className="mt-2 break-words font-mono text-xs leading-5 text-txt-tertiary">{state.message}</p>
+          <p className="mt-2 break-words font-mono text-xs leading-5 text-txt-tertiary">{translateMessage(state.message)}</p>
         )}
         {!connecting && (
           <button
@@ -249,7 +250,7 @@ function ConnectionOverlay({
             }`}
           >
             <RefreshCw aria-hidden="true" className="h-4 w-4" />
-            {workspaceChanged ? 'Discard drafts and reconnect' : 'Retry connection'}
+            {t(workspaceChanged ? 'Discard drafts and reconnect' : 'Retry connection')}
           </button>
         )}
       </div>
@@ -278,10 +279,10 @@ function NotFoundPage() {
   return (
     <div className="flex h-full min-h-[20rem] items-center justify-center bg-surface-base p-6 text-center">
       <div>
-        <h1 className="text-lg font-semibold text-txt-primary">Page not found</h1>
-        <p className="mt-2 text-sm text-txt-secondary">This Pyruns page does not exist.</p>
+        <h1 className="text-lg font-semibold text-txt-primary">{t('Page not found')}</h1>
+        <p className="mt-2 text-sm text-txt-secondary">{t('This Pyruns page does not exist.')}</p>
         <button type="button" onClick={() => navigate('/')} className="touch-target mt-4 min-h-11 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white sm:min-h-10">
-          Go to Dashboard
+          {t('Go to Dashboard')}
         </button>
       </div>
     </div>
@@ -289,6 +290,7 @@ function NotFoundPage() {
 }
 
 export default function App() {
+  const { i18n } = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -457,7 +459,10 @@ export default function App() {
       : connectionState.status === 'failed'
         ? 'Unable to connect'
         : ROUTE_TITLES[location.pathname] || 'Page not found'
-    document.title = `${pageTitle} · Pyruns`
+    document.title = `${t(pageTitle)} · Pyruns`
+  }, [connectionState.status, location.pathname, i18n.language])
+
+  useEffect(() => {
     if (connectionState.status !== 'ready') {
       return
     }
@@ -530,9 +535,9 @@ export default function App() {
         </RouteErrorBoundary>
         <ConfirmDialog
           open={navigationBlocker.state === 'blocked' && !launcherLoading && taskDetailDirty}
-          title="Discard unsaved task details?"
-          description="Your Notes, Env, or rename draft will be lost when you leave this page."
-          confirmLabel="Discard and Leave"
+          title={t('Discard unsaved task details?')}
+          description={t('Your Notes, Env, or rename draft will be lost when you leave this page.')}
+          confirmLabel={t('Discard and Leave')}
           confirmVariant="danger"
           onConfirm={() => {
             if (navigationBlocker.state === 'blocked') {

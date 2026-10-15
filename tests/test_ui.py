@@ -32,7 +32,7 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
     ("source_path", "markers"),
     [
         pytest.param(FRONTEND_GENERATOR, (
-            'title="Pinned Parameters"',
+            "title={t('Pinned Parameters')}",
             'count={rows.length}',
             'function readCompactGeneratorLayout()',
             "window.matchMedia('(max-width: 700px)')",
@@ -64,7 +64,7 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
             "window.addEventListener('pointercancel', stopResize, { once: true })",
             "window.removeEventListener('pointercancel', stopResize)",
             'localStorage.setItem(GENERATOR_SETTINGS_WIDTH_STORAGE_KEY',
-            'aria-label="Resize generator settings panel"',
+            "aria-label={t('Resize generator settings panel')}",
             'cursor-col-resize',
             'type GenerationStatus',
             "generationStatus === 'creating'",
@@ -100,7 +100,7 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
             'pendingOutlineWidthRef',
             'outlineResizeFrameRef',
             'gridTemplateColumns: `${outlineWidth}px 4px minmax(0,1fr)`',
-            'aria-label="Resize parameter outline"',
+            "aria-label={t('Resize parameter outline')}",
             'grid-cols-[minmax(0,1fr)]',
             'columns={1}',
             'onClick={() => onSelectPath(section.path)}',
@@ -252,7 +252,7 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
             'className="flex-none border-t border-border-subtle px-2.5 py-2"',
             '{!compactMonitorLayout && (',
             'selectedTaskSnapshot',
-            'title="Current Task"',
+            'title={t("Current Task")}',
             '!sidebarSearchActive',
             'if (!selectedTaskName || (selectedTaskFromList && !duringSearch))',
             '/not found/i.test(errorMessage(error))',
@@ -267,7 +267,7 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
             'window.requestAnimationFrame(applyPendingMonitorSidebarWidth)',
             'window.cancelAnimationFrame(monitorResizeFrameRef.current)',
             'localStorage.setItem(MONITOR_SIDEBAR_WIDTH_STORAGE_KEY',
-            'aria-label="Resize monitor sidebar"',
+            'aria-label={t("Resize monitor sidebar")}',
             'resizeMonitorSidebarByKeyboard',
             'aria-valuenow={Math.round(monitorSidebarWidthPct)}',
             "event.key === 'Home'",
@@ -288,7 +288,7 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
             "streamStatus === 'reconnecting'",
             'incremental polling remains active while reconnecting',
             'screenReaderMode: true',
-            'aria-label={`Read-only logs for ${selectedTaskName}`}',
+            "aria-label={t('Read-only logs for {{name}}', { name: selectedTaskName })}",
         ), id='monitor'),
         pytest.param(FRONTEND_APP_SHELL, (
             'w-screen max-w-full',
@@ -319,7 +319,7 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
             'window.requestAnimationFrame(applyPendingPanelWidth)',
             'window.cancelAnimationFrame(panelResizeFrameRef.current)',
             'localStorage.setItem(TASK_DETAIL_WIDTH_STORAGE_KEY',
-            'aria-label="Resize task detail panel"',
+            'aria-label={t("Resize task detail panel")}',
             'cursor-col-resize',
             'style={{ width: panelWidth }}',
             'suppressNextCloseRef',
@@ -344,9 +344,9 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
         ), id='task-detail'),
         pytest.param(FRONTEND_SEARCH_INPUT, (
             "ariaLabel = 'Search'",
-            'aria-label={ariaLabel}',
-            'aria-label="Clear search"',
-            'title="Clear search"',
+            'aria-label={t(ariaLabel)}',
+            "aria-label={t('Clear search')}",
+            "title={t('Clear search')}",
             'inline-flex h-10 w-10',
             'items-center justify-center',
             'sm:h-7 sm:w-7',
@@ -372,10 +372,10 @@ def test_react_task_detail_displays_source_state_in_run_history():
     assert "duration: task.durations?.[index]" in source
     assert "exitCode: task.exit_codes?.[index]" in source
     assert "[durationLabel, durationValue]" in source
-    assert 'label="Exit Code" value={formatScalarValue(run.exitCode)}' in source
+    assert 'label={t("Exit Code")} value={formatScalarValue(run.exitCode)}' in source
     assert "task.source_states?.length ?? 0" in source
     assert "source: task.source_states?.[index] || ''" in source
-    assert 'label="Source"' in source
+    assert 'label={t("Source")}' in source
 
 
 def test_react_app_lazy_loads_routes_and_runtime_panel():
@@ -441,7 +441,7 @@ def test_react_modal_surfaces_support_backdrop_and_escape_dismissal():
     assert "window.clearTimeout(pointerListenerTimer)" in runtime_panel
     assert "document.addEventListener('keydown', handleKeyDown)" in runtime_panel
     assert "onClick={event => event.stopPropagation()}" in runtime_panel
-    assert 'aria-label="Runtime settings"' in runtime_panel
+    assert "aria-label={t('Runtime settings')}" in runtime_panel
     assert "onCancel={event =>" in confirm_dialog
     assert "event.preventDefault()" in confirm_dialog
     assert "backdropPointerStartedRef.current = event.target === event.currentTarget" in confirm_dialog
@@ -491,7 +491,7 @@ def test_react_toasts_cover_command_feedback_without_blocking_ui():
     assert "Could not load task details" in monitor
     assert "Workspace env saved" in runtime_panel
     assert "Could not save runtime" in runtime_panel
-    assert "notesSaved ? 'Saved'" in task_detail
+    assert 'notesSaved ? t("Saved")' in task_detail
     assert "Could not save notes" in task_detail
     assert "Could not rename task" in task_detail
 
@@ -503,7 +503,7 @@ def test_react_dashboard_keeps_workspace_chrome_compact():
     assert "working_root?: string" in types
     assert "const workspaceWorkingPath = getWorkspaceWorkingPath(workspace)" in source
     assert "title={workspaceWorkingPath || ''}" in source
-    assert "{workspaceWorkingPath || 'Choose a workspace to start'}" in source
+    assert "{workspaceWorkingPath || t('Choose a workspace to start')}" in source
 
 
 def test_react_workspace_chrome_distinguishes_uninitialized_roots():
@@ -544,9 +544,9 @@ def test_react_monitor_pages_and_searches_task_list_without_limit_zero():
     assert "useTaskEvents({" in monitor
     assert "TASK_EVENT_FALLBACK_POLL_MS = 60_000" in monitor
     assert "<Pagination total={monitorTotal} offset={monitorOffset}" in monitor
-    assert 'title="Pinned Tasks"' in monitor
+    assert 'title={t("Pinned Tasks")}' in monitor
     assert "count={pinnedTasks.length}" in monitor
-    assert 'title="Search Results"' in monitor
+    assert 'title={t("Search Results")}' in monitor
     assert "<SearchResultGroup" in monitor
     assert "task.search_match_count" in monitor
     assert "searchResultSummary" in monitor
@@ -577,7 +577,7 @@ def test_react_app_sidebar_can_be_resized_and_persisted():
     assert "window.requestAnimationFrame(applyPendingSidebarWidth)" in shell
     assert "window.cancelAnimationFrame(sidebarResizeFrameRef.current)" in shell
     assert "localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY" in shell
-    assert "aria-label=\"Resize navigation sidebar\"" in shell
+    assert "aria-label={t('Resize navigation sidebar')}" in shell
     assert "cursor-col-resize" in shell
     assert "<Sidebar width={effectiveSidebarWidth}" in shell
     assert "width?: number" in sidebar
@@ -619,11 +619,11 @@ def test_react_manager_uses_global_counts_page_scoped_selection_and_pending_lock
     assert "Waiting for GPU capacity" in manager
     assert "const deleted = new Set(result.deleted || [])" in manager
     assert "Some tasks could not be deleted" in manager
-    assert "Stop ${activeSelectedCount} active task" in manager
+    assert "t('Stop {{active}} active task(s) and move all {{selected}} selected tasks from this page to trash?', { active: activeSelectedCount, selected: visibleSelectedCount })" in manager
     assert "hasReorderChanges(allTasks.items, items)" in manager
     assert "is already in this position" in manager
-    assert "Move ${task.name} earlier" in manager
-    assert "Move ${task.name} later" in manager
+    assert "label={t('Move {{name}} earlier', { name: task.name })}" in manager
+    assert "label={t('Move {{name}} later', { name: task.name })}" in manager
     assert 'role="button"' in manager
     assert "tabIndex={0}" in manager
     assert "event.key === 'Enter' || event.key === ' '" in manager
@@ -654,18 +654,18 @@ def test_react_icon_only_buttons_have_accessible_names():
     manager = FRONTEND_MANAGER.read_text(encoding="utf-8")
     pagination = FRONTEND_PAGINATION.read_text(encoding="utf-8")
 
-    assert 'aria-label="Save task name"' in task_detail
-    assert 'aria-label="Cancel task rename"' in task_detail
-    assert 'aria-label="Rename task"' in task_detail
-    assert 'aria-label="Close task details"' in task_detail
-    assert 'aria-label="Close dialog"' in confirm_dialog
-    assert "aria-label={task.pinned ? `Unpin ${task.name}` : `Pin ${task.name}`}" in manager
-    assert "label={`${actionBtn.label} ${task.name}`}" in manager
-    assert "label={`View logs for ${task.name}`}" in manager
-    assert "label={`Delete ${task.name}`}" in manager
+    assert 'aria-label={t("Save task name")}' in task_detail
+    assert 'aria-label={t("Cancel task rename")}' in task_detail
+    assert 'aria-label={t("Rename task")}' in task_detail
+    assert 'aria-label={t("Close task details")}' in task_detail
+    assert "aria-label={t('Close dialog')}" in confirm_dialog
+    assert "aria-label={t(task.pinned ? 'Unpin {{name}}' : 'Pin {{name}}', { name: task.name })}" in manager
+    assert "label={t('{{action}} {{name}}', { action: t(actionBtn.label), name: task.name })}" in manager
+    assert "label={t('View logs for {{name}}', { name: task.name })}" in manager
+    assert "label={t('Delete {{name}}', { name: task.name })}" in manager
     assert "aria-label={label}" in manager
-    assert 'aria-label="Previous page"' in pagination
-    assert 'aria-label="Next page"' in pagination
+    assert "aria-label={t('Previous page')}" in pagination
+    assert "aria-label={t('Next page')}" in pagination
 
 
 def test_react_confirm_dialog_is_labelled_and_scrolls_on_short_viewports():
@@ -697,13 +697,13 @@ def test_react_task_detail_env_editor_handles_edits_feedback_and_errors():
     assert "const envSaveDisabled = saving || !envDirty || Boolean(envValidationMessage)" in source
     assert "envSaveStatus === 'error'" in source
     assert "setPendingEnvFocusId(pair.id)" in source
-    assert "aria-label={`Remove ${pair.key.trim() || 'environment variable'}`}" in source
+    assert "aria-label={t('Remove {{name}}', { name: pair.key.trim() || t(\"environment variable\") })}" in source
     assert "function requestClose" in source
     assert "const [discardConfirmOpen, setDiscardConfirmOpen]" in source
     assert "const renameDirty" in source
     assert "const hasUnsavedChanges = notesDirty || envDirty || renameDirty" in source
     assert "setDiscardConfirmOpen(true)" in source
-    assert 'title="Discard changes?"' in source
+    assert 'title={t("Discard changes?")}' in source
     assert "window.confirm('Discard unsaved changes?')" not in source
     assert "onClick={requestClose}" in source
     assert "} catch (err) {" in source
@@ -764,7 +764,7 @@ def test_react_task_lists_use_summaries_and_fetch_full_details_on_open():
     assert "data-task-card-pinned={task.pinned ? 'true' : 'false'}" in manager
     assert "<TaskSearchMatches" in manager
     assert "Drop here to pin" in manager
-    assert 'title="Pinned Tasks"' in manager
+    assert 'title={t("Pinned Tasks")}' in manager
     assert "count={pinnedTasks.length}" in manager
     assert "const taskKindLabel = task.task_kind === 'shell' ? 'shell' : 'python'" in manager
 
@@ -969,7 +969,7 @@ def test_react_code_editor_preserves_line_wrapping_preferences():
 
     assert "EditorView.lineWrapping" in editor
     assert "aria-pressed={wrap}" in editor
-    assert "aria-label={wrap ? 'Disable line wrapping' : 'Enable line wrapping'}" in editor
+    assert "aria-label={translate(wrap ? 'Disable line wrapping' : 'Enable line wrapping')}" in editor
     assert "WrapText" in editor
     assert "wrapStorageKey" in editor
     assert 'wrapStorageKey="pyruns.generator.shell.wrap"' in generator
@@ -1031,7 +1031,7 @@ def test_react_runtime_panel_loads_and_saves_conda_runtime_choices():
     assert "conda_env: condaEnv" in runtime_panel
     assert "conda_executable: condaExecutable" in runtime_panel
     assert "python_executable: ''" in runtime_panel
-    assert "selectedConda?.python_executable || 'Choose a conda environment to preview Python path'" in runtime_panel
+    assert "selectedConda?.python_executable || t('Choose a conda environment to preview Python path')" in runtime_panel
 
 
 def test_react_runtime_panel_exposes_gpu_scheduler_settings():
@@ -1220,7 +1220,7 @@ def test_react_generator_tree_param_rows_keep_value_inputs_aligned():
     assert "treeParamRow ? 'min-w-0' : 'flex-1'" in generator
     assert "treeParamRow ? 'min-w-0 justify-start' : 'flex-none justify-end'" in generator
     assert "treeParamRow ? 'col-start-2 min-w-0 w-full sm:col-start-auto' : 'ml-auto min-w-0 flex-1'" in generator
-    assert 'aria-label={`${name} parameter value`}' in generator
+    assert "aria-label={t('{{name}} parameter value', { name })}" in generator
     assert "checked={Boolean(value)}" in generator
     assert "if (!treeParamRow)" in generator
     assert "group grid min-h-7 grid-cols-[minmax(9.5rem,0.68fr)_minmax(10rem,1.32fr)] items-center gap-2" in generator
@@ -1313,7 +1313,7 @@ def test_react_generator_keeps_edits_made_while_tasks_are_created():
     dialog_end = source.index("</ConfirmDialog>", dialog_start)
     batch_dialog = source[dialog_start:dialog_end]
     assert 'role="alert"' in batch_dialog
-    assert "{error}" in batch_dialog
+    assert "{translateMessage(error)}" in batch_dialog
 
 
 def test_react_task_detail_save_responses_only_confirm_the_submitted_draft():

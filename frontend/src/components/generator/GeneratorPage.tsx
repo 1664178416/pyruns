@@ -1,3 +1,4 @@
+import { t, useTranslation, translateMessage } from '@/i18n'
 import {
   createContext,
   useCallback,
@@ -99,7 +100,7 @@ function getBatchTriggerKind(text: string) {
 }
 
 function formatBatchKind(kind: string) {
-  return kind.charAt(0).toUpperCase() + kind.slice(1)
+  return t(kind.charAt(0).toUpperCase() + kind.slice(1))
 }
 
 function buildColumnGridStyle(columns: number) {
@@ -379,7 +380,7 @@ function TemplatePicker({
                 </button>
               ))
             ) : (
-              <div className="px-3 py-2 text-xs text-txt-tertiary">{emptyLabel}</div>
+              <div className="px-3 py-2 text-xs text-txt-tertiary">{t(emptyLabel)}</div>
             )}
           </div>
         </div>
@@ -566,6 +567,7 @@ function collectParamRows(
 }
 
 export default function GeneratorPage() {
+  useTranslation()
   const navigate = useNavigate()
   const workspace = useWorkspaceStore(state => state.workspace)
   const workspaceEpoch = useWorkspaceStore(state => state.workspaceEpoch)
@@ -645,9 +647,9 @@ export default function GeneratorPage() {
       return true
     }
     return requestConfirmation({
-      title: 'Discard generator draft?',
-      description: 'Discard the current generator draft and load another template?',
-      confirmLabel: 'Discard and Load',
+      title: t('Discard generator draft?'),
+      description: t('Discard the current generator draft and load another template?'),
+      confirmLabel: t('Discard and Load'),
       confirmVariant: 'danger',
     })
   }, [])
@@ -913,8 +915,8 @@ export default function GeneratorPage() {
   const hasBatchSyntax = editorMode === 'form' && batchParams.length > 0
   const yamlContainsBatchSyntax = editorMode === 'yaml' && hasBatchExpression(yamlText)
   const batchHintText = previewData?.count
-    ? `Batch syntax detected. ${previewData.count} tasks will be created after confirmation.`
-    : 'Batch syntax detected. A preview opens before creating multiple tasks.'
+    ? t('Batch syntax detected. {{count}} tasks will be created after confirmation.', { count: previewData.count })
+    : t('Batch syntax detected. A preview opens before creating multiple tasks.')
   const generationBusy = generating || generationStatus === 'previewing'
   const currentGenerationPayload = useMemo<GenerationPayload>(() => Object.freeze({
     name_prefix: namePrefix || 'task',
@@ -1095,8 +1097,8 @@ export default function GeneratorPage() {
             <TemplatePicker
               value={selectedTemplate}
               options={templates}
-              placeholder="Select template"
-              searchPlaceholder="Search templates"
+              placeholder={t('Select template')}
+              searchPlaceholder={t('Search templates')}
               onChange={value => { void loadTemplateWithFeedback(value) }}
             />
           ) : (
@@ -1104,9 +1106,9 @@ export default function GeneratorPage() {
               <TemplatePicker
                 value={shellTemplateSelectValue}
                 options={templates}
-                placeholder="Load task"
-                searchPlaceholder="Search tasks"
-                emptyLabel="No matching tasks"
+                placeholder={t('Load task')}
+                searchPlaceholder={t('Search tasks')}
+                emptyLabel={t('No matching tasks')}
                 allowEmpty
                 onChange={value => {
                   if (value) {
@@ -1122,7 +1124,7 @@ export default function GeneratorPage() {
                 className="touch-target inline-flex h-11 items-center gap-1.5 rounded-md border border-border-subtle bg-surface-overlay px-3 py-1.5 text-xs font-medium text-txt-secondary transition-colors hover:text-txt-primary min-[701px]:h-auto"
               >
                 <FileCode className="h-3 w-3" />
-                <span>Browse Shell</span>
+                <span>{t('Browse Shell')}</span>
               </button>
             </>
           )}
@@ -1130,7 +1132,7 @@ export default function GeneratorPage() {
           {!isShellWorkspace && templateContent?.read_only && (
             <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-2xs text-amber-800 dark:text-amber-300">
               <AlertTriangle className="h-3 w-3" />
-              <span>Read-only</span>
+              <span>{t('Read-only')}</span>
             </span>
           )}
 
@@ -1140,7 +1142,7 @@ export default function GeneratorPage() {
               title={configDefaultSourcePath || configDefaultSourceName}
             >
               <FileCode className="mt-0.5 h-3 w-3 flex-none text-accent" />
-              <span className="flex-none">Loaded from</span>
+              <span className="flex-none">{t('Loaded from')}</span>
               <span className="min-w-0 whitespace-normal break-all font-mono text-txt-primary">{configDefaultSourceName}</span>
             </span>
           )}
@@ -1151,14 +1153,14 @@ export default function GeneratorPage() {
               title={templateContent.path}
             >
               <FileCode className="mt-0.5 h-3 w-3 flex-none text-accent" />
-              <span className="flex-none">Loaded shell</span>
+              <span className="flex-none">{t('Loaded shell')}</span>
               <span className="min-w-0 whitespace-normal break-all font-mono text-txt-primary">{templateContent.label}</span>
             </span>
           )}
         </div>
 
         <div className="flex w-full flex-wrap items-center justify-end gap-2 min-[701px]:ml-auto min-[701px]:w-auto">
-          <div aria-label="Editor view" className="inline-flex w-full overflow-hidden rounded-md border border-border-subtle bg-surface-overlay min-[701px]:w-auto">
+          <div aria-label={t('Editor view')} className="inline-flex w-full overflow-hidden rounded-md border border-border-subtle bg-surface-overlay min-[701px]:w-auto">
             {(isShellWorkspace ? ['shell'] : ['grid', 'tree', 'yaml'] as GeneratorDisplayMode[]).map(mode => {
               const active = mode === 'shell'
                 ? editorMode === 'shell'
@@ -1182,7 +1184,7 @@ export default function GeneratorPage() {
                   {mode === 'tree' && <Workflow className="h-3 w-3" />}
                   {mode === 'yaml' && <FileCode className="h-3 w-3" />}
                   {mode === 'shell' && <Terminal className="h-3 w-3" />}
-                  <span>{mode === 'yaml' ? 'YAML' : mode.charAt(0).toUpperCase() + mode.slice(1)}</span>
+                  <span>{mode === 'yaml' ? 'YAML' : t(mode.charAt(0).toUpperCase() + mode.slice(1))}</span>
                 </button>
               )
             })}
@@ -1191,14 +1193,14 @@ export default function GeneratorPage() {
           {editorMode === 'form' && formLayoutMode === 'grid' && (
             <div className="relative">
               <select
-                aria-label="Form columns per row"
+                aria-label={t('Form columns per row')}
                 value={columns}
                 onChange={event => setColumns(Number(event.target.value))}
-                title="Columns per row"
+                title={t('Columns per row')}
                 className="touch-target h-11 appearance-none rounded-md border border-border-subtle bg-surface-overlay px-2.5 py-1.5 pr-6 text-base text-txt-primary outline-none transition-colors focus:border-border min-[701px]:h-auto min-[701px]:text-xs"
               >
                 {[2, 3, 4, 5, 6, 7, 8].map(count => (
-                  <option key={count} value={count}>{count} col{count > 1 ? 's' : ''}</option>
+                  <option key={count} value={count}>{t(count > 1 ? '{{count}} cols' : '{{count}} col', { count })}</option>
                 ))}
               </select>
               <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-txt-tertiary" />
@@ -1214,14 +1216,14 @@ export default function GeneratorPage() {
           className="flex flex-wrap items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300"
         >
           <AlertTriangle className="h-3.5 w-3.5 flex-none" />
-          <span className="min-w-0 flex-1 break-words">Templates could not be loaded. {templateLoadError}</span>
+          <span className="min-w-0 flex-1 break-words">{t('Templates could not be loaded.')} {translateMessage(templateLoadError)}</span>
           <button
             type="button"
             className="touch-target inline-flex min-h-11 flex-none items-center justify-center rounded-md border border-rose-500/25 px-3 py-1.5 font-medium transition-colors hover:bg-rose-500/10 disabled:cursor-wait disabled:opacity-60"
             disabled={templateListLoading}
             onClick={() => { void refreshTemplatesWithFeedback() }}
           >
-            {templateListLoading ? 'Retrying...' : 'Retry'}
+            {templateListLoading ? t('Retrying...') : t('Retry')}
           </button>
         </div>
       )}
@@ -1230,7 +1232,7 @@ export default function GeneratorPage() {
         <div className={generatorEditorClassName}>
           {!isShellWorkspace && loading ? (
             <div className="flex h-full items-center justify-center">
-              <div className="animate-pulse text-xs text-txt-tertiary">Loading template...</div>
+              <div className="animate-pulse text-xs text-txt-tertiary">{t('Loading template...')}</div>
             </div>
           ) : editorMode === 'form' ? (
             <GeneratorDraftEditContext.Provider value={markGeneratorDraftEdited}>
@@ -1258,7 +1260,7 @@ export default function GeneratorPage() {
                 theme={codeMirrorTheme}
                 className="generator-code-editor"
                 wrapStorageKey="pyruns.generator.yaml.wrap"
-                ariaLabel="Task YAML editor"
+                ariaLabel={t('Task YAML editor')}
               />
             </div>
           ) : (
@@ -1270,7 +1272,7 @@ export default function GeneratorPage() {
                 theme={codeMirrorTheme}
                 className="generator-code-editor"
                 wrapStorageKey="pyruns.generator.shell.wrap"
-                ariaLabel="Task shell editor"
+                ariaLabel={t('Task shell editor')}
               />
             </div>
           )}
@@ -1281,7 +1283,7 @@ export default function GeneratorPage() {
             type="button"
             role="separator"
             tabIndex={0}
-            aria-label="Resize generator settings panel"
+            aria-label={t('Resize generator settings panel')}
             aria-orientation="vertical"
             aria-valuemin={MIN_GENERATOR_SETTINGS_WIDTH}
             aria-valuemax={clampGeneratorSettingsWidth(MAX_GENERATOR_SETTINGS_WIDTH)}
@@ -1299,9 +1301,9 @@ export default function GeneratorPage() {
           className={generatorSettingsClassName}
           style={compactGeneratorLayout ? undefined : { width: generatorSettingsWidth }}
         >
-          <CompactSection title="Naming" bodyClassName="space-y-2.5 p-2">
+          <CompactSection title={t('Naming')} bodyClassName="space-y-2.5 p-2">
             <div>
-              <label htmlFor="task-prefix" className="block text-2xs uppercase tracking-[0.16em] text-txt-tertiary">Task Prefix</label>
+              <label htmlFor="task-prefix" className="block text-2xs uppercase tracking-[0.16em] text-txt-tertiary">{t('Task Prefix')}</label>
               <input
                 id="task-prefix"
                 value={namePrefix}
@@ -1317,19 +1319,19 @@ export default function GeneratorPage() {
                 onChange={event => setAppendTimestamp(event.target.checked)}
                 className="h-3.5 w-3.5 rounded border-border accent-accent"
               />
-              <span>Append timestamp</span>
+              <span>{t('Append timestamp')}</span>
             </label>
           </CompactSection>
 
           {editorMode === 'form' && batchParams.length > 0 && (
             <CompactSection
-              title="Pinned Batch Inputs"
+              title={t('Pinned Batch Inputs')}
               icon={<Pin className="h-3.5 w-3.5 text-accent" />}
               accent
               bodyClassName="space-y-1.5 p-2"
             >
               <div className="text-2xs text-accent">
-                {batchParams.length} batch-sensitive field{batchParams.length > 1 ? 's' : ''}
+                {t(batchParams.length > 1 ? '{{count}} batch-sensitive fields' : '{{count}} batch-sensitive field', { count: batchParams.length })}
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {batchTriggerDetails.map(param => (
@@ -1346,30 +1348,30 @@ export default function GeneratorPage() {
           )}
 
           {editorMode === 'form' && (
-            <CompactSection title="Batch Syntax" bodyClassName="space-y-1.5 p-2">
+            <CompactSection title={t('Batch Syntax')} bodyClassName="space-y-1.5 p-2">
               <div className="text-2xs leading-relaxed text-txt-secondary">
-                <span className="text-txt-primary">Product</span>: `lr: 0.001 | 0.01 | 0.1`
+                <span className="text-txt-primary">{t('Product')}</span>: `lr: 0.001 | 0.01 | 0.1`
               </div>
               <div className="text-2xs leading-relaxed text-txt-secondary">
-                <span className="text-txt-primary">Zip</span>: `seed: (1 | 2 | 3)`
+                <span className="text-txt-primary">{t('Zip')}</span>: `seed: (1 | 2 | 3)`
               </div>
               <div className="text-2xs leading-relaxed text-txt-secondary">
-                <span className="text-txt-primary">Range</span>: `epoch: 10:100:1`
+                <span className="text-txt-primary">{t('Range')}</span>: `epoch: 10:100:1`
               </div>
             </CompactSection>
           )}
 
           {editorMode === 'yaml' && (
-            <CompactSection title="YAML Mode" bodyClassName="space-y-1.5 p-2">
+            <CompactSection title={t('YAML Mode')} bodyClassName="space-y-1.5 p-2">
               <div className="text-2xs leading-relaxed text-txt-secondary">
-                YAML mode creates exactly one <code className="text-txt-primary">config.yaml</code> task.
+                {t('YAML mode creates exactly one config.yaml task.')}
               </div>
               <div className="text-2xs leading-relaxed text-txt-secondary">
-                Batch syntax is disabled here. Switch to <span className="text-txt-primary">Grid</span> or <span className="text-txt-primary">Tree</span> for batch expansion and parameter pinning.
+                {t('Batch syntax is disabled here. Switch to Grid or Tree for batch expansion and parameter pinning.')}
               </div>
               {yamlContainsBatchSyntax && (
                 <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-2 text-2xs text-amber-800 dark:text-amber-300">
-                  Batch syntax was detected in YAML mode, but YAML mode only creates one task. Use Grid or Tree mode if you want batch generation.
+                  {t('Batch syntax was detected in YAML mode, but YAML mode only creates one task. Use Grid or Tree mode if you want batch generation.')}
                 </div>
               )}
             </CompactSection>
@@ -1380,9 +1382,9 @@ export default function GeneratorPage() {
           )}
 
           {error && (
-            <CompactSection title="Status" bodyClassName="space-y-1.5 p-2">
-              <div role="alert" className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300" title={error}>
-                {error}
+            <CompactSection title={t('Status')} bodyClassName="space-y-1.5 p-2">
+              <div role="alert" className="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300" title={translateMessage(error)}>
+                {translateMessage(error)}
               </div>
             </CompactSection>
           )}
@@ -1397,10 +1399,10 @@ export default function GeneratorPage() {
               disabled={generationBusy || Boolean(formConfig.error)}
             >
               {generationStatus === 'previewing'
-                ? 'Previewing...'
+                ? t('Previewing...')
                 : generationStatus === 'creating'
-                  ? 'Creating...'
-                  : editorMode === 'shell' ? 'Create Shell Task' : hasBatchSyntax ? 'Preview Batch Tasks' : 'Generate Tasks'}
+                  ? t('Creating...')
+                  : editorMode === 'shell' ? t('Create Shell Task') : hasBatchSyntax ? t('Preview Batch Tasks') : t('Generate Tasks')}
             </ActionButton>
             <div role="status" aria-live="polite" aria-atomic="true">
               <GenerationFeedback
@@ -1410,10 +1412,10 @@ export default function GeneratorPage() {
                   editorMode === 'form' && hasBatchSyntax
                     ? batchHintText
                     : editorMode === 'yaml' && yamlContainsBatchSyntax
-                      ? 'YAML mode does not expand batch syntax. Switch to Grid or Tree mode.'
+                      ? t('YAML mode does not expand batch syntax. Switch to Grid or Tree mode.')
                     : editorMode === 'shell'
-                      ? 'Creates one shell task immediately.'
-                      : 'Creates one task immediately.'
+                      ? t('Creates one shell task immediately.')
+                      : t('Creates one task immediately.')
                 }
                 onOpenManager={() => {
                   const taskName = createdSummary?.firstTaskName
@@ -1427,9 +1429,9 @@ export default function GeneratorPage() {
 
       <ConfirmDialog
         open={previewOpen}
-        title="Batch Preview"
-        description="Review the expansion before writing task folders."
-        confirmLabel="Generate All"
+        title={t('Batch Preview')}
+        description={t('Review the expansion before writing task folders.')}
+        confirmLabel={t('Generate All')}
         size="lg"
         onConfirm={() => doCreate(previewSnapshot?.payload || currentGenerationPayload)}
         onCancel={() => {
@@ -1444,7 +1446,7 @@ export default function GeneratorPage() {
             className="flex items-start gap-2 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300"
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" />
-            <span className="min-w-0 break-words">{error}</span>
+            <span className="min-w-0 break-words">{translateMessage(error)}</span>
           </div>
         )}
         <BatchPreviewContent preview={previewData} triggers={batchTriggerDetails} />
@@ -1468,7 +1470,7 @@ function GenerationFeedback({
     return (
       <div className="mt-2 flex items-center justify-center gap-1.5 rounded-md bg-accent/8 px-2.5 py-2 text-2xs font-medium text-accent">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Writing task folders...
+        {t('Writing task folders...')}
       </div>
     )
   }
@@ -1477,7 +1479,7 @@ function GenerationFeedback({
     return (
       <div className="mt-2 flex items-center justify-center gap-1.5 rounded-md bg-accent/8 px-2.5 py-2 text-2xs font-medium text-accent">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Preparing batch preview...
+        {t('Preparing batch preview...')}
       </div>
     )
   }
@@ -1502,7 +1504,7 @@ function CreatedTaskSummary({
         <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-none" />
         <div className="min-w-0">
           <div className="font-medium">
-            Created {summary.count} {summary.taskKind}{summary.count > 1 ? 's' : ''}
+            {t(summary.count > 1 ? 'Created {{count}} {{kind}}s' : 'Created {{count}} {{kind}}', { count: summary.count, kind: t(summary.taskKind) })}
           </div>
           {summary.firstTaskName && (
             <div className="mt-0.5 truncate font-mono text-[11px]" title={summary.firstTaskName}>
@@ -1516,7 +1518,7 @@ function CreatedTaskSummary({
         onClick={onOpenManager}
         className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-emerald-700 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-800 min-[701px]:min-h-0"
       >
-        Open in Manager
+        {t('Open in Manager')}
       </button>
     </div>
   )
@@ -1536,13 +1538,13 @@ function BatchPreviewContent({
       <div className="grid gap-2 sm:grid-cols-2">
         <BatchPreviewMetric
           icon={<Hash className="h-3.5 w-3.5" />}
-          label="Tasks to create"
+          label={t('Tasks to create')}
           value={count ? String(count) : '-'}
           accent
         />
         <BatchPreviewMetric
           icon={<Workflow className="h-3.5 w-3.5" />}
-          label="Batch triggers"
+          label={t('Batch triggers')}
           value={String(triggers.length)}
         />
       </div>
@@ -1551,7 +1553,7 @@ function BatchPreviewContent({
         <section className="border-t border-border-subtle pt-3">
           <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-txt-primary">
             <Workflow className="h-3.5 w-3.5 text-accent" />
-            <span>Batch triggers</span>
+            <span>{t('Batch triggers')}</span>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {triggers.map(item => (
@@ -1621,10 +1623,10 @@ function BatchPreviewList({
       <div className="flex items-center justify-between px-0.5 pb-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-txt-primary">
           <ListChecks className="h-3.5 w-3.5 text-accent" />
-          <span>Task samples</span>
+          <span>{t('Task samples')}</span>
         </div>
         <span className="text-2xs text-txt-tertiary">
-          {items.length ? `First ${items.length}` : 'No preview'}
+          {items.length ? t('First {{count}}', { count: items.length }) : t('No preview')}
         </span>
       </div>
       <div className="max-h-[320px] space-y-1 overflow-y-auto">
@@ -1644,7 +1646,7 @@ function BatchPreviewList({
         ))}
         {count > items.length && (
           <div className="px-2 py-1.5 text-xs text-txt-tertiary">
-            Plus {count - items.length} more task{count - items.length > 1 ? 's' : ''}
+            {t(count - items.length > 1 ? 'Plus {{count}} more tasks' : 'Plus {{count}} more task', { count: count - items.length })}
           </div>
         )}
       </div>
@@ -1660,22 +1662,22 @@ function ShellRuntimePanel({
   runRoot?: string
 }) {
   const currentShell = runtime?.mode === 'custom'
-    ? 'Custom shell'
-    : runtime?.display_name || 'Follow current terminal'
-  const executable = runtime?.executable || 'Auto-detect'
-  const mode = runtime?.mode === 'custom' ? 'Custom' : 'Follow'
+    ? t('Custom shell')
+    : runtime?.display_name || t('Follow current terminal')
+  const executable = runtime?.executable || t('Auto-detect')
+  const mode = runtime?.mode === 'custom' ? t('Custom') : t('Follow')
 
   return (
     <CompactSection
-      title="Shell Runtime"
+      title={t('Shell Runtime')}
       icon={<Terminal className="h-3.5 w-3.5 text-accent" />}
       accent
       bodyClassName="space-y-2 p-2.5"
     >
-      <ShellRuntimeRow label="Current shell" value={currentShell} />
-      <ShellRuntimeRow label="Resolved file" value={getShellConfigFilename(runtime)} mono />
-      <ShellRuntimeRow label="Workspace folder" value={pathLeaf(runRoot) || '_shell_'} mono />
-      <ShellRuntimeRow label="Mode" value={mode} />
+      <ShellRuntimeRow label={t('Current shell')} value={currentShell} />
+      <ShellRuntimeRow label={t('Resolved file')} value={getShellConfigFilename(runtime)} mono />
+      <ShellRuntimeRow label={t('Workspace folder')} value={pathLeaf(runRoot) || '_shell_'} mono />
+      <ShellRuntimeRow label={t('Mode')} value={mode} />
       <div className="truncate rounded-md bg-surface-overlay px-2.5 py-2 font-mono text-2xs text-txt-tertiary" title={executable}>
         {executable}
       </div>
@@ -1711,8 +1713,8 @@ function SectionExpandControls({
     <div className="inline-flex shrink-0 overflow-hidden rounded-md border border-border-subtle bg-surface-overlay">
       <button
         type="button"
-        title="Expand all sections"
-        aria-label="Expand all sections"
+        title={t('Expand all sections')}
+        aria-label={t('Expand all sections')}
         onClick={() => onSetAllSections(true)}
         className="touch-target inline-flex h-11 w-11 items-center justify-center text-txt-secondary transition-colors hover:bg-surface-raised/60 hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 sm:h-7 sm:w-7"
       >
@@ -1720,8 +1722,8 @@ function SectionExpandControls({
       </button>
       <button
         type="button"
-        title="Collapse all sections"
-        aria-label="Collapse all sections"
+        title={t('Collapse all sections')}
+        aria-label={t('Collapse all sections')}
         onClick={() => onSetAllSections(false)}
         className="touch-target inline-flex h-11 w-11 items-center justify-center border-l border-border-subtle text-txt-secondary transition-colors hover:bg-surface-raised/60 hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 sm:h-7 sm:w-7"
       >
@@ -1767,12 +1769,12 @@ function FormEditor({
   if (parseError) {
     return (
       <div role="alert" className="h-full overflow-y-auto">
-        <EmptyState title="Cannot edit this YAML" description={`${parseError} Switch to YAML to correct it.`} />
+        <EmptyState title={t('Cannot edit this YAML')} description={t('{{error}} Switch to YAML to correct it.', { error: translateMessage(parseError) })} />
       </div>
     )
   }
   if (!config || config.size === 0) {
-    return <EmptyState title="No parameters" description="Load a template to edit parameters" />
+    return <EmptyState title={t('No parameters')} description={t('Load a template to edit parameters')} />
   }
   const data = config
 
@@ -1830,7 +1832,7 @@ function FormEditor({
       <div className={clsx('mb-2 flex flex-wrap items-center gap-2', pinnedRows.length > 0 && 'mt-3')}>
         <div className="flex items-center gap-1.5 text-2xs font-bold uppercase tracking-[0.16em] text-txt-tertiary">
           <LayoutGrid className="h-3.5 w-3.5" />
-          <span>{pinnedRows.length > 0 ? 'All Parameters' : 'Parameters'}</span>
+          <span>{pinnedRows.length > 0 ? t('All Parameters') : t('Parameters')}</span>
         </div>
         {hasNestedSections && (
           <div className="ml-auto">
@@ -2046,14 +2048,14 @@ function TreeParameterExplorer({
       <aside className="flex min-h-0 flex-col overflow-hidden rounded-md border border-border-subtle bg-surface-raised/85">
         <div className="border-b border-border-subtle p-2">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-2xs font-bold uppercase tracking-[0.16em] text-txt-tertiary">Outline</span>
+            <span className="text-2xs font-bold uppercase tracking-[0.16em] text-txt-tertiary">{t('Outline')}</span>
             <button
               type="button"
               onClick={() => setOutlineCollapsed(true)}
               className="inline-flex h-6 items-center gap-1 rounded-md px-2 text-2xs font-medium text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-txt-primary"
             >
               <ChevronLeft className="h-3 w-3" />
-              Hide
+              {t('Hide')}
             </button>
           </div>
           <div className="relative">
@@ -2061,7 +2063,7 @@ function TreeParameterExplorer({
             <input
               value={filterText}
               onChange={event => setFilterText(event.target.value)}
-              placeholder="Search path or value"
+              placeholder={t('Search path or value')}
               className="w-full rounded-md border border-border-subtle bg-surface-overlay py-1.5 pl-7 pr-2 text-xs text-txt-primary outline-none transition-colors placeholder:text-txt-tertiary focus:border-border"
             />
           </div>
@@ -2079,7 +2081,7 @@ function TreeParameterExplorer({
                     setFilterText('')
                     setSelectedPath(section.path)
                   }}
-                  title={formatConfigPath(section.keys) || 'All parameters'}
+                  title={formatConfigPath(section.keys) || t('All parameters')}
                   className={clsx(
                     'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-xs transition-colors',
                     active
@@ -2093,7 +2095,7 @@ function TreeParameterExplorer({
                   ) : (
                     <Workflow className="h-3 w-3 flex-none" />
                   )}
-                  <span className="min-w-0 flex-1 truncate font-semibold">{section.name}</span>
+                  <span className="min-w-0 flex-1 truncate font-semibold">{section.path ? section.name : t(section.name)}</span>
                   <span className="rounded-md bg-surface-overlay px-1.5 py-0.5 text-2xs text-txt-tertiary">
                     {section.leafCount}
                   </span>
@@ -2108,7 +2110,7 @@ function TreeParameterExplorer({
       {!outlineCollapsed && (
         <button
           type="button"
-          aria-label="Resize parameter outline"
+          aria-label={t('Resize parameter outline')}
           aria-orientation="vertical"
           onPointerDown={startOutlineResize}
           className={clsx(
@@ -2128,11 +2130,11 @@ function TreeParameterExplorer({
                 className="inline-flex h-7 items-center gap-1 rounded-md border border-border-subtle bg-surface-overlay px-2 text-xs font-medium text-txt-secondary transition-colors hover:text-txt-primary"
               >
                 <Workflow className="h-3.5 w-3.5" />
-                Outline
+                {t('Outline')}
               </button>
             )}
             <h3 className="min-w-0 truncate text-sm font-semibold text-txt-primary">
-              {query ? 'Search results' : selectedSection.name}
+              {query ? t('Search results') : selectedSection.path ? selectedSection.name : t(selectedSection.name)}
             </h3>
             <span className="rounded-md bg-surface-overlay px-1.5 py-0.5 text-2xs text-txt-secondary">
               {query ? searchRows.length : selectedSection.leafCount}
@@ -2144,7 +2146,7 @@ function TreeParameterExplorer({
             )}
           </div>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-2xs text-txt-tertiary">
-            {(query ? ['filter', filterText.trim()] : selectedCrumbs).filter(Boolean).map((crumb, index) => (
+            {(query ? [t('filter'), filterText.trim()] : selectedCrumbs).filter(Boolean).map((crumb, index) => (
               <span key={`${crumb}-${index}`} className="font-mono">
                 {index > 0 ? `/ ${crumb}` : crumb}
               </span>
@@ -2195,7 +2197,7 @@ function TreeParameterExplorer({
                 <div className="space-y-2.5 px-2.5 py-2">
                   <div className="flex items-center gap-1.5 text-2xs font-bold uppercase tracking-[0.16em] text-txt-tertiary">
                     <Workflow className="h-3.5 w-3.5" />
-                    <span>Global Parameters</span>
+                    <span>{t('Global Parameters')}</span>
                   </div>
                   <div className="space-y-1.5">
                     {[...data].filter(([key, value]) => (
@@ -2297,7 +2299,7 @@ function RootSectionOverview({
         <div>
           <div className="mb-2 flex items-center gap-1.5 text-2xs font-bold uppercase tracking-[0.16em] text-txt-tertiary">
             <Workflow className="h-3.5 w-3.5" />
-            <span>Sections</span>
+            <span>{t('Sections')}</span>
           </div>
           <div className="space-y-2">
             {sections.map(section => (
@@ -2342,7 +2344,7 @@ function SearchResultRows({
   if (rows.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-border-subtle bg-surface-overlay/40 px-3 py-8 text-center text-sm text-txt-tertiary">
-        No matching parameters.
+        {t('No matching parameters.')}
       </div>
     )
   }
@@ -2389,7 +2391,7 @@ function PinnedParameters({
 
   return (
     <CompactSection
-      title="Pinned Parameters"
+      title={t('Pinned Parameters')}
       count={rows.length}
       icon={<Pin className="h-3.5 w-3.5 text-accent" />}
       accent
@@ -2495,7 +2497,7 @@ function NestedSection({
           !treeSection && depth === 0 && open && 'border-b border-border bg-surface-overlay/55',
           !treeSection && depth > 0 && 'rounded-md bg-surface-base',
         )}
-        title={`${formatConfigPath(prefix)} (${data.size} fields)`}
+        title={t('{{path}} ({{count}} fields)', { path: formatConfigPath(prefix), count: data.size })}
       >
         {treeConnector && (
           <span className="absolute left-0 top-1/2 w-2 border-t border-dashed border-border-strong/60" />
@@ -2667,8 +2669,8 @@ function ParamRow({
               event.stopPropagation()
               onTogglePin()
             }}
-            title={pinned ? 'Unpin' : 'Pin'}
-            aria-label={pinned ? `Unpin ${name}` : `Pin ${name}`}
+            title={pinned ? t('Unpin') : t('Pin')}
+            aria-label={t(pinned ? 'Unpin {{name}}' : 'Pin {{name}}', { name })}
             className={clsx(
               'touch-target flex h-4.5 w-4.5 flex-none items-center justify-center rounded transition-colors',
               pinned ? 'text-accent' : 'text-txt-tertiary hover:text-accent'
@@ -2690,13 +2692,13 @@ function ParamRow({
 
           {pinned && (
             <span className="rounded-md bg-accent/10 px-1.5 py-0.5 text-2xs font-semibold uppercase text-accent">
-              Pin
+              {t('Pin')}
             </span>
           )}
 
           {(hasBatch || batchActive) && (
             <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-2xs font-semibold uppercase text-amber-800 dark:text-amber-300">
-              Batch
+              {t('Batch')}
             </span>
           )}
         </div>
@@ -2714,13 +2716,13 @@ function ParamRow({
                 checked={Boolean(value)}
                 onChange={onChange}
                 label={name}
-                title={`Toggle ${name}`}
+                title={t('Toggle {{name}}', { name })}
               />
             </div>
           ) : (
             <input
               type="text"
-              aria-label={`${name} parameter value`}
+              aria-label={t('{{name}} parameter value', { name })}
               value={localValue}
               onFocus={() => { editingRef.current = true }}
               onChange={event => handleLocalValueChange(event.target.value)}
@@ -2761,8 +2763,8 @@ function ParamRow({
           event.stopPropagation()
           onTogglePin()
         }}
-        title={pinned ? 'Unpin' : 'Pin'}
-        aria-label={pinned ? `Unpin ${name}` : `Pin ${name}`}
+        title={pinned ? t('Unpin') : t('Pin')}
+        aria-label={t(pinned ? 'Unpin {{name}}' : 'Pin {{name}}', { name })}
         className={clsx(
           'touch-target flex h-6 w-6 flex-none items-center justify-center rounded-md transition-colors',
           pinned ? 'text-accent' : 'text-txt-tertiary hover:text-accent'
@@ -2778,13 +2780,13 @@ function ParamRow({
 
         {pinned && (
           <span className="flex-none rounded-md bg-accent/10 px-1.5 py-0.5 text-2xs font-semibold uppercase text-accent">
-            Pinned
+            {t('Pinned')}
           </span>
         )}
 
         {(hasBatch || batchActive) && (
           <span className="flex-none rounded-md bg-amber-500/10 px-1.5 py-0.5 text-2xs font-semibold uppercase text-amber-800 dark:text-amber-300">
-            Batch
+            {t('Batch')}
           </span>
         )}
 
@@ -2807,14 +2809,14 @@ function ParamRow({
             checked={Boolean(value)}
             onChange={onChange}
             label={name}
-            title={`Toggle ${name}`}
+            title={t('Toggle {{name}}', { name })}
           />
           <span className="min-w-0 truncate text-xs font-mono text-txt-secondary" title={String(value)}>{String(value)}</span>
         </div>
       ) : (
         <input
           type="text"
-          aria-label={`${name} parameter value`}
+          aria-label={t('{{name}} parameter value', { name })}
           value={localValue}
           onFocus={() => { editingRef.current = true }}
           onChange={event => handleLocalValueChange(event.target.value)}

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { Search, X } from 'lucide-react'
 import clsx from 'clsx'
+import { useTranslation } from '@/i18n'
 
 interface Props {
   value: string
@@ -37,6 +38,7 @@ export default function SearchInput({
   historyRevision = 0,
   onRemember,
 }: Props) {
+  const { t } = useTranslation()
   const [local, setLocal] = useState(value)
   const [composing, setComposing] = useState(false)
   const changeRef = useRef(onChange)
@@ -109,18 +111,18 @@ export default function SearchInput({
             }
           }
         }}
-        placeholder={placeholder}
-        aria-label={ariaLabel}
+        placeholder={t(placeholder)}
+        aria-label={t(ariaLabel)}
         aria-keyshortcuts={ariaKeyShortcuts}
-        title="Ctrl/Cmd+Shift+F to focus; Enter to search; Shift+Enter for a new line; Up/Down for search history"
+        title={t('Ctrl/Cmd+Shift+F to focus; Enter to search; Shift+Enter for a new line; Up/Down for search history')}
         className="h-full min-w-0 flex-1 resize-none overflow-x-hidden bg-transparent px-2 py-3 text-base leading-5 text-txt-primary placeholder:text-txt-tertiary outline-none focus-visible:outline-none sm:py-[7px] sm:text-xs sm:leading-5"
       />
       {local && (
         <button
           type="button"
           onClick={() => { historyNavigation.current = null; setLocal(''); onChange('') }}
-          aria-label="Clear search"
-          title="Clear search"
+          aria-label={t('Clear search')}
+          title={t('Clear search')}
           className="touch-target mr-0.5 inline-flex h-10 w-10 flex-none items-center justify-center rounded text-txt-tertiary transition-colors hover:bg-surface-hover hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 sm:h-7 sm:w-7"
         >
           <X className="h-3.5 w-3.5" />

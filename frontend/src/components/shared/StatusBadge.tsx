@@ -1,5 +1,6 @@
 import clsx from 'clsx'
-import { STATUS_COLORS, type TaskStatus } from '@/theme/tokens'
+import { STATUS_COLORS, STATUS_LABELS, type TaskStatus } from '@/theme/tokens'
+import { useTranslation } from '@/i18n'
 
 interface Props {
   status: TaskStatus
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function StatusBadge({ status, size = 'sm' }: Props) {
+  const { t } = useTranslation()
   const c = STATUS_COLORS[status] || STATUS_COLORS.pending
   return (
     <span className={clsx(
@@ -15,7 +17,7 @@ export default function StatusBadge({ status, size = 'sm' }: Props) {
       size === 'sm' ? 'px-2.5 py-1 text-2xs' : 'px-3 py-1.5 text-xs',
     )}>
       <span className={clsx('w-1.5 h-1.5 rounded-full', c.dot)} />
-      {status}
+      {t(STATUS_LABELS[status] || status)}
     </span>
   )
 }

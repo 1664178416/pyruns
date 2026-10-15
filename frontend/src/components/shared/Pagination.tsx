@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
+import { useTranslation } from '@/i18n'
 
 interface Props {
   total: number
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function Pagination({ total, offset, limit, onOffsetChange, disabled = false }: Props) {
+  const { t } = useTranslation()
   if (total <= limit) return null
 
   const currentPage = Math.floor(offset / limit) + 1
@@ -21,7 +23,7 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
         type="button"
         disabled={disabled || offset === 0}
         onClick={() => onOffsetChange(Math.max(0, offset - limit))}
-        aria-label="Previous page"
+        aria-label={t('Previous page')}
         className={clsx(
           'touch-target inline-flex h-11 w-11 items-center justify-center rounded-md transition-colors hover:bg-surface-overlay sm:h-8 sm:w-8',
           (disabled || offset === 0) && 'opacity-30 cursor-not-allowed'
@@ -36,7 +38,7 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
         type="button"
         disabled={disabled || offset + limit >= total}
         onClick={() => onOffsetChange(offset + limit)}
-        aria-label="Next page"
+        aria-label={t('Next page')}
         className={clsx(
           'touch-target inline-flex h-11 w-11 items-center justify-center rounded-md transition-colors hover:bg-surface-overlay sm:h-8 sm:w-8',
           (disabled || offset + limit >= total) && 'opacity-30 cursor-not-allowed'
@@ -44,7 +46,7 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
       >
         <ChevronRight className="w-3.5 h-3.5" />
       </button>
-      <span className="ml-1 text-txt-tertiary">{total} total</span>
+      <span className="ml-1 text-txt-tertiary">{t('{{total}} total', { total })}</span>
     </div>
   )
 }

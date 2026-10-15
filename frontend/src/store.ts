@@ -19,6 +19,7 @@ import * as api from './api'
 import { resolveMonitorScrollback } from './utils/monitorSettings'
 import { configPathId } from './utils/configPaths'
 import { retainTaskSnapshots } from './utils/taskSnapshots'
+import { t as translate } from './i18n'
 
 let taskRequestSeq = 0
 let monitorTaskRequestSeq = 0
@@ -1219,12 +1220,12 @@ export async function confirmDiscardWorkspaceChanges() {
     return true
   }
   const description = labels.length === 1
-    ? labels[0]
-    : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+    ? translate(labels[0])
+    : translate('{{changes}} and {{last}}', { changes: labels.slice(0, -1).map(label => translate(label)).join(', '), last: translate(labels[labels.length - 1]) })
   return requestConfirmation({
-    title: 'Discard unsaved changes?',
-    description: `Discard unsaved ${description} before switching workspaces?`,
-    confirmLabel: 'Discard and Switch',
+    title: translate('Discard unsaved changes?'),
+    description: translate('Discard unsaved {{description}} before switching workspaces?', { description }),
+    confirmLabel: translate('Discard and Switch'),
     confirmVariant: 'danger',
   })
 }

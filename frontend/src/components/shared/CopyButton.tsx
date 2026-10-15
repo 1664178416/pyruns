@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ButtonHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { copyText } from '@/utils/clipboard'
 import ActionButton from './ActionButton'
+import { useTranslation, translateMessage } from '@/i18n'
 
 interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
   value: string
@@ -26,6 +27,7 @@ export default function CopyButton({
   disabled,
   ...props
 }: Props) {
+  useTranslation()
   const [state, setState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
   const resetTimerRef = useRef<number | null>(null)
   const available = Boolean(String(value ?? ''))
@@ -77,10 +79,10 @@ export default function CopyButton({
         disabled={disabled || !available || state === 'copying'}
         onClick={handleCopy}
         className={clsx('flex-none', className)}
-        aria-label={statusLabel}
-        title={statusLabel}
+        aria-label={translateMessage(statusLabel)}
+        title={translateMessage(statusLabel)}
       >
-        {text}
+        {translateMessage(text)}
       </ActionButton>
     )
   }
@@ -98,8 +100,8 @@ export default function CopyButton({
         state === 'failed' && 'text-rose-700 dark:text-rose-300',
         className,
       )}
-      aria-label={statusLabel}
-      title={statusLabel}
+      aria-label={translateMessage(statusLabel)}
+      title={translateMessage(statusLabel)}
     >
       {icon}
     </button>

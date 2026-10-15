@@ -13,6 +13,7 @@ import {
   useToastStore,
 } from '@/store'
 import type { SystemInfo, UiVersionCheck } from '@/types'
+import { t, useTranslation } from '@/i18n'
 
 const RESTART_POLL_MS = 500
 const RESTART_REQUEST_TIMEOUT_MS = 5_000
@@ -83,16 +84,16 @@ function UpdateProgressDialog({
           className="mx-auto h-7 w-7 animate-spin text-accent motion-reduce:animate-none"
         />
         <h2 id="pyruns-update-title" className="mt-4 text-base font-semibold text-txt-primary">
-          {restarting ? 'Restarting Pyruns' : 'Updating Pyruns'}
+          {restarting ? t('Restarting Pyruns') : t('Updating Pyruns')}
         </h2>
         <p id="pyruns-update-detail" aria-live="polite" className="mt-2 text-sm leading-6 text-txt-secondary">
           {takingLong
             ? restarting
-              ? 'The shared restart is still waiting. The terminal contains the current status.'
-              : 'The package update is still running. The terminal contains the current pip status.'
+              ? t('The shared restart is still waiting. The terminal contains the current status.')
+              : t('The package update is still running. The terminal contains the current pip status.')
             : restarting
-              ? 'Restarting every idle interface that shares this installation...'
-              : 'Installing the package and restarting every interface that shares it...'}
+              ? t('Restarting every idle interface that shares this installation...')
+              : t('Installing the package and restarting every interface that shares it...')}
         </p>
         {takingLong && (
           <button
@@ -101,7 +102,7 @@ function UpdateProgressDialog({
             className="touch-target mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border-subtle px-4 text-sm font-medium text-txt-primary transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 sm:min-h-10"
           >
             <RefreshCw aria-hidden="true" className="h-4 w-4" />
-            Reload interface
+            {t('Reload interface')}
           </button>
         )}
       </div>
@@ -110,6 +111,7 @@ function UpdateProgressDialog({
 }
 
 export default function UpdateControl({ compact = false }: { compact?: boolean }) {
+  useTranslation()
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [checking, setChecking] = useState(false)
   const [operation, setOperation] = useState<FullProcessOperation | null>(null)
@@ -135,18 +137,18 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
     if (result.ok) {
       notify({
         tone: 'success',
-        title: 'Pyruns updated',
+        title: t('Pyruns updated'),
         detail: result.installed_version || info.version,
       })
     } else {
       const detail = result.exit_code === 0
-        ? `pip completed without installing the confirmed release; version ${info.version} was restarted.`
+        ? t('pip completed without installing the confirmed release; version {{version}} was restarted.', { version: info.version })
         : result.exit_code === 124
-          ? `The update timed out; version ${info.version} was restarted.`
-          : `pip exited with code ${result.exit_code}; version ${info.version} was restarted.`
+          ? t('The update timed out; version {{version}} was restarted.', { version: info.version })
+          : t('pip exited with code {{code}}; version {{version}} was restarted.', { code: result.exit_code, version: info.version })
       notify({
         tone: 'error',
-        title: 'Pyruns update failed',
+        title: t('Pyruns update failed'),
         detail,
       })
     }
@@ -162,7 +164,7 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
         const info = await requestWithTimeout(
           signal => api.getSystemInfo(signal),
           RESTART_REQUEST_TIMEOUT_MS,
-          'Pyruns status check timed out.',
+          t('Pyruns status check timed out.'),
         )
         if (!active) return
         if (instanceIdRef.current && info.instance_id !== instanceIdRef.current) {
@@ -199,7 +201,7 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
         const info = await requestWithTimeout(
           signal => api.getSystemInfo(signal),
           RESTART_REQUEST_TIMEOUT_MS,
-          'Pyruns status check timed out.',
+          t('Pyruns status check timed out.'),
         )
         if (info.instance_id !== previousInstanceId) {
           window.location.reload()
@@ -213,7 +215,7 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
       }
     }
     throw new Error(
-      'Pyruns did not restart within 8 minutes. Check the terminal status, then try again.',
+      t('Pyruns did not restart within 8 minutes. Check the terminal status, then try again.'),
     )
   }, [])
 
@@ -226,12 +228,12 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
       versionCheck = await requestWithTimeout(
         signal => api.checkPyrunsUpdate(signal),
         UPDATE_CHECK_TIMEOUT_MS,
-        'The Pyruns update check did not respond within 10 seconds. Try again.',
+        t('The Pyruns update check did not respond within 10 seconds. Try again.'),
       )
     } catch (error) {
       notify({
         tone: 'error',
-        title: 'Could not check for updates',
+        title: t('Could not check for updates'),
         detail: errorMessage(error),
       })
       return
@@ -243,20 +245,20 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
       const sameVersion = versionCheck.current_version === versionCheck.latest_version
       notify({
         tone: 'info',
-        title: sameVersion ? 'Pyruns is up to date' : 'No newer Pyruns release',
+        title: sameVersion ? t('Pyruns is up to date') : t('No newer Pyruns release'),
         detail: sameVersion
-          ? `v${versionCheck.latest_version} is the latest version on PyPI.`
-          : `Installed v${versionCheck.current_version}; PyPI currently offers v${versionCheck.latest_version}.`,
+          ? t('v{{version}} is the latest version on PyPI.', { version: versionCheck.latest_version })
+          : t('Installed v{{current}}; PyPI currently offers v{{latest}}.', { current: versionCheck.current_version, latest: versionCheck.latest_version }),
       })
       return
     }
 
     const confirmed = await requestConfirmation({
-      title: `Update Pyruns to v${versionCheck.latest_version}?`,
+      title: t('Update Pyruns to v{{version}}?', { version: versionCheck.latest_version }),
       description: hasUnsavedWork
-        ? `Upgrade from v${versionCheck.current_version}. Every interface sharing this installation will restart when idle, and unsaved drafts will be discarded. No update starts while a task is queued or running.`
-        : `Upgrade from v${versionCheck.current_version}, then restart every interface sharing this installation. No update starts while a task is queued or running.`,
-      confirmLabel: 'Update and Restart',
+        ? t('Upgrade from v{{version}}. Every interface sharing this installation will restart when idle, and unsaved drafts will be discarded. No update starts while a task is queued or running.', { version: versionCheck.current_version })
+        : t('Upgrade from v{{version}}, then restart every interface sharing this installation. No update starts while a task is queued or running.', { version: versionCheck.current_version }),
+      confirmLabel: t('Update and Restart'),
     })
     if (!confirmed) return
 
@@ -266,14 +268,14 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
       const response = await requestWithTimeout(
         signal => api.updatePyruns(versionCheck.latest_version, signal),
         UPDATE_START_TIMEOUT_MS,
-        'Pyruns did not acknowledge the update request within 30 seconds. Try again.',
+        t('Pyruns did not acknowledge the update request within 30 seconds. Try again.'),
       )
       await waitForRestart(response.instance_id)
     } catch (error) {
       setOperation(null)
       notify({
         tone: 'error',
-        title: 'Could not update Pyruns',
+        title: t('Could not update Pyruns'),
         detail: errorMessage(error),
       })
     }
@@ -284,11 +286,11 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
 
     const targetVersion = systemInfo.installed_version || systemInfo.version
     const confirmed = await requestConfirmation({
-      title: `Restart Pyruns to load v${targetVersion}?`,
+      title: t('Restart Pyruns to load v{{version}}?', { version: targetVersion }),
       description: hasUnsavedWork
-        ? `This interface is running v${systemInfo.version}, while v${targetVersion} is installed. Every interface sharing this installation will restart when idle, and unsaved drafts will be discarded.`
-        : `This interface is running v${systemInfo.version}, while v${targetVersion} is installed. Restart every interface sharing this installation when idle.`,
-      confirmLabel: 'Restart Interfaces',
+        ? t('This interface is running v{{current}}, while v{{installed}} is installed. Every interface sharing this installation will restart when idle, and unsaved drafts will be discarded.', { current: systemInfo.version, installed: targetVersion })
+        : t('This interface is running v{{current}}, while v{{installed}} is installed. Restart every interface sharing this installation when idle.', { current: systemInfo.version, installed: targetVersion }),
+      confirmLabel: t('Restart Interfaces'),
     })
     if (!confirmed) return
 
@@ -298,14 +300,14 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
       const response = await requestWithTimeout(
         signal => api.restartPyruns(signal),
         UPDATE_START_TIMEOUT_MS,
-        'Pyruns did not acknowledge the restart request within 30 seconds. Try again.',
+        t('Pyruns did not acknowledge the restart request within 30 seconds. Try again.'),
       )
       await waitForRestart(response.instance_id)
     } catch (error) {
       setOperation(null)
       notify({
         tone: 'error',
-        title: 'Could not restart Pyruns',
+        title: t('Could not restart Pyruns'),
         detail: errorMessage(error),
       })
     }
@@ -325,14 +327,14 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
   const backendRestarting = systemInfo.update_state === 'restarting'
   const busy = checking || operation !== null || backendRestarting
   const buttonLabel = checking
-    ? 'Checking for Pyruns updates'
+    ? t('Checking for Pyruns updates')
     : operation === 'update'
-      ? 'Updating Pyruns'
+      ? t('Updating Pyruns')
       : operation === 'restart' || backendRestarting
-        ? 'Restarting Pyruns'
+        ? t('Restarting Pyruns')
         : restartRequired
-          ? `Restart Pyruns to load installed version ${systemInfo.installed_version}; this interface is running ${systemInfo.version}`
-          : `Check for Pyruns updates, installed version ${systemInfo.version}`
+          ? t('Restart Pyruns to load installed version {{installed}}; this interface is running {{current}}', { installed: systemInfo.installed_version, current: systemInfo.version })
+          : t('Check for Pyruns updates, installed version {{version}}', { version: systemInfo.version })
 
   return (
     <>

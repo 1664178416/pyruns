@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import {
   memo,
   useCallback,
@@ -186,6 +187,7 @@ function hasReorderChanges(tasks: Task[], items: { name: string; pinned: boolean
 }
 
 export default function ManagerPage() {
+  useTranslation()
   const {
     tasks, total, statusCounts, offset, limit, query, statusFilter, sortMode, selectedIds, loading, error, columns,
     setQuery, searchField, setSearchField, setStatusFilter, setSortMode, setOffset, setColumns, fetchTasks,
@@ -227,8 +229,8 @@ export default function ManagerPage() {
     }
     notify({
       tone: 'error',
-      title: 'Too many tasks to reorder safely',
-      detail: `This workspace has ${page.total.toLocaleString()} tasks. Reordering is disabled when the complete order cannot be loaded.`,
+      title: t("Too many tasks to reorder safely"),
+      detail: t('This workspace has {{count}} tasks. Reordering is disabled when the complete order cannot be loaded.', { count: page.total.toLocaleString() }),
     })
     return true
   }, [notify])
@@ -428,13 +430,13 @@ export default function ManagerPage() {
       const skipped = result.skipped || []
       notify({
         tone: skipped.length ? 'info' : 'success',
-        title: skipped.length ? 'Some tasks skipped' : 'Tasks queued',
+        title: skipped.length ? t("Some tasks skipped") : t("Tasks queued"),
         detail: skipped.length
-          ? `${result.count} queued; skipped ${skipped.join(', ')}.`
-          : `${result.count} task${result.count === 1 ? '' : 's'} scheduled with ${maxWorkers} worker${maxWorkers === 1 ? '' : 's'}.`,
+          ? t('{{count}} queued; skipped {{names}}.', { count: result.count, names: skipped.join(', ') })
+          : t('{{count}} task(s) scheduled with {{workers}} worker(s).', { count: result.count, workers: maxWorkers }),
       })
     } catch (err) {
-      notify({ tone: 'error', title: 'Could not start tasks', detail: errorMessage(err) })
+      notify({ tone: 'error', title: t("Could not start tasks"), detail: errorMessage(err) })
     } finally {
       finishBulkAction()
     }
@@ -453,13 +455,13 @@ export default function ManagerPage() {
       const skipped = names.filter(name => !deleted.has(name))
       notify({
         tone: skipped.length ? 'info' : 'success',
-        title: skipped.length ? 'Some tasks could not be deleted' : 'Tasks moved to trash',
+        title: skipped.length ? t("Some tasks could not be deleted") : t("Tasks moved to trash"),
         detail: skipped.length
-          ? `${result.count} deleted; skipped ${skipped.join(', ')}.`
-          : `${result.count} task${result.count === 1 ? '' : 's'} deleted.`,
+          ? t('{{count}} deleted; skipped {{names}}.', { count: result.count, names: skipped.join(', ') })
+          : t('{{count}} task(s) deleted.', { count: result.count }),
       })
     } catch (err) {
-      notify({ tone: 'error', title: 'Could not delete tasks', detail: errorMessage(err) })
+      notify({ tone: 'error', title: t("Could not delete tasks"), detail: errorMessage(err) })
     } finally {
       finishBulkAction()
     }
@@ -476,9 +478,9 @@ export default function ManagerPage() {
       }
       setDeleteTask(null)
       await fetchTasks()
-      notify({ tone: 'success', title: 'Task moved to trash', detail: target.name })
+      notify({ tone: 'success', title: t("Task moved to trash"), detail: target.name })
     } catch (err) {
-      notify({ tone: 'error', title: 'Could not delete task', detail: errorMessage(err) })
+      notify({ tone: 'error', title: t("Could not delete task"), detail: errorMessage(err) })
     } finally {
       finishTaskAction(target.name)
     }
@@ -499,18 +501,18 @@ export default function ManagerPage() {
       notify({
         tone: 'success',
         title: action === 'cancel'
-          ? 'Cancel requested'
+          ? t("Cancel requested")
           : waitingForGpu
-            ? 'Waiting for GPU capacity'
+            ? t("Waiting for GPU capacity")
             : queued
-              ? 'Task queued'
-              : 'Task started',
+              ? t("Task queued")
+              : t("Task started"),
         detail: task.name,
       })
     } catch (err) {
       notify({
         tone: 'error',
-        title: action === 'cancel' ? 'Could not cancel task' : 'Could not start task',
+        title: action === 'cancel' ? t("Could not cancel task") : t("Could not start task"),
         detail: errorMessage(err),
       })
     } finally {
@@ -528,7 +530,7 @@ export default function ManagerPage() {
 
   const openTaskLogs = useCallback((task: Task) => {
     void useMonitorStore.getState().selectTask(task.name)
-      .catch(err => notify({ tone: 'error', title: 'Could not load task logs', detail: errorMessage(err) }))
+      .catch(err => notify({ tone: 'error', title: t("Could not load task logs"), detail: errorMessage(err) }))
     navigate('/monitor')
   }, [navigate, notify])
 
@@ -536,10 +538,10 @@ export default function ManagerPage() {
     if (!beginTaskAction(task.name, 'pin')) return
     try {
       await api.pinTask(task.name, !task.pinned)
-      setTaskActionMessage(task.pinned ? `Moved ${task.name} back to Tasks.` : `Pinned ${task.name}.`)
+      setTaskActionMessage(task.pinned ? t('Moved {{name}} back to Tasks.', { name: task.name }) : t('Pinned {{name}}.', { name: task.name }))
       await fetchTasks()
     } catch (err) {
-      notify({ tone: 'error', title: 'Could not update pin', detail: errorMessage(err) })
+      notify({ tone: 'error', title: t("Could not update pin"), detail: errorMessage(err) })
     } finally {
       finishTaskAction(task.name)
     }
@@ -589,7 +591,7 @@ export default function ManagerPage() {
       return
     }
     if (intent.targetName === task.name && intent.target === (task.pinned ? 'pinned' : 'tasks')) {
-      setTaskActionMessage(`${task.name} is already in this position.`)
+      setTaskActionMessage(t('{{name}} is already in this position.', { name: task.name }))
       return
     }
     if (!beginTaskAction(task.name, 'move')) {
@@ -613,20 +615,20 @@ export default function ManagerPage() {
         return
       }
       if (!hasReorderChanges(allTasks.items, items)) {
-        setTaskActionMessage(`${task.name} is already in this position.`)
+        setTaskActionMessage(t('{{name}} is already in this position.', { name: task.name }))
         return
       }
 
       await api.reorderTasks(items)
       if (!isCurrentWorkspace()) return
       if (movedItem.pinned !== task.pinned) {
-        setTaskActionMessage(movedItem.pinned ? `Pinned ${task.name}.` : `Moved ${task.name} back to Tasks.`)
+        setTaskActionMessage(movedItem.pinned ? t('Pinned {{name}}.', { name: task.name }) : t('Moved {{name}} back to Tasks.', { name: task.name }))
       } else {
-        setTaskActionMessage(`Moved ${task.name}.`)
+        setTaskActionMessage(t('Moved {{name}}.', { name: task.name }))
       }
       await refreshManualOrder()
     } catch (err) {
-      if (isCurrentWorkspace()) notify({ tone: 'error', title: 'Could not move task', detail: errorMessage(err) })
+      if (isCurrentWorkspace()) notify({ tone: 'error', title: t("Could not move task"), detail: errorMessage(err) })
     } finally {
       if (isCurrentWorkspace()) finishTaskAction(task.name)
     }
@@ -643,8 +645,8 @@ export default function ManagerPage() {
       if (currentIndex < 0 || !targetTask) {
         setTaskActionMessage(
           direction < 0
-            ? `${task.name} is already first among the visible tasks.`
-            : `${task.name} is already last among the visible tasks.`,
+            ? t('{{name}} is already first among the visible tasks.', { name: task.name })
+            : t('{{name}} is already last among the visible tasks.', { name: task.name }),
         )
         return
       }
@@ -672,10 +674,10 @@ export default function ManagerPage() {
       }
       await api.reorderTasks(items)
       if (!isCurrentWorkspace()) return
-      setTaskActionMessage(`Moved ${task.name} ${direction < 0 ? 'earlier' : 'later'}.`)
+      setTaskActionMessage(t(direction < 0 ? 'Moved {{name}} earlier.' : 'Moved {{name}} later.', { name: task.name }))
       await refreshManualOrder()
     } catch (err) {
-      if (isCurrentWorkspace()) notify({ tone: 'error', title: 'Could not move task', detail: errorMessage(err) })
+      if (isCurrentWorkspace()) notify({ tone: 'error', title: t("Could not move task"), detail: errorMessage(err) })
     } finally {
       if (isCurrentWorkspace()) finishTaskAction(task.name)
     }
@@ -827,7 +829,7 @@ export default function ManagerPage() {
       }
     }).catch(err => {
       if (requestIsCurrent()) {
-        notify({ tone: 'error', title: 'Could not load task details', detail: errorMessage(err) })
+        notify({ tone: 'error', title: t("Could not load task details"), detail: errorMessage(err) })
       }
     })
   }, [selectMode, toggleSelect, notify, workspaceEpoch])
@@ -849,19 +851,19 @@ export default function ManagerPage() {
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold tracking-tight text-txt-primary">Task Manager</h1>
+              <h1 className="text-lg font-semibold tracking-tight text-txt-primary">{t("Task Manager")}</h1>
               <button
                 type="button"
                 aria-label={loading && query
-                  ? 'Cancel search'
+                  ? t("Cancel search")
                   : query
-                    ? 'Refresh search results'
-                    : 'Refresh tasks'}
+                    ? t("Refresh search results")
+                    : t("Refresh tasks")}
                 title={loading && query
-                  ? 'Cancel search'
+                  ? t("Cancel search")
                   : query
-                    ? 'Refresh search results'
-                    : 'Refresh tasks'}
+                    ? t("Refresh search results")
+                    : t("Refresh tasks")}
                 disabled={loading && !query}
                 onClick={() => loading && query
                   ? useTaskStore.getState().cancelTaskSearch()
@@ -876,19 +878,19 @@ export default function ManagerPage() {
               </button>
             </div>
             <p className="mt-0.5 text-xs text-txt-secondary">
-              Review, organize, and run workspace tasks from one queue.
+              {t("Review, organize, and run workspace tasks from one queue.")}
             </p>
           </div>
 
           <div
             className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:justify-end"
-            aria-label="Workspace task totals"
-            title="Workspace totals are independent of the current search, status filter, and page."
+            aria-label={t("Workspace task totals")}
+            title={t("Workspace totals are independent of the current search, status filter, and page.")}
           >
-            <ManagerMetric label="All tasks" value={summary?.total ?? '—'} />
-            <ManagerMetric label="Active" value={summary?.active ?? '—'} tone="amber" />
-            <ManagerMetric label="Done" value={summary?.completed ?? '—'} tone="emerald" />
-            <ManagerMetric label="Failed" value={summary?.failed ?? '—'} tone="rose" />
+            <ManagerMetric label={t("All tasks")} value={summary?.total ?? '—'} />
+            <ManagerMetric label={t("Active")} value={summary?.active ?? '—'} tone="amber" />
+            <ManagerMetric label={t("Done")} value={summary?.completed ?? '—'} tone="emerald" />
+            <ManagerMetric label={t("Failed")} value={summary?.failed ?? '—'} tone="rose" />
           </div>
         </div>
 
@@ -907,7 +909,7 @@ export default function ManagerPage() {
               limitHit={searchLimitHit}
               onRefresh={() => void fetchTasks({ forceRefresh: true })}
               onCancel={() => useTaskStore.getState().cancelTaskSearch()}
-              ariaLabel="Search tasks"
+              ariaLabel={t("Search tasks")}
             />
           </div>
 
@@ -916,13 +918,13 @@ export default function ManagerPage() {
               <select
                 value={statusFilter}
                 onChange={event => setStatusFilter(event.target.value)}
-                aria-label="Filter tasks by status"
-                title="Filter by status"
+                aria-label={t("Filter tasks by status")}
+                title={t("Filter by status")}
                 className="touch-target min-h-11 w-full appearance-none rounded-md border border-border-subtle bg-surface-overlay px-3 py-1.5 pr-8 text-xs text-txt-primary outline-none transition-colors focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 sm:min-h-9 sm:w-auto"
               >
                 {STATUS_OPTIONS.map(option => (
                   <option key={option} value={option}>
-                    {option === 'All' ? 'All statuses' : STATUS_LABELS[option as TaskStatus]}
+                    {option === 'All' ? t("All statuses") : t(STATUS_LABELS[option as TaskStatus])}
                   </option>
                 ))}
               </select>
@@ -934,14 +936,14 @@ export default function ManagerPage() {
               <select
                 value={sortMode}
                 onChange={event => setSortMode(event.target.value as TaskSortMode)}
-                aria-label="Sort task cards"
+                aria-label={t("Sort task cards")}
                 title={sortMode === 'priority'
-                  ? 'Pinned first, then active and recently added tasks'
-                  : 'Sort task cards'}
+                  ? t("Pinned first, then active and recently added tasks")
+                  : t("Sort task cards")}
                 className="touch-target min-h-11 w-full appearance-none rounded-md border border-border-subtle bg-surface-overlay py-1.5 pl-7 pr-7 text-xs text-txt-primary outline-none transition-colors focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 sm:min-h-9 sm:w-auto sm:pl-8 sm:pr-8"
               >
                 {TASK_SORT_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
+                  <option key={option.value} value={option.value}>{t(option.label)}</option>
                 ))}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-txt-tertiary sm:right-2.5" />
@@ -951,12 +953,12 @@ export default function ManagerPage() {
               <select
                 value={columns}
                 onChange={event => setColumns(Number(event.target.value))}
-                aria-label="Maximum cards per row"
-                title="Maximum cards per row; narrow windows reduce the count automatically"
+                aria-label={t("Maximum cards per row")}
+                title={t("Maximum cards per row; narrow windows reduce the count automatically")}
                 className="touch-target min-h-11 w-full appearance-none rounded-md border border-border-subtle bg-surface-overlay px-3 py-1.5 pr-8 text-xs text-txt-primary outline-none transition-colors focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 sm:min-h-9 sm:w-auto"
               >
                 {[1, 2, 3, 4, 5, 6, 7, 8].map(count => (
-                  <option key={count} value={count}>{count} col{count > 1 ? 's' : ''}</option>
+                  <option key={count} value={count}>{t('{{count}} column(s)', { count })}</option>
                 ))}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-txt-tertiary" />
@@ -969,10 +971,10 @@ export default function ManagerPage() {
                 size="sm"
                 className="col-span-2 row-start-3 h-11 justify-self-start sm:h-auto"
                 disabled={tasks.length === 0 || anyTaskActionPending || Boolean(bulkAction)}
-                title={anyTaskActionPending ? 'Wait for the current task action to finish' : undefined}
+                title={anyTaskActionPending ? t("Wait for the current task action to finish") : undefined}
                 onClick={() => setSelectMode(true)}
               >
-                Select tasks
+                {t("Select tasks")}
               </ActionButton>
             )}
           </div>
@@ -993,14 +995,14 @@ export default function ManagerPage() {
           <div
             className="mt-3 flex flex-col gap-2 rounded-md border border-accent/20 bg-accent/5 p-2.5 xl:flex-row xl:items-center"
             role="region"
-            aria-label="Current page selection actions"
+            aria-label={t("Current page selection actions")}
           >
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-txt-primary" aria-live="polite">
-                {visibleSelectedCount} of {tasks.length} selected on this page
+                {t('{{selected}} of {{total}} selected on this page', { selected: visibleSelectedCount, total: tasks.length })}
               </div>
               <div className="mt-0.5 text-2xs text-txt-secondary">
-                Selection is page-scoped and resets when you change the page, search, or status filter.
+                {t("Selection is page-scoped and resets when you change the page, search, or status filter.")}
               </div>
             </div>
 
@@ -1012,11 +1014,11 @@ export default function ManagerPage() {
                 disabled={Boolean(bulkAction)}
                 onClick={() => (allPageSelected ? clearSelection() : selectAll())}
               >
-                {allPageSelected ? 'Clear page' : 'Select page'}
+                {allPageSelected ? t("Clear page") : t("Select page")}
               </ActionButton>
 
               <label className="touch-target flex min-h-11 items-center gap-1.5 rounded-md border border-border-subtle bg-surface-raised px-2.5 text-2xs text-txt-secondary sm:min-h-9">
-                Workers
+                {t("Workers")}
                 <input
                   type="number"
                   min={1}
@@ -1025,7 +1027,7 @@ export default function ManagerPage() {
                   disabled={Boolean(bulkAction)}
                   onChange={event => setMaxWorkersInput(event.target.value)}
                   onBlur={() => setMaxWorkersInput(current => String(normalizeWorkerInput(current)))}
-                  aria-label="Maximum parallel workers"
+                  aria-label={t("Maximum parallel workers")}
                   className="w-10 bg-transparent text-xs tabular-nums text-txt-primary outline-none disabled:opacity-50"
                 />
               </label>
@@ -1038,7 +1040,7 @@ export default function ManagerPage() {
                 disabled={visibleSelectedCount === 0 || Boolean(bulkAction)}
                 aria-busy={bulkAction === 'run' || undefined}
               >
-                Run ({visibleSelectedCount})
+                {t('Run ({{count}})', { count: visibleSelectedCount })}
               </ActionButton>
 
               <ActionButton
@@ -1048,11 +1050,11 @@ export default function ManagerPage() {
                 onClick={() => visibleSelectedCount > 0 && setDeleteConfirm(true)}
                 disabled={visibleSelectedCount === 0 || Boolean(bulkAction)}
               >
-                Delete
+                {t("Delete")}
               </ActionButton>
 
               <ActionButton className="min-h-11 sm:min-h-9" variant="ghost" disabled={Boolean(bulkAction)} onClick={exitSelectMode}>
-                Cancel
+                {t("Cancel")}
               </ActionButton>
             </div>
           </div>
@@ -1061,7 +1063,7 @@ export default function ManagerPage() {
 
       <section
         className="flex-1 overflow-y-auto p-3 sm:p-4"
-        aria-label="Task list"
+        aria-label={t("Task list")}
         aria-busy={loading || undefined}
       >
         {error && (
@@ -1071,7 +1073,7 @@ export default function ManagerPage() {
           >
             <AlertTriangle className="h-4 w-4 flex-none" />
             <div className="min-w-0 flex-1 text-xs">
-              <span className="font-semibold">Tasks could not be refreshed.</span>{' '}
+              <span className="font-semibold">{t("Tasks could not be refreshed.")}</span>{' '}
               <span className="break-words">{error}</span>
             </div>
             <ActionButton
@@ -1081,7 +1083,7 @@ export default function ManagerPage() {
               disabled={loading}
               onClick={() => void fetchTasks({ forceRefresh: true })}
             >
-              Retry
+              {t("Retry")}
             </ActionButton>
           </div>
         )}
@@ -1109,8 +1111,8 @@ export default function ManagerPage() {
                 )}
               >
                 <CompactSection
-                  title="Pinned Tasks"
-                  subtitle={dragOverTarget === 'pinned' ? 'Drop to pin or reorder' : undefined}
+                  title={t("Pinned Tasks")}
+                  subtitle={dragOverTarget === 'pinned' ? t("Drop to pin or reorder") : undefined}
                   count={pinnedTasks.length}
                   icon={<Pin className="h-3.5 w-3.5 text-accent" />}
                   accent
@@ -1119,7 +1121,7 @@ export default function ManagerPage() {
                 >
                   {pinnedTasks.length === 0 ? (
                     <div className="px-2 py-5 text-center text-xs font-medium text-accent">
-                      Drop here to pin
+                      {t("Drop here to pin")}
                     </div>
                   ) : (
                     <TaskGrid
@@ -1153,8 +1155,8 @@ export default function ManagerPage() {
               )}
             >
             <CompactSection
-              title="Tasks"
-              subtitle={dragOverTarget === 'tasks' ? 'Drop to reorder' : `${otherTasks.length} on this page · ${total} matching`}
+              title={t("Tasks")}
+              subtitle={dragOverTarget === 'tasks' ? t("Drop to reorder") : t('{{count}} on this page · {{total}} matching', { count: otherTasks.length, total })}
               icon={<Rows3 className="h-3.5 w-3.5 text-txt-tertiary" />}
               bodyClassName="p-2"
             >
@@ -1184,20 +1186,20 @@ export default function ManagerPage() {
 
       <footer className="flex flex-none flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-surface-raised px-3 py-2 sm:px-4">
         <span className="text-2xs text-txt-secondary">
-          {selectMode && visibleSelectedCount > 0 ? `${visibleSelectedCount} selected on page · ` : ''}
-          {tasks.length > 0 ? `Showing ${offset + 1}–${offset + tasks.length} of ` : ''}
-          {total} matching task{total !== 1 ? 's' : ''}
+          {selectMode && visibleSelectedCount > 0 ? t('{{count}} selected on page · ', { count: visibleSelectedCount }) : ''}
+          {tasks.length > 0 ? t('Showing {{start}}–{{end}} of ', { start: offset + 1, end: offset + tasks.length }) : ''}
+          {t('{{count}} matching task(s)', { count: total })}
         </span>
         <Pagination total={total} offset={offset} limit={limit} onOffsetChange={setOffset} />
       </footer>
 
       <ConfirmDialog
         open={deleteConfirm}
-        title="Delete Tasks"
+        title={t("Delete Tasks")}
         description={activeSelectedCount > 0
-          ? `Stop ${activeSelectedCount} active task${activeSelectedCount === 1 ? '' : 's'} and move all ${visibleSelectedCount} selected tasks from this page to trash?`
-          : `Move ${visibleSelectedCount} selected task(s) from this page to trash?`}
-        confirmLabel="Delete"
+          ? t('Stop {{active}} active task(s) and move all {{selected}} selected tasks from this page to trash?', { active: activeSelectedCount, selected: visibleSelectedCount })
+          : t('Move {{count}} selected task(s) from this page to trash?', { count: visibleSelectedCount })}
+        confirmLabel={t("Delete")}
         confirmVariant="danger"
         onConfirm={handleDeleteSelected}
         onCancel={() => setDeleteConfirm(false)}
@@ -1205,13 +1207,13 @@ export default function ManagerPage() {
 
       <ConfirmDialog
         open={Boolean(deleteTask)}
-        title={deleteTask && (deleteTask.status === 'running' || deleteTask.status === 'queued') ? 'Stop and Delete Task' : 'Delete Task'}
+        title={deleteTask && (deleteTask.status === 'running' || deleteTask.status === 'queued') ? t("Stop and Delete Task") : t("Delete Task")}
         description={deleteTask
           ? deleteTask.status === 'running' || deleteTask.status === 'queued'
-            ? `Stop '${deleteTask.name}' and move it to trash?`
-            : `Move '${deleteTask.name}' to trash?`
+            ? t("Stop '{{name}}' and move it to trash?", { name: deleteTask.name })
+            : t("Move '{{name}}' to trash?", { name: deleteTask.name })
           : ''}
-        confirmLabel="Delete"
+        confirmLabel={t("Delete")}
         confirmVariant="danger"
         onConfirm={handleDeleteTask}
         onCancel={() => setDeleteTask(null)}
@@ -1219,9 +1221,9 @@ export default function ManagerPage() {
 
       <ConfirmDialog
         open={Boolean(cancelTask)}
-        title="Stop active task?"
-        description={cancelTask ? `Request cancellation for '${cancelTask.name}'? Its process tree will be stopped.` : ''}
-        confirmLabel="Stop Task"
+        title={t("Stop active task?")}
+        description={cancelTask ? t("Request cancellation for '{{name}}'? Its process tree will be stopped.", { name: cancelTask.name }) : ''}
+        confirmLabel={t("Stop Task")}
         confirmVariant="danger"
         onConfirm={async () => {
           if (!cancelTask) return
@@ -1287,8 +1289,9 @@ function TaskGrid({
   onMonitor: (task: Task) => void
   onPointerDown: (task: Task, event: ReactPointerEvent<HTMLElement>) => void
 }) {
+  useTranslation()
   if (tasks.length === 0) {
-    return <div className="px-2 py-5 text-center text-2xs text-txt-tertiary">No tasks in this section</div>
+    return <div className="px-2 py-5 text-center text-2xs text-txt-tertiary">{t("No tasks in this section")}</div>
   }
 
   return (
@@ -1364,17 +1367,18 @@ const TaskCard = memo(function TaskCard({
   onMonitor: (task: Task) => void
   onPointerDown: (task: Task, event: ReactPointerEvent<HTMLElement>) => void
 }) {
+  useTranslation()
   const actionBtn = getActionButton(task)
   const folderName = task.dir.split(/[\\/]/).pop() || task.dir
   const taskKindLabel = task.task_kind === 'shell' ? 'shell' : 'python'
-  const cardDescription = task._load_error || task.preview_text || 'No preview available.'
+  const cardDescription = task._load_error || task.preview_text || t("No preview available.")
   const dropIndicator = dropPlacement ? <DropIndicator placement={dropPlacement} axis={dropAxis || 'horizontal'} /> : null
   const taskPending = Boolean(pendingAction)
   const gpuWait = task.status === 'queued' ? task.gpu_wait : null
   const gpuCapacity = gpuWait
     && typeof gpuWait.eligible_gpu_count === 'number'
     && typeof gpuWait.requested_gpu_count === 'number'
-    ? `${gpuWait.eligible_gpu_count}/${gpuWait.requested_gpu_count} eligible`
+    ? t('{{eligible}}/{{requested}} eligible', { eligible: gpuWait.eligible_gpu_count, requested: gpuWait.requested_gpu_count })
     : ''
 
   return (
@@ -1403,7 +1407,7 @@ const TaskCard = memo(function TaskCard({
             dragging && 'bg-accent/10 text-accent',
             (taskPending || reorderDisabled) && 'pointer-events-none opacity-40',
           )}
-          title="Drag to set manual order; keyboard users can use Move earlier and Move later"
+          title={t("Drag to set manual order; keyboard users can use Move earlier and Move later")}
         >
           <GripVertical className="h-3.5 w-3.5" />
         </span>
@@ -1417,8 +1421,8 @@ const TaskCard = memo(function TaskCard({
           type="button"
           onClick={() => void onPin(task)}
           disabled={taskPending || reorderDisabled}
-          title={task.pinned ? 'Unpin' : 'Pin'}
-          aria-label={task.pinned ? `Unpin ${task.name}` : `Pin ${task.name}`}
+          title={task.pinned ? t("Unpin") : t("Pin")}
+          aria-label={t(task.pinned ? 'Unpin {{name}}' : 'Pin {{name}}', { name: task.name })}
           aria-busy={pendingAction === 'pin' || undefined}
           className={clsx(
             'touch-target absolute right-0.5 top-0.5 z-10 inline-flex h-11 w-11 items-center justify-center rounded-md p-1 transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:cursor-wait disabled:opacity-50 sm:right-2 sm:top-1.5 sm:h-9 sm:w-9',
@@ -1442,8 +1446,8 @@ const TaskCard = memo(function TaskCard({
           }
         }}
         aria-label={selectMode
-          ? `${selected ? 'Deselect' : 'Select'} ${task.name}`
-          : `Open details for ${task.name}`}
+          ? t('{{action}} {{name}}', { action: selected ? t("Deselect") : t("Select"), name: task.name })
+          : t('Open details for {{name}}', { name: task.name })}
         aria-pressed={selectMode ? selected : undefined}
         className="block w-full rounded-md px-3 pb-2 pt-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35"
       >
@@ -1455,7 +1459,7 @@ const TaskCard = memo(function TaskCard({
           {taskPending && pendingAction !== 'pin' && (
             <span className="ml-auto inline-flex items-center gap-1 text-2xs font-medium text-txt-secondary" role="status">
               <Loader2 className="h-3 w-3 animate-spin" />
-              {pendingAction === 'move' ? 'Moving' : pendingAction === 'delete' ? 'Deleting' : 'Updating'}
+              {pendingAction === 'move' ? t("Moving") : pendingAction === 'delete' ? t("Deleting") : t("Updating")}
             </span>
           )}
         </div>
@@ -1473,16 +1477,16 @@ const TaskCard = memo(function TaskCard({
         {gpuWait && (
           <div
             className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-2xs font-medium text-blue-700 dark:border-blue-800 dark:bg-blue-950/45 dark:text-blue-300"
-            title={gpuWait.reason || 'Waiting for GPU capacity'}
+            title={gpuWait.reason || t("Waiting for GPU capacity")}
           >
             <Cpu className="h-3 w-3 flex-none" aria-hidden="true" />
-            <span>Waiting for GPU{gpuCapacity ? ` · ${gpuCapacity}` : ''}</span>
+            <span>{t("Waiting for GPU")}{gpuCapacity ? ` · ${gpuCapacity}` : ''}</span>
           </div>
         )}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-txt-tertiary">
           <span title={task.created_at}>{task.created_at}</span>
-          <span title={`Run #${Math.max(task.run_index || 1, 1)}`}>Run #{Math.max(task.run_index || 1, 1)}</span>
+          <span title={t('Run #{{index}}', { index: Math.max(task.run_index || 1, 1) })}>{t('Run #{{index}}', { index: Math.max(task.run_index || 1, 1) })}</span>
           <span className="truncate" title={folderName}>{folderName}</span>
         </div>
 
@@ -1490,28 +1494,28 @@ const TaskCard = memo(function TaskCard({
         {task._load_error && (
           <div className="mt-2 inline-flex max-w-full items-center gap-1 rounded-md bg-rose-500/10 px-2 py-1 text-2xs font-medium text-rose-700 dark:text-rose-300" title={task._load_error}>
             <AlertTriangle className="h-3 w-3" />
-            <span className="truncate">Task load error</span>
+            <span className="truncate">{t("Task load error")}</span>
           </div>
         )}
       </div>
 
       {query && <div className="mx-3 mb-2 border-t border-border-subtle pt-1">
-        <TaskSearchMatches task={task} onSelect={() => onCardClick(task)} exportMode={selectMode} action={selectMode ? 'Select' : 'View'} />
+        <TaskSearchMatches task={task} onSelect={() => onCardClick(task)} exportMode={selectMode} action={selectMode ? t("Select") : t("View")} />
       </div>}
       {!selectMode && (
         <div className="mx-3 flex items-center justify-between gap-2 border-t border-border-subtle pb-2 pt-1.5">
-          <div className="flex items-center gap-0.5" aria-label={`Reorder ${task.name}`}>
+          <div className="flex items-center gap-0.5" aria-label={t('Reorder {{name}}', { name: task.name })}>
             <TaskIconButton
-              label={`Move ${task.name} earlier`}
-              title="Move earlier"
+              label={t('Move {{name}} earlier', { name: task.name })}
+              title={t("Move earlier")}
               disabled={taskPending || reorderDisabled}
               onClick={() => void onMove(task, -1)}
             >
               <ArrowUp className="h-3.5 w-3.5" />
             </TaskIconButton>
             <TaskIconButton
-              label={`Move ${task.name} later`}
-              title="Move later"
+              label={t('Move {{name}} later', { name: task.name })}
+              title={t("Move later")}
               disabled={taskPending || reorderDisabled}
               onClick={() => void onMove(task, 1)}
             >
@@ -1522,8 +1526,8 @@ const TaskCard = memo(function TaskCard({
           <div className="flex items-center gap-0.5">
             {actionBtn && (
               <TaskIconButton
-                label={`${actionBtn.label} ${task.name}`}
-                title={actionBtn.label}
+                label={t('{{action}} {{name}}', { action: t(actionBtn.label), name: task.name })}
+                title={t(actionBtn.label)}
                 disabled={taskPending}
                 busy={pendingAction === actionBtn.action}
                 className={actionBtn.className}
@@ -1535,16 +1539,16 @@ const TaskCard = memo(function TaskCard({
               </TaskIconButton>
             )}
             <TaskIconButton
-              label={`View logs for ${task.name}`}
-              title="View logs"
+              label={t('View logs for {{name}}', { name: task.name })}
+              title={t("View logs")}
               onClick={() => onMonitor(task)}
               className="text-txt-tertiary hover:bg-surface-overlay hover:text-txt-primary"
             >
               <Terminal className="h-3.5 w-3.5" />
             </TaskIconButton>
             <TaskIconButton
-              label={`Delete ${task.name}`}
-              title="Delete task"
+              label={t('Delete {{name}}', { name: task.name })}
+              title={t("Delete task")}
               disabled={taskPending}
               onClick={() => onDelete(task)}
               className="text-rose-700 hover:bg-rose-500/10 dark:text-rose-300"
@@ -1567,25 +1571,27 @@ function ManagerMetric({
   value: number | string
   tone?: ManagerMetricTone
 }) {
+  useTranslation()
   return (
     <div className={clsx(
       'flex min-w-[7.25rem] items-center justify-between gap-3 rounded-md border px-2.5 py-1.5 text-2xs sm:min-w-0',
       MANAGER_METRIC_STYLES[tone],
     )}>
-      <span className="font-medium uppercase tracking-[0.12em] opacity-80">{label}</span>
+      <span className="font-medium uppercase tracking-[0.12em] opacity-80">{t(label)}</span>
       <span className="font-semibold tabular-nums">{value}</span>
     </div>
   )
 }
 
 function ManagerStatusBadge({ status }: { status: TaskStatus }) {
+  useTranslation()
   return (
     <span className={clsx(
       'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-2xs font-semibold',
       MANAGER_STATUS_STYLES[status],
     )}>
       <span className={clsx('h-1.5 w-1.5 rounded-full', MANAGER_STATUS_DOTS[status])} aria-hidden="true" />
-      {STATUS_LABELS[status]}
+      {t(STATUS_LABELS[status])}
     </span>
   )
 }
@@ -1607,6 +1613,7 @@ function TaskIconButton({
   busy?: boolean
   onClick: () => void
 }) {
+  useTranslation()
   return (
     <button
       type="button"
@@ -1626,9 +1633,10 @@ function TaskIconButton({
 }
 
 function ManagerLoadingState({ columns }: { columns: number }) {
+  useTranslation()
   const count = Math.min(8, Math.max(2, columns * 2))
   return (
-    <div role="status" aria-live="polite" aria-label="Loading tasks">
+    <div role="status" aria-live="polite" aria-label={t("Loading tasks")}>
       <div
         className="grid gap-2"
         style={{
@@ -1645,28 +1653,29 @@ function ManagerLoadingState({ columns }: { columns: number }) {
           </div>
         ))}
       </div>
-      <span className="sr-only">Loading tasks…</span>
+      <span className="sr-only">{t("Loading tasks…")}</span>
     </div>
   )
 }
 
 function ManagerEmptyState({ filtered, onClear }: { filtered: boolean; onClear: () => void }) {
+  useTranslation()
   return (
     <div className="mx-auto flex min-h-72 max-w-md flex-col items-center justify-center rounded-md border border-dashed border-border bg-surface-raised px-6 py-12 text-center">
       <div className="flex h-11 w-11 items-center justify-center rounded-md border border-border-subtle bg-surface-overlay text-txt-secondary">
         <Rows3 className="h-5 w-5" />
       </div>
       <h2 className="mt-4 text-sm font-semibold text-txt-primary">
-        {filtered ? 'No matching tasks' : 'No tasks yet'}
+        {filtered ? t("No matching tasks") : t("No tasks yet")}
       </h2>
       <p className="mt-1.5 max-w-sm text-xs leading-5 text-txt-secondary">
         {filtered
-          ? 'Try a broader search or clear the status filter to see more tasks.'
-          : 'Create tasks in Generator and they will appear here ready to organize and run.'}
+          ? t('Try a broader search or clear the status filter to see more tasks.')
+          : t('Create tasks in Generator and they will appear here ready to organize and run.')}
       </p>
       {filtered && (
         <ActionButton className="mt-4 min-h-11 sm:min-h-9" variant="accentTint" onClick={onClear}>
-          Clear filters
+          {t("Clear filters")}
         </ActionButton>
       )}
     </div>

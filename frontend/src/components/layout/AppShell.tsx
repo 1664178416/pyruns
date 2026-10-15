@@ -12,6 +12,7 @@ import { Outlet } from 'react-router-dom'
 import clsx from 'clsx'
 import Sidebar from './Sidebar'
 import { usePreferencesStore } from '@/store'
+import { useTranslation } from '@/i18n'
 
 const PreferencesDialog = lazy(() => import('./PreferencesDialog'))
 
@@ -49,6 +50,7 @@ function readCompactSidebar() {
 }
 
 export default function AppShell() {
+  const { t } = useTranslation()
   const preferencesOpen = usePreferencesStore(state => state.isOpen)
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [compactSidebar, setCompactSidebar] = useState(readCompactSidebar)
@@ -190,12 +192,12 @@ export default function AppShell() {
         <button
           type="button"
           role="separator"
-          aria-label="Resize navigation sidebar"
+          aria-label={t('Resize navigation sidebar')}
           aria-orientation="vertical"
           aria-valuemin={MIN_SIDEBAR_WIDTH}
           aria-valuemax={MAX_SIDEBAR_WIDTH}
           aria-valuenow={sidebarWidth}
-          aria-valuetext={`${sidebarWidth} pixels`}
+          aria-valuetext={t('{{width}} pixels', { width: sidebarWidth })}
           onPointerDown={startSidebarResize}
           onKeyDown={resizeSidebarFromKeyboard}
           onDoubleClick={() => {
@@ -207,7 +209,7 @@ export default function AppShell() {
               // Keep the reset for this session when storage is unavailable.
             }
           }}
-          title="Resize navigation. Use Left/Right arrow keys; double-click to reset."
+          title={t('Resize navigation. Use Left/Right arrow keys; double-click to reset.')}
           className={clsx(
             'h-full w-2 flex-none cursor-col-resize touch-none transition-colors focus:outline-none focus:ring-2 focus:ring-accent/35',
             resizing ? 'bg-accent/45' : 'bg-transparent hover:bg-accent/25',

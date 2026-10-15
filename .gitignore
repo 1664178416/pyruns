@@ -15,6 +15,7 @@
 *.egg-info/
 
 node_modules/
+.venv/
 build/
 dist/
 __pycache__/
@@ -35,3 +36,5 @@ frontend/test-results/
 frontend/*.tsbuildinfo
 
 .npm-cache/
+
+local-development.md
