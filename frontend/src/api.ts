@@ -173,7 +173,7 @@ export const updateRuntimeInfo = (payload: Partial<{
 }>, refreshProviders = false) =>
   request<RuntimeInfo>(`/api/runtime?refresh_providers=${refreshProviders}`, { method: 'PATCH', body: JSON.stringify(payload) })
 
-export const getTemplates = () => request<{ items: { value: string; label: string }[] }>('/api/templates')
+export const getTemplates = (signal?: AbortSignal) => request<{ items: { value: string; label: string }[] }>('/api/templates', { signal })
 export const getTemplateContent = (value: string) =>
   request<TemplateContent>(`/api/templates/content?value=${encodeURIComponent(value)}`)
 export const pickGeneratorShellFile = () =>
@@ -352,16 +352,16 @@ export const reorderTasks = (items: { name: string; pinned: boolean }[]) =>
     body: JSON.stringify({ items }),
   })
 
-export const updateNotes = (name: string, notes: string, expectedNotes: string) =>
+export const updateNotes = (name: string, notes: string, expectedNotes: string, expectedTaskIdentity?: string | null) =>
   request<{ ok: boolean; task: Task }>(`/api/tasks/${encodeURIComponent(name)}/notes?include_tracks=false`, {
     method: 'PATCH',
-    body: JSON.stringify({ notes, expected_notes: expectedNotes }),
+    body: JSON.stringify({ notes, expected_notes: expectedNotes, expected_task_identity: expectedTaskIdentity ?? undefined }),
   })
 
-export const updateEnv = (name: string, env: Record<string, any>, expectedEnv: Record<string, any>) =>
+export const updateEnv = (name: string, env: Record<string, any>, expectedEnv: Record<string, any>, expectedTaskIdentity?: string | null) =>
   request<{ ok: boolean; task: Task }>(`/api/tasks/${encodeURIComponent(name)}/env?include_tracks=false`, {
     method: 'PATCH',
-    body: JSON.stringify({ env, expected_env: expectedEnv }),
+    body: JSON.stringify({ env, expected_env: expectedEnv, expected_task_identity: expectedTaskIdentity ?? undefined }),
   })
 
 export const renameTask = (name: string, newName: string) =>
@@ -439,9 +439,9 @@ export const restartPyruns = (signal?: AbortSignal) => request<UiUpdateResponse>
   signal,
 })
 
-export const getLauncherScripts = () => request<{ items: ScriptCandidate[] }>('/api/launcher/scripts')
-export const getLauncherConfigs = (script: string) =>
-  request<LauncherConfigsResponse>(`/api/launcher/configs?script=${encodeURIComponent(script)}`)
+export const getLauncherScripts = (signal?: AbortSignal) => request<{ items: ScriptCandidate[] }>('/api/launcher/scripts', { signal })
+export const getLauncherConfigs = (script: string, signal?: AbortSignal) =>
+  request<LauncherConfigsResponse>(`/api/launcher/configs?script=${encodeURIComponent(script)}`, { signal })
 export const getLauncherWorkspaces = (script: string, config?: string) => {
   const sp = new URLSearchParams({ script })
   if (config) sp.set('config', config)

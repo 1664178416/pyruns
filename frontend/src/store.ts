@@ -25,9 +25,11 @@ let monitorTaskRequestSeq = 0
 let monitorRequestSeq = 0
 let monitorLogController: AbortController | null = null
 let launcherRequestSeq = 0
+let launcherReadController: AbortController | null = null
 let runtimeRequestSeq = 0
 let dashboardRequestSeq = 0
 let generatorTemplateListRequestSeq = 0
+let generatorTemplateListController: AbortController | null = null
 let generatorTemplateRequestSeq = 0
 let generatorDraftVersion = 0
 let workspaceRequestSeq = 0
@@ -197,6 +199,8 @@ function resetWorkspaceScopedState(nextWorkspaceKey: string) {
   runtimeRequestSeq += 1
   dashboardRequestSeq += 1
   generatorTemplateListRequestSeq += 1
+  generatorTemplateListController?.abort()
+  generatorTemplateListController = null
   generatorTemplateRequestSeq += 1
   generatorDraftVersion += 1
   useTaskStore.setState({
@@ -1128,9 +1132,20 @@ export const useGeneratorStore = create<GeneratorState>((set, get) => ({
   async fetchTemplates() {
     const requestId = ++generatorTemplateListRequestSeq
     const workspaceKey = currentWorkspaceKey()
-    const res = await api.getTemplates()
-    if (requestId === generatorTemplateListRequestSeq && workspaceKey === currentWorkspaceKey()) {
-      set({ templates: res.items })
+    generatorTemplateListController?.abort()
+    const controller = new AbortController()
+    generatorTemplateListController = controller
+    const timeout = setTimeout(() => controller.abort(new Error('Template list loading timed out. Retry to refresh.')), 10_000)
+    try {
+      const res = await api.getTemplates(controller.signal)
+      if (requestId === generatorTemplateListRequestSeq && workspaceKey === currentWorkspaceKey()) {
+        set({ templates: res.items })
+      }
+    } catch (error) {
+      if (requestId === generatorTemplateListRequestSeq && workspaceKey === currentWorkspaceKey()) throw error
+    } finally {
+      clearTimeout(timeout)
+      if (generatorTemplateListController === controller) generatorTemplateListController = null
     }
   },
   async loadTemplate(value: string) {
@@ -1431,6 +1446,7 @@ interface LauncherState {
   configSource: string
   step: number
   loading: boolean
+  opening: boolean
   fetchScripts: () => Promise<void>
   selectScript: (path: string) => Promise<void>
   selectConfig: (path: string) => void
@@ -1447,16 +1463,23 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
   configSource: '',
   step: 0,
   loading: false,
+  opening: false,
   async fetchScripts() {
     const requestId = ++launcherRequestSeq
+    launcherReadController?.abort()
+    const controller = new AbortController()
+    launcherReadController = controller
+    const timeout = setTimeout(() => controller.abort(new Error('Script discovery timed out. Please retry.')), 10_000)
     set({ loading: true })
     try {
-      const res = await api.getLauncherScripts()
+      const res = await api.getLauncherScripts(controller.signal)
       if (requestId !== launcherRequestSeq) {
         return
       }
       set(state => ({ scripts: res.items, step: state.selectedScript ? state.step : 0 }))
     } finally {
+      clearTimeout(timeout)
+      if (launcherReadController === controller) launcherReadController = null
       if (requestId === launcherRequestSeq) {
         set({ loading: false })
       }
@@ -1464,6 +1487,10 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
   },
   async selectScript(path: string) {
     const requestId = ++launcherRequestSeq
+    launcherReadController?.abort()
+    const controller = new AbortController()
+    launcherReadController = controller
+    const timeout = setTimeout(() => controller.abort(new Error('Config discovery timed out. Please retry.')), 10_000)
     set({
       selectedScript: path,
       loading: true,
@@ -1471,7 +1498,7 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
       configSource: '',
     })
     try {
-      const res = await api.getLauncherConfigs(path)
+      const res = await api.getLauncherConfigs(path, controller.signal)
       if (requestId !== launcherRequestSeq) {
         return
       }
@@ -1485,6 +1512,8 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
         step: workspaceDefault && !shouldPromptForConfig ? 2 : 1,
       })
     } finally {
+      clearTimeout(timeout)
+      if (launcherReadController === controller) launcherReadController = null
       if (requestId === launcherRequestSeq) {
         set({ loading: false })
       }
@@ -1502,7 +1531,7 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
     const openToken = Symbol('launcher-open')
     launcherOpenToken = openToken
     const { selectedScript, selectedConfig } = get()
-    set({ loading: true })
+    set({ loading: true, opening: true })
     const pending = (async () => {
       try {
         const workspace = await api.openLauncherWorkspace(selectedScript, selectedConfig || undefined)
@@ -1513,7 +1542,7 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
         return true
       } finally {
         if (requestId === launcherRequestSeq) {
-          set({ loading: false })
+          set({ loading: false, opening: false })
         }
         if (launcherOpenToken === openToken) {
           launcherOpenPromise = null
@@ -1526,6 +1555,8 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
   },
   reset() {
     launcherRequestSeq += 1
+    launcherReadController?.abort()
+    launcherReadController = null
     launcherOpenPromise = null
     launcherOpenToken = null
     set({
@@ -1537,6 +1568,7 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
       configSource: '',
       step: 0,
       loading: false,
+      opening: false,
     })
   },
 }))

@@ -130,7 +130,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
   const modalRef = useRef<HTMLDivElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
   const {
-    configs, selectedScript, requiresConfigTemplate, configSource, step, loading,
+    configs, selectedScript, requiresConfigTemplate, configSource, step, loading, opening,
     selectScript, selectConfig, reset: resetLauncher,
   } = useLauncherStore()
   const workspace = useWorkspaceStore(state => state.workspace)
@@ -163,7 +163,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
   const mustChooseConfig = requiresConfigTemplate || configSource === 'pyruns_load'
 
   const requestClose = useCallback(() => {
-    if (launcherActionInFlightRef.current || useLauncherStore.getState().loading) {
+    if (launcherActionInFlightRef.current || useLauncherStore.getState().opening) {
       return
     }
     onClose()
@@ -361,6 +361,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
         return
       }
       setManualScriptPath(selection.script_path)
+      launcherActionInFlightRef.current = false
       await openPythonPath(selection.script_path)
     } catch (err: any) {
       if (launcherMountedRef.current) {
@@ -676,7 +677,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
           ) : <div />}
           <button
             type="button"
-            disabled={loading}
+            disabled={opening || launcherActionInFlightRef.current}
             onClick={requestClose}
             className="touch-target inline-flex min-h-11 items-center px-2 text-xs text-txt-tertiary transition-colors hover:text-txt-secondary disabled:cursor-wait disabled:opacity-50 sm:min-h-8"
           >

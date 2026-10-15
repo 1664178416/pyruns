@@ -71,6 +71,7 @@ from pyruns.utils.info_io import (
     load_task_metadata,
     resolve_log_path,
     run_history_status,
+    task_attempt_matches,
     validate_task_log_path,
     validate_task_name,
     validate_tasks_root,
@@ -1585,11 +1586,13 @@ class PyrunsRuntime:
                 return self.get_task(task_name, include_tracks=include_tracks) or task
             raise ValueError(f"Task '{task_name}' cannot be cancelled")
         requested_run_index = active_task_run_index(info)
+        requested_attempt_id = str(info.get("_attempt_id", "") or "")
         self.invalidate_cache([task_name])
         ok = manager.request_task_cancel(
             task_name,
             expected_runner_id=str(info.get("runner_id", "") or ""),
             expected_run_index=requested_run_index,
+            expected_attempt_id=requested_attempt_id,
         )
         if not ok:
             latest = self.get_task(task_name, include_tracks=include_tracks)
@@ -1598,6 +1601,8 @@ class PyrunsRuntime:
             # file to distinguish a durable request from an identity race.
             latest_info = load_task_metadata(task_dir) or {}
             latest_status = str(latest_info.get("status", "") or "").lower()
+            if not task_attempt_matches(latest_info, requested_attempt_id):
+                raise ValueError(f"Task '{task_name}' cannot be cancelled")
             if (
                 latest_status in {"completed", "failed", "cancelled"}
                 and active_task_run_index(latest_info) == requested_run_index
@@ -1768,12 +1773,15 @@ class PyrunsRuntime:
         expected_notes: str,
         *,
         include_tracks: bool = True,
+        expected_task_identity: str | None = None,
     ) -> Dict[str, Any]:
         """Persist notes for one task."""
         self.require_task(task_name, refresh=False, summary=True)
         self.invalidate_cache([task_name])
         try:
-            ok, result = self.task_manager.update_task_notes(task_name, notes, expected_notes)
+            ok, result = self.task_manager.update_task_notes(
+                task_name, notes, expected_notes, expected_task_identity=expected_task_identity,
+            )
         except TaskStateConflict as exc:
             raise TaskNotesConflictError(str(exc)) from exc
         if not ok:
@@ -1790,12 +1798,15 @@ class PyrunsRuntime:
         expected_env: Dict[str, Any],
         *,
         include_tracks: bool = True,
+        expected_task_identity: str | None = None,
     ) -> Dict[str, Any]:
         """Persist env vars for one task."""
         self.require_task(task_name, refresh=False, summary=True)
         self.invalidate_cache([task_name])
         try:
-            ok, result = self.task_manager.update_task_env(task_name, env, expected_env)
+            ok, result = self.task_manager.update_task_env(
+                task_name, env, expected_env, expected_task_identity=expected_task_identity,
+            )
         except TaskStateConflict as exc:
             raise TaskEnvConflictError(str(exc)) from exc
         if not ok:

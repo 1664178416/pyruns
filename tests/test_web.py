@@ -6536,6 +6536,59 @@ def test_task_metadata_endpoint_rejects_stale_write_without_overwriting_disk(
     assert load_task_info(str(task_dir))[field] == first_value
 
 
+@pytest.mark.parametrize("field, baseline, edited", [
+    ("notes", "original note", "updated note"),
+    ("env", {"DATA": "original"}, {"DATA": "updated"}),
+])
+def test_task_metadata_endpoint_rejects_replaced_task_after_manager_refresh(tmp_path, field, baseline, edited):
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "alpha")
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    client = TestClient(create_app(runtime))
+    endpoint = f"/api/tasks/alpha/{field}?include_tracks=false"
+    task_dir = workspace / TASKS_DIR / "alpha"
+    original_dir = workspace / "original-alpha"
+    try:
+        original = client.get("/api/tasks/alpha?include_tracks=false").json()
+        original_identity = original["task_identity"]
+        assert original_identity
+        saved = client.patch(endpoint, json={
+            field: baseline, f"expected_{field}": {} if field == "env" else "",
+            "expected_task_identity": original_identity,
+        })
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["task"]["task_identity"] == original_identity
+
+        # Another writer replaces the directory with an otherwise identical task.
+        task_dir.rename(original_dir)
+        _add_task(workspace, "alpha")
+        update_task_info(str(task_dir), lambda info: info.update({field: baseline}))
+        runtime.task_manager.scan_disk()
+        refreshed = client.get("/api/tasks/alpha?include_tracks=false").json()
+        assert refreshed["task_identity"] != original_identity
+        assert refreshed[field] == baseline
+        before = (task_dir / TASK_INFO_FILENAME).read_bytes()
+
+        stale = client.patch(endpoint, json={
+            field: edited, f"expected_{field}": baseline,
+            "expected_task_identity": original_identity,
+        })
+        assert stale.status_code == 409, stale.text
+        assert "identity changed" in stale.json()["detail"].lower()
+        assert (task_dir / TASK_INFO_FILENAME).read_bytes() == before
+        assert load_task_info(str(original_dir))[field] == baseline
+
+        current = client.patch(endpoint, json={
+            field: edited, f"expected_{field}": baseline,
+            "expected_task_identity": refreshed["task_identity"],
+        })
+        assert current.status_code == 200, current.text
+        assert current.json()["task"][field] == edited
+        assert current.json()["task"]["task_identity"] == refreshed["task_identity"]
+    finally:
+        runtime.shutdown()
+
+
 @pytest.mark.parametrize(
     "env",
     [
@@ -8024,17 +8077,17 @@ def test_runtime_task_operation_error_branches(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="bad pin"):
         runtime.set_task_pin("alpha", True)
 
-    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected: (False, "Task not found"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected, **kw: (False, "Task not found"))
     with pytest.raises(KeyError):
         runtime.update_task_notes("alpha", "note", "")
-    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected: (False, "bad notes"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_notes", lambda name, notes, expected, **kw: (False, "bad notes"))
     with pytest.raises(ValueError, match="bad notes"):
         runtime.update_task_notes("alpha", "note", "")
 
-    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected: (False, "Task not found"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected, **kw: (False, "Task not found"))
     with pytest.raises(KeyError):
         runtime.update_task_env("alpha", {}, {})
-    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected: (False, "bad env"))
+    monkeypatch.setattr(runtime.task_manager, "update_task_env", lambda name, env, expected, **kw: (False, "bad env"))
     with pytest.raises(ValueError, match="bad env"):
         runtime.update_task_env("alpha", {}, {})
 
@@ -8053,7 +8106,7 @@ def test_runtime_task_operation_error_branches(tmp_path, monkeypatch):
         runtime.reorder_tasks([])
 
 
-def test_runtime_cancel_binds_the_refreshed_runner_and_run(tmp_path, monkeypatch):
+def test_runtime_cancel_binds_the_refreshed_runner_run_and_attempt(tmp_path, monkeypatch):
     workspace = _make_workspace(tmp_path, "main")
     _add_task(workspace, "alpha", status="running")
     runtime = _build_runtime(workspace)
@@ -8075,7 +8128,90 @@ def test_runtime_cancel_binds_the_refreshed_runner_and_run(tmp_path, monkeypatch
         "name": "alpha",
         "expected_runner_id": info["runner_id"],
         "expected_run_index": 1,
+        "expected_attempt_id": str(info.get("_attempt_id", "") or ""),
     }
+
+
+@pytest.mark.parametrize("replacement_state", ["queued", "cancelled", "cancel_requested", "local_stop_terminal"])
+def test_runtime_cancel_rejects_replacement_attempt_with_same_owner_and_index(tmp_path, monkeypatch, replacement_state):
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "alpha")
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    manager = runtime.task_manager
+    monkeypatch.setattr(manager, "trigger_update", lambda: None)
+    assert manager._sync_status_to_disk("alpha", "queued", expected_statuses={"pending"})
+    task_dir = workspace / TASKS_DIR / "alpha"
+    info_path = task_dir / TASK_INFO_FILENAME
+    original_info = load_task_info(str(task_dir))
+    original_request = manager.request_task_cancel
+    replacement = {}
+
+    def requeue_before_cancel(name, **identity):
+        manager._mark_failed_on_disk(manager.get_task(name), final_status="cancelled")
+        manager.scan_disk()
+        assert manager.rerun_task(name)
+        info = load_task_info(str(task_dir))
+        assert info["_attempt_id"] != original_info["_attempt_id"]
+        assert info["runner_id"] == original_info["runner_id"]
+        assert active_task_run_index(info) == active_task_run_index(original_info)
+        if replacement_state in {"cancelled", "local_stop_terminal"}:
+            assert manager._sync_status_to_disk(name, "running", expected_statuses={"queued"})
+            manager._mark_failed_on_disk(manager.get_task(name), final_status="cancelled")
+        elif replacement_state == "cancel_requested":
+            update_task_info(str(task_dir), lambda current: current.update({"cancel_requested_at": "2026-10-15"}))
+        replacement["bytes"] = info_path.read_bytes()
+        # A durable request can be returned after a local stop has to retry.
+        if replacement_state in {"cancel_requested", "local_stop_terminal"}:
+            return False
+        return original_request(name, **identity)
+
+    if replacement_state == "local_stop_terminal":
+        monkeypatch.setattr(manager, "cancel_task", requeue_before_cancel)
+    else:
+        monkeypatch.setattr(manager, "request_task_cancel", requeue_before_cancel)
+
+    with pytest.raises(ValueError, match="cannot be cancelled"):
+        runtime.cancel_task("alpha")
+    assert info_path.read_bytes() == replacement["bytes"]
+
+
+def test_runtime_cancel_rejects_replacement_after_expired_local_stop(tmp_path, monkeypatch):
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "alpha")
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    manager = runtime.task_manager
+    monkeypatch.setattr(manager, "trigger_update", lambda: None)
+    monkeypatch.setattr(manager, "_running_info_has_live_owner", lambda _info: True)
+    assert manager._sync_status_to_disk("alpha", "running", expected_statuses={"pending"})
+    task_dir = workspace / TASKS_DIR / "alpha"
+    info_path = task_dir / TASK_INFO_FILENAME
+    update_task_info(str(task_dir), lambda info: info.update({
+        "runner_id": f"{manager.runner_host}:123:expired", "runner_host": manager.runner_host,
+        "lease_until": time.time() - 60, "pids": [987654321], "pid_create_times": [1.0],
+    }))
+    original_info = load_task_info(str(task_dir))
+    replacement = {}
+
+    def replace_after_stop(pid, *, expected_create_time):
+        assert (pid, expected_create_time) == (987654321, 1.0)
+        manager._mark_failed_on_disk(manager.get_task("alpha"), final_status="cancelled")
+        manager.scan_disk()
+        assert manager.rename_task("alpha", "original-renamed")[0]
+        _add_task(workspace, "alpha")
+        manager.scan_disk()
+        assert manager._sync_status_to_disk("alpha", "running", expected_statuses={"pending"})
+        manager._mark_failed_on_disk(manager.get_task("alpha"), final_status="cancelled")
+        info = load_task_info(str(task_dir))
+        assert info["_attempt_id"] != original_info["_attempt_id"]
+        assert active_task_run_index(info) == active_task_run_index(original_info)
+        replacement["bytes"] = info_path.read_bytes()
+        return True
+
+    monkeypatch.setattr("pyruns.core.task_manager.kill_process", replace_after_stop)
+
+    with pytest.raises(ValueError, match="cannot be cancelled"):
+        runtime.cancel_task("alpha")
+    assert info_path.read_bytes() == replacement["bytes"]
 
 
 def test_runtime_cancel_returns_a_task_that_finished_during_the_request(tmp_path, monkeypatch):

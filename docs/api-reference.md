@@ -266,6 +266,8 @@ shell 工作区：
 
 获取单个任务详情。`summary=true` 仅获取任务摘要，不加载历史曲线；适用于只需状态的轮询。默认返回完整详情，`refresh=false` 可复用当前任务快照。
 
+任务摘要和详情中的 `task_identity` 是不透明的任务身份；编辑客户端应在载入草稿时保留它。
+
 #### `GET /api/tasks/{task_name}/runs/{run_index}/input`
 
 按需读取一次运行在启动前保存的输入。返回 `schema_version: 1`、任务名、运行编号和 `input`；旧运行没有快照时 `input` 为 `null`，不存在的任务或运行返回 404。普通任务列表不附带历史正文。
@@ -311,6 +313,10 @@ pin / unpin 任务。
 ```
 
 如果 notes 已被其他客户端修改，接口返回 `409 Conflict` 且不覆盖新内容。
+
+Notes 和 Env 更新还应提交草稿载入时的 `expected_task_identity`（来自 `task_identity`）。
+原任务改名、移走后即使出现同名新任务且字段值相同，也会返回 `409`，避免写错对象。
+该字段对旧客户端可选；新版 Web UI 自动携带。
 
 #### `PATCH /api/tasks/{task_name}/env`
 

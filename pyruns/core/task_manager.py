@@ -311,6 +311,7 @@ class TaskManager:
         return wait
 
     _SUMMARY_API_FIELDS = (
+        "task_identity",
         "dir",
         "name",
         "status",
@@ -403,9 +404,10 @@ class TaskManager:
                 except MissingTrackGeneration:
                     # A concurrent replacement can prune the captured generation.
                     # Reload its metadata too: new curves must not inherit old run slots.
+                    task_identity = cls._task_identity_token(str(data["dir"]))
                     info = load_task_info(str(data["dir"]), raise_error=True)
                     info = cls._strip_queued_placeholder_run(info)
-                    cls._apply_info_to_task_fields(data, info)
+                    cls._apply_info_to_task_fields(data, info, task_identity=task_identity)
                     data["created_at"] = info.get("created_at")
             except Exception as exc:
                 data["_load_error"] = "; ".join(
@@ -452,6 +454,7 @@ class TaskManager:
                 task = {key: value for key, value in task.items() if key not in TaskManager._COMPACT_SUMMARY_OMIT_FIELDS}
             return {
                 "dir": str(task.get("dir", "")).replace("\\", "/"),
+                "task_identity": task.get("task_identity"),
                 "name": task.get("name", ""),
                 "status": task.get("status", "pending"),
                 "created_at": task.get("created_at"),
@@ -1090,6 +1093,7 @@ class TaskManager:
                 require_no_live_owner=True,
                 expected_runner_id=str(info.get("runner_id", "") or ""),
                 expected_run_index=active_task_run_index(info),
+                expected_attempt_id=str(info.get("_attempt_id", "") or ""),
             )
         except (TaskClaimConflict, TaskStateConflict):
             updated = load_task_metadata(task_dir) or info
@@ -1133,6 +1137,19 @@ class TaskManager:
             return None
         return int(value.st_dev), int(value.st_ino)
 
+    @classmethod
+    def _task_identity_token(cls, path: str) -> str | None:
+        identity = cls._directory_identity(path)
+        return f"{identity[0]}:{identity[1]}" if identity is not None else None
+
+    @classmethod
+    def _require_task_identity(cls, task_dir: str, expected_identity: str | None) -> tuple[int, int] | None:
+        identity = cls._directory_identity(task_dir)
+        token = f"{identity[0]}:{identity[1]}" if identity is not None else None
+        if expected_identity is not None and token != expected_identity:
+            raise TaskStateConflict("Task identity changed since it was loaded. Reload the task before saving.")
+        return identity
+
     def _namespace_operation_is_live(self, operation: Any) -> bool:
         """Return whether a task-directory move marker still has a live owner."""
         return namespace_operation_is_live(operation, local_host=self.runner_host)
@@ -1156,6 +1173,7 @@ class TaskManager:
         kind: str,
         expected_run_index: int,
         expected_identity: tuple[int, int],
+        expected_attempt_id: str | None = None,
     ) -> str:
         """Reserve one inactive task directory against concurrent reruns."""
 
@@ -1181,6 +1199,8 @@ class TaskManager:
                 raise TaskStateConflict("task became active before directory move")
             if active_task_run_index(info) != int(expected_run_index):
                 raise TaskStateConflict("task run changed before directory move")
+            if not task_attempt_matches(info, expected_attempt_id):
+                raise TaskStateConflict("task attempt changed before directory move")
             info[_NAMESPACE_OPERATION_KEY] = operation
 
         update_task_metadata(task_dir, _apply)
@@ -1299,6 +1319,7 @@ class TaskManager:
         if validate_task_name(dir_name) is not None:
             return None
         task_dir = os.path.join(self.tasks_dir, dir_name)
+        task_identity = self._task_identity_token(task_dir)
         info_path = os.path.join(task_dir, TASK_INFO_FILENAME)
         try:
             info_stat = os.stat(info_path)
@@ -1352,6 +1373,7 @@ class TaskManager:
 
         task = {
             "dir": task_dir.replace("\\", "/"),
+            "task_identity": task_identity,
             "name": task_name,
             "status": info.get("status", "failed" if metadata_error else "pending"),
             "created_at": info.get("created_at"),
@@ -1566,6 +1588,7 @@ class TaskManager:
                     and not payload_changed and not task.get("_terminal_write_pending")
                 ):
                     if task.get("status") == "running" and task.get("name") not in self._running_ids:
+                        task_identity = self._task_identity_token(task["dir"])
                         info = load_task_metadata(task["dir"])
                         if not info:
                             continue
@@ -1588,6 +1611,7 @@ class TaskManager:
                                     self._apply_info_to_task(
                                         existing, info, mtime_ns=mtime_ns,
                                         info_signature=info_signature,
+                                        task_identity=task_identity,
                                     )
                                     self._clear_running_locked(task["name"])
                                     self.gpu_scheduler.release(task["name"])
@@ -1597,6 +1621,7 @@ class TaskManager:
                                     has_changed |= before != after
                     continue
                 try:
+                    task_identity = self._task_identity_token(task["dir"])
                     info = load_task_metadata(task["dir"], raise_error=True)
                     if not info:
                         raise ValueError("Task metadata is empty")
@@ -1635,6 +1660,7 @@ class TaskManager:
                     self._apply_info_to_task(
                         existing, info, mtime_ns=mtime_ns,
                         info_signature=info_signature,
+                        task_identity=task_identity,
                     )
                     if not processing_checked or was_queued != (existing.get("status") == "queued"):
                         self._recompute_processing_flag_locked()
@@ -1728,6 +1754,8 @@ class TaskManager:
         task_name = str((task_obj or {}).get("name", "") or "")
         if not task_name:
             return task_obj
+        if "task_identity" not in task_obj and task_obj.get("dir"):
+            task_obj["task_identity"] = self._task_identity_token(str(task_obj["dir"]))
 
         existing = self._tasks_by_name.get(task_name)
         revision = existing.get("_registry_revision", 0) if existing else 0
@@ -2405,6 +2433,8 @@ class TaskManager:
         task_name: str,
         notes: str,
         expected_notes: str,
+        *,
+        expected_task_identity: str | None = None,
     ) -> tuple[bool, str]:
         """Persist task notes and refresh derived search/preview fields."""
         with self._lock:
@@ -2413,8 +2443,11 @@ class TaskManager:
                 return False, "Task not found"
             task_dir = target["dir"]
             revision = target.get("_registry_revision", 0)
+            expected_identity = expected_task_identity if expected_task_identity is not None else target.get("task_identity")
 
         def _apply(task_info: Dict[str, Any]) -> None:
+            self._guard_namespace_operation(task_info)
+            self._require_task_identity(task_dir, expected_identity)
             current_notes = str(task_info.get("notes", "") or "")
             if current_notes != expected_notes:
                 raise TaskStateConflict("Task notes changed since they were loaded.")
@@ -2430,6 +2463,8 @@ class TaskManager:
         task_name: str,
         env: Dict[str, Any],
         expected_env: Dict[str, Any],
+        *,
+        expected_task_identity: str | None = None,
     ) -> tuple[bool, Dict[str, Any] | str]:
         """Persist task env vars and sync in-memory task state."""
         with self._lock:
@@ -2438,6 +2473,7 @@ class TaskManager:
                 return False, "Task not found"
             task_dir = target["dir"]
             revision = target.get("_registry_revision", 0)
+            expected_identity = expected_task_identity if expected_task_identity is not None else target.get("task_identity")
 
         try:
             normalized_env = normalize_environment(env)
@@ -2446,6 +2482,8 @@ class TaskManager:
             return False, str(exc)
 
         def _apply(task_info: Dict[str, Any]) -> None:
+            self._guard_namespace_operation(task_info)
+            self._require_task_identity(task_dir, expected_identity)
             current_env = normalize_environment(task_info.get("env", {}))
             if current_env != normalized_expected_env:
                 raise TaskStateConflict("Task environment changed since it was loaded.")
@@ -2482,7 +2520,7 @@ class TaskManager:
                 return False, f"Task name '{new_name}' already exists in the current workspace"
 
             try:
-                source_identity = self._directory_identity(old_dir)
+                source_identity = self._require_task_identity(old_dir, target.get("task_identity"))
                 if source_identity is None:
                     raise FileNotFoundError("task directory disappeared before rename")
                 disk_info = load_task_metadata(old_dir, raise_error=True)
@@ -2492,6 +2530,7 @@ class TaskManager:
                     kind="rename",
                     expected_run_index=active_task_run_index(disk_info),
                     expected_identity=source_identity,
+                    expected_attempt_id=str(disk_info.get("_attempt_id", "") or ""),
                 )
             except Exception as exc:
                 return False, str(exc)
@@ -2588,7 +2627,7 @@ class TaskManager:
             request_context["original_status"] = status
             request_context["run_index"] = current_run_index
             request_context["runner_id"] = str(info.get("runner_id", "") or "")
-            request_context["attempt_id"] = str(info.get("_attempt_id", "") or "") or None
+            request_context["attempt_id"] = str(info.get("_attempt_id", "") or "")
             if self._is_current_runner(info):
                 request_context["action"] = "cancel_local"
                 return
@@ -2649,7 +2688,10 @@ class TaskManager:
                 self._refresh_memory_task_from_disk_info(task_name, task_dir, latest)
                 self.trigger_update()
             latest_status = str(latest.get("status", "") or "").lower()
-            same_run = active_task_run_index(latest) == int(request_context["run_index"] or 0)
+            same_run = (
+                active_task_run_index(latest) == int(request_context["run_index"] or 0)
+                and task_attempt_matches(latest, request_context.get("attempt_id"))
+            )
             if same_run and latest_status in {"completed", "failed", "cancelled"}:
                 return True
             # Keep returning False while the local runner has not confirmed
@@ -2693,7 +2735,7 @@ class TaskManager:
     ) -> bool:
         """Stop an identified local orphan before publishing its terminal state."""
         runner_id = str(requested.get("runner_id", "") or "")
-        attempt_id = requested.get("_attempt_id")
+        attempt_id = str(requested.get("_attempt_id", "") or "")
         run_index = active_task_run_index(requested)
         pid, created_at = self._current_process_identity(requested)
         try:
@@ -2737,6 +2779,7 @@ class TaskManager:
             self.trigger_update()
         return bool(
             active_task_run_index(latest) == run_index
+            and task_attempt_matches(latest, attempt_id)
             and latest.get("status") in {"completed", "failed", "cancelled"}
         )
 
@@ -2759,6 +2802,7 @@ class TaskManager:
                 task_name,
                 expected_runner_id=str(info.get("runner_id", "") or ""),
                 expected_run_index=active_task_run_index(info),
+                expected_attempt_id=str(info.get("_attempt_id", "") or ""),
             )
 
     def cancel_task(
@@ -2957,6 +3001,7 @@ class TaskManager:
                 candidates.append({
                     "name": target_name,
                     "dir": target["dir"],
+                    "task_identity": target.get("task_identity"),
                     "status": target.get("status"),
                     "run_index": target.get("run_index", 0),
                 })
@@ -2973,7 +3018,16 @@ class TaskManager:
 
         targets: list[Dict[str, Any]] = []
         for candidate in candidates:
-            disk_info = load_task_metadata(candidate["dir"])
+            try:
+                source_identity = self._require_task_identity(candidate["dir"], candidate.get("task_identity"))
+                if source_identity is None:
+                    raise FileNotFoundError("task directory disappeared before delete")
+                disk_info = load_task_metadata(candidate["dir"])
+                # Never stop a replacement that appeared while reading the old task.
+                self._require_task_identity(candidate["dir"], f"{source_identity[0]}:{source_identity[1]}")
+            except (OSError, ValueError, TaskStateConflict) as exc:
+                logger.info("Delete skipped for %s: %s", candidate["name"], exc)
+                continue
             disk_status = str((disk_info or {}).get("status", candidate.get("status", "")) or "").lower()
             if (
                 (disk_status == "running" and not self._is_current_runner(disk_info or {}))
@@ -2987,6 +3041,7 @@ class TaskManager:
             action_task = dict(candidate)
             if disk_info:
                 action_task["run_index"] = active_task_run_index(disk_info)
+                action_task["_attempt_id"] = str(disk_info.get("_attempt_id", "") or "")
             action_task["status"] = disk_status
 
             if disk_status in {"queued", "running"}:
@@ -3109,11 +3164,10 @@ class TaskManager:
 
             try:
                 validate_task_directory(candidate["dir"])
-                source_identity = self._directory_identity(candidate["dir"])
             except ValueError as exc:
                 logger.warning("Delete skipped for %s: %s", candidate["name"], exc)
                 continue
-            if source_identity is None or not os.path.isdir(candidate["dir"]):
+            if not os.path.isdir(candidate["dir"]):
                 logger.warning(
                     "Delete skipped for %s because its task directory disappeared",
                     candidate["name"],
@@ -3127,6 +3181,7 @@ class TaskManager:
                 "run_index": active_task_run_index(
                     settled_info if disk_status == "running" else (load_task_metadata(candidate["dir"]) or action_task)
                 ),
+                "attempt_id": action_task.get("_attempt_id"),
             })
 
         self.trigger_update()
@@ -3144,6 +3199,7 @@ class TaskManager:
                     kind="delete",
                     expected_run_index=int(target["run_index"]),
                     expected_identity=target["identity"],
+                    expected_attempt_id=target.get("attempt_id"),
                 )
                 # One shared namespace lock coordinates delete with restore.  The
                 # destination stays on the same filesystem and os.rename never
@@ -5384,6 +5440,7 @@ class TaskManager:
         *,
         mtime_ns: int | None = None,
         info_signature: tuple[int, ...] | None = None,
+        task_identity: str | None = None,
     ) -> None:
         """Refresh under the registry lock, retaining indexes on payload-only edits."""
         registered = self._tasks_by_name.get(task.get("name", "")) is task
@@ -5391,6 +5448,7 @@ class TaskManager:
         try:
             self._apply_info_to_task_fields(
                 task, info, mtime_ns=mtime_ns, info_signature=info_signature,
+                task_identity=task_identity,
             )
         finally:
             # A failed payload load can still have copied new lifecycle fields.
@@ -5412,12 +5470,19 @@ class TaskManager:
         *,
         mtime_ns: int | None = None,
         info_signature: tuple[int, ...] | None = None,
+        task_identity: str | None = None,
     ) -> None:
         """Copy task_info.json fields used by UI and scheduler."""
         if "track_store" in info:
             task["track_store"] = copy.deepcopy(info["track_store"])
         else:
             task.pop("track_store", None)
+        # Keep the identity captured before reading metadata. A stat here could
+        # pair old metadata with a new task that reused the same directory name.
+        if task_identity is not None:
+            task["task_identity"] = task_identity
+        elif "task_identity" not in task:
+            task["task_identity"] = cls._task_identity_token(task["dir"])
         task.update(
             {
                 "name": os.path.basename(os.path.normpath(task["dir"])),

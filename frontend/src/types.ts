@@ -75,6 +75,7 @@ export interface Task {
   name: string
   status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
   dir: string
+  task_identity?: string | null
   config: Record<string, any>
   config_text: string
   config_file: string

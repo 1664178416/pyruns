@@ -323,6 +323,7 @@ class TaskNotesRequest(RequestModel):
 
     notes: str = Field(default="", max_length=MAX_TASK_NOTES_CHARS)
     expected_notes: str = Field(max_length=MAX_TASK_NOTES_CHARS)
+    expected_task_identity: str | None = Field(default=None, max_length=128)
 
 
 class TaskEnvRequest(RequestModel):
@@ -330,6 +331,7 @@ class TaskEnvRequest(RequestModel):
 
     env: dict[str, Any] = Field(default_factory=dict)
     expected_env: dict[str, Any]
+    expected_task_identity: str | None = Field(default=None, max_length=128)
 
 
 class RuntimeUpdateRequest(RequestModel):
@@ -1223,6 +1225,7 @@ def create_app(
                 payload.notes,
                 payload.expected_notes,
                 include_tracks=include_tracks,
+                expected_task_identity=payload.expected_task_identity,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"Task '{task_name}' not found") from exc
@@ -1242,6 +1245,7 @@ def create_app(
                 payload.env,
                 payload.expected_env,
                 include_tracks=include_tracks,
+                expected_task_identity=payload.expected_task_identity,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"Task '{task_name}' not found") from exc

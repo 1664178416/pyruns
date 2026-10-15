@@ -56,6 +56,9 @@ pyr ui shell --no-browser
 <project>/_pyruns_/_shell_/
 ```
 
+脚本和配置发现可以通过 `Cancel` 或 `Escape` 取消，读取超过 10 秒会提示重试。
+已经提交的工作区打开操作会等待结果。
+
 ## Generator
 
 Generator 是整个 UI 最像“工作台”的页面。
@@ -109,6 +112,8 @@ Generator 是整个 UI 最像“工作台”的页面。
 
 ![Shell Generator](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/shell_generator.png)
 
+创建成功会立即显示任务结果；随后刷新模板列表不会阻塞继续操作。
+
 ## Manager
 
 Manager 是任务的调度台。  
@@ -156,6 +161,9 @@ Manager 和 Monitor 均支持 `Ctrl/Cmd+Shift+F` 聚焦并选中查询。在首�
 - 比较内容仅在点击时读取，不加载训练曲线。旧运行没有保存输入时会明确提示，其余已记录信息仍可比较；正在运行的记录显示本次读取时的值。
 - `python` 任务显示 `config.yaml`
 - `shell` 任务显示当前 runtime 对应的 `config.ps1` / `config.cmd` / `config.sh`
+
+Notes 和 Env 保存会检查编辑时的字段值与任务身份。若原任务被同名任务替换，草稿仍保留，
+请关闭并重新打开详情后再编辑新任务；旧草稿不能直接覆盖新任务。
 
 ![任务详情面板](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/task_info.png)
 

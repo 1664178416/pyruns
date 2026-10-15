@@ -1018,22 +1018,15 @@ export default function GeneratorPage() {
       setPreviewData(null)
       setPreviewSnapshot(null)
 
-      try {
-        await fetchTemplates()
-      } catch {
-        // Creation succeeded; template refresh can be retried on the next render.
-      }
-
-      if (!requestIsCurrent()) {
-        return
-      }
-
       setCreatedSummary({
         count: result.count,
         taskKind: result.task_kind === 'shell' ? 'shell task' : 'python task',
         firstTaskName: result.items[0]?.name || '',
       })
       setGenerationStatus('created')
+      // The tasks already exist. Refreshing available templates must not delay
+      // their success result or keep the creation action busy.
+      void fetchTemplates().catch(() => {})
     } catch (err: any) {
       if (!requestIsCurrent()) {
         return
