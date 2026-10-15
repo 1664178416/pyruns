@@ -236,7 +236,7 @@ def _verify_ui(project, report, scripts, env, identities, package):
                 timeout=10,
             ) as response:
                 log_content = json.load(response)
-            assert downloaded.decode("utf-8", errors="replace").replace("\r\n", "\n") == log_content["content"]
+            assert downloaded.decode("utf-8", errors="replace") == log_content["content"]
             log_stream_query = urlencode({**log_selection, "offset": log_cursor["offset"]})
             with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
                 with connect(f"ws://127.0.0.1:{port}/api/tasks/wheel-shell/logs/stream?{log_stream_query}",
