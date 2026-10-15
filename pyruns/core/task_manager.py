@@ -901,7 +901,11 @@ class TaskManager:
                 if not entry.is_dir(follow_symlinks=False):
                     return None
                 try:
-                    validate_tasks_root(self.tasks_dir)
+                    # ``validate_workspace_directory(entry.path)`` below
+                    # rechecks the complete managed ancestor chain,
+                    # including ``self.tasks_dir``.  Revalidating the root
+                    # separately for every child performs two extra lstat
+                    # calls per task, which is costly on NFS/SMB workspaces.
                     validate_workspace_directory(entry.path)
                 except ValueError as exc:
                     logger.warning("Ignoring unsafe task directory %s: %s", entry.path, exc)

@@ -34,16 +34,22 @@ async function requestWithTimeout<T>(
   request: (signal: AbortSignal) => Promise<T>,
   milliseconds: number,
   timeoutMessage: string,
+  parentSignal?: AbortSignal,
 ) {
   const controller = new AbortController()
+  const abortFromParent = () => controller.abort()
+  if (parentSignal?.aborted) controller.abort()
+  else parentSignal?.addEventListener('abort', abortFromParent, { once: true })
   const requestTimeout = window.setTimeout(() => controller.abort(), milliseconds)
   try {
     return await request(controller.signal)
   } catch (error) {
+    if (parentSignal?.aborted) throw error
     if (controller.signal.aborted) throw new Error(timeoutMessage)
     throw error
   } finally {
     window.clearTimeout(requestTimeout)
+    parentSignal?.removeEventListener('abort', abortFromParent)
   }
 }
 
@@ -157,14 +163,19 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
   useEffect(() => {
     let active = true
     let polling = false
+    let timer: number | undefined
+    let requestController: AbortController | null = null
     const pollInstance = async () => {
       if (!active || polling) return
       polling = true
+      const controller = new AbortController()
+      requestController = controller
       try {
         const info = await requestWithTimeout(
           signal => api.getSystemInfo(signal),
           RESTART_REQUEST_TIMEOUT_MS,
           t('Pyruns status check timed out.'),
+          controller.signal,
         )
         if (!active) return
         if (instanceIdRef.current && info.instance_id !== instanceIdRef.current) {
@@ -177,18 +188,44 @@ export default function UpdateControl({ compact = false }: { compact?: boolean }
       } catch {
         // Connection loss is expected while this or another shared UI restarts.
       } finally {
-        polling = false
+        // An aborted request can settle after a newly started visible-tab
+        // request. Only the current request may release the polling guard;
+        // otherwise the interval can start overlapping status requests.
+        if (requestController === controller) {
+          polling = false
+          requestController = null
+        }
       }
     }
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') void pollInstance()
+    const stopPolling = () => {
+      if (timer !== undefined) {
+        window.clearInterval(timer)
+        timer = undefined
+      }
+      requestController?.abort()
+      requestController = null
+      polling = false
     }
-    void pollInstance()
-    const timer = window.setInterval(() => void pollInstance(), INSTANCE_POLL_MS)
+    const startPolling = () => {
+      if (!active || document.visibilityState === 'hidden' || timer !== undefined) return
+      timer = window.setInterval(() => void pollInstance(), INSTANCE_POLL_MS)
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stopPolling()
+        return
+      }
+      void pollInstance()
+      startPolling()
+    }
+    if (document.visibilityState !== 'hidden') {
+      void pollInstance()
+      startPolling()
+    }
     document.addEventListener('visibilitychange', handleVisibility)
     return () => {
       active = false
-      window.clearInterval(timer)
+      stopPolling()
       document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [reportUpdateResult])

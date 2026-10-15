@@ -230,6 +230,7 @@ export default function ManagerPage() {
   const pendingTaskActionsRef = useRef<Map<string, PendingTaskAction>>(new Map())
   const bulkActionRef = useRef<'run' | 'delete' | null>(null)
   const detailRequestSeqRef = useRef(0)
+  const detailRequestControllerRef = useRef<AbortController | null>(null)
   const detailTaskRef = useRef(detailTask)
   detailTaskRef.current = detailTask
   const navigate = useNavigate()
@@ -243,14 +244,19 @@ export default function ManagerPage() {
     const requestedKey = taskDetailRefreshKey(task)
     const requestIsCurrent = () => requestId === detailRequestSeqRef.current
       && workspaceEpoch === useWorkspaceStore.getState().workspaceEpoch
-    void api.getTask(task.name).then(fullTask => {
+    detailRequestControllerRef.current?.abort()
+    const controller = new AbortController()
+    detailRequestControllerRef.current = controller
+    void api.getTask(task.name, true, false, controller.signal).then(fullTask => {
       if (!requestIsCurrent()) return
       setDetailTask(current => current?.name === task.name && taskDetailRefreshKey(current) === requestedKey
         ? fullTask : current)
     }).catch(err => {
-      if (requestIsCurrent()) {
+      if (requestIsCurrent() && !controller.signal.aborted) {
         notify({ tone: 'error', title: t('Could not load task details'), detail: errorMessage(err) })
       }
+    }).finally(() => {
+      if (detailRequestControllerRef.current === controller) detailRequestControllerRef.current = null
     })
   }, [notify, workspaceEpoch])
   const rejectIncompleteReorder = useCallback((page: { has_more: boolean; total: number }) => {
@@ -280,6 +286,8 @@ export default function ManagerPage() {
 
   useEffect(() => {
     detailRequestSeqRef.current += 1
+    detailRequestControllerRef.current?.abort()
+    detailRequestControllerRef.current = null
     detailTaskRef.current = null
     dragCandidateRef.current = null
     draggedTaskNameRef.current = ''
@@ -313,17 +321,18 @@ export default function ManagerPage() {
     let cancelled = false
     const requestId = ++detailRequestSeqRef.current
     const requestWorkspaceEpoch = workspaceEpoch
+    const controller = new AbortController()
     const requestIsCurrent = () => (
       !cancelled
       && requestId === detailRequestSeqRef.current
       && requestWorkspaceEpoch === useWorkspaceStore.getState().workspaceEpoch
     )
-    void api.getTask(focusTaskName).then(task => {
+    void api.getTask(focusTaskName, true, false, controller.signal).then(task => {
       if (requestIsCurrent()) {
         setDetailTask(task)
       }
     }).catch(() => {
-      if (requestIsCurrent()) {
+      if (requestIsCurrent() && !controller.signal.aborted) {
         const next = new URLSearchParams(searchParams)
         next.delete('task')
         setSearchParams(next, { replace: true })
@@ -332,6 +341,7 @@ export default function ManagerPage() {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [focusTaskName, searchParams, setSearchParams, workspaceEpoch])
 
@@ -857,6 +867,8 @@ export default function ManagerPage() {
 
   const closeDetailPanel = useCallback(() => {
     detailRequestSeqRef.current += 1
+    detailRequestControllerRef.current?.abort()
+    detailRequestControllerRef.current = null
     setDetailTask(null)
     if (!searchParams.get('task')) {
       return

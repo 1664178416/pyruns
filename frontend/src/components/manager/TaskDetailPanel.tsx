@@ -1209,8 +1209,31 @@ function InfoTab({ task }: { task: Task }) {
   useEffect(() => {
     setNowMillis(Date.now())
     if (!live) return
-    const interval = window.setInterval(() => setNowMillis(Date.now()), 1000)
-    return () => window.clearInterval(interval)
+    let interval: number | undefined
+    const stop = () => {
+      if (interval !== undefined) {
+        window.clearInterval(interval)
+        interval = undefined
+      }
+    }
+    const start = () => {
+      if (document.visibilityState === 'hidden' || interval !== undefined) return
+      interval = window.setInterval(() => setNowMillis(Date.now()), 1000)
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        stop()
+        return
+      }
+      setNowMillis(Date.now())
+      start()
+    }
+    start()
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [live, task.name])
 
   const overview: [string, string][] = [

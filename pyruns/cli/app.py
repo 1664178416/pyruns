@@ -146,14 +146,18 @@ def _exec_option_token_length(argv: Sequence[str], index: int) -> int | None:
         return 1
     if token in _EXEC_VALUE_OPTIONS:
         if index + 1 >= len(argv) or str(argv[index + 1]).startswith("-"):
-            # Move the option itself so argparse can report its missing value
-            # instead of silently treating it as shell command text.
-            return 1
+            # A legacy unquoted ``-c`` command may legitimately begin its
+            # shell argument list with an option-looking token, for example
+            # ``pyr exec -c echo -n``.  There is no quote metadata left in
+            # ``argv`` to distinguish that from a Pyruns option placed after
+            # a quoted command, so preserve an incomplete option as command
+            # text.  A complete option is still moved and parsed normally.
+            return None
         return 2
     if token == "-e" or token == "--env":
         value_index = index + 1
         if value_index >= len(argv) or str(argv[value_index]).startswith("-"):
-            return 1
+            return None
         value_index += 1
         while value_index < len(argv) and not str(argv[value_index]).startswith("-"):
             value_index += 1
@@ -218,7 +222,32 @@ def _normalize_exec_option_order(argv: Sequence[str]) -> list[str]:
         return values
 
     tail_index = command_value_end
-    if _exec_option_token_length(values, tail_index) is None:
+    if tail_index >= len(values):
+        return values
+    # ``--`` used to separate an argv command from Pyruns options.  It is no
+    # longer part of the public ``exec`` syntax; leave it for the normal
+    # parser/command validation instead of folding it into a legacy ``-c``
+    # shell expression.
+    if values[tail_index] == "--":
+        return values
+    tail_length = _exec_option_token_length(values, tail_index)
+    if tail_length is None:
+        # With legacy unquoted ``-c`` syntax, the shell command can start with
+        # an option-looking argument (``-c echo -n`` or ``-c printf --``).
+        # Argparse would otherwise try to parse that token as a Pyruns option
+        # before it reaches the hidden REMAINDER positional. Preserve the
+        # complete tail as command text when the first token is not a known,
+        # complete Pyruns option. Complete options remain movable below.
+        if tail_index < len(values) and str(values[tail_index]).startswith("-"):
+            # Keep the original command value when folding an option-looking
+            # legacy tail back into ``-c``.  Dropping it turns
+            # ``-c echo -n`` into a bare ``-c -n`` and argparse rejects it.
+            command_text = " ".join(values[command_option_index + 1 :])
+            command_token = values[command_option_index]
+            if command_token.startswith("--command="):
+                command_text = command_token.split("=", 1)[1] + " " + command_text
+                return values[:command_option_index] + ["--command=" + command_text]
+            return values[:command_option_index] + [command_token, command_text]
         return values
 
     moved: list[str] = []

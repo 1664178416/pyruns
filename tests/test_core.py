@@ -3631,6 +3631,7 @@ def test_task_manager_parallel_directory_scan_keeps_order_and_skips_unsafe_paths
     simulate_reparse(reparse)
     manager = _make_task_manager(tasks_dir, lazy_scan=None, owns_task_lifecycle=False)
     validate = task_manager_module.validate_workspace_directory
+    root_validations = []
     worker_threads = []
     main_thread = threading.get_ident()
 
@@ -3638,7 +3639,14 @@ def test_task_manager_parallel_directory_scan_keeps_order_and_skips_unsafe_paths
         worker_threads.append(threading.get_ident())
         return validate(path)
 
+    original_validate_root = task_manager_module.validate_tasks_root
+
+    def observed_validate_root(path):
+        root_validations.append(path)
+        return original_validate_root(path)
+
     monkeypatch.setattr(task_manager_module, "validate_workspace_directory", observed_validate)
+    monkeypatch.setattr(task_manager_module, "validate_tasks_root", observed_validate_root)
     monkeypatch.setattr(manager, "_parallel_loading_worthwhile", lambda *_: True)
 
     ok, names = manager._scan_task_dir_names()
@@ -3646,6 +3654,7 @@ def test_task_manager_parallel_directory_scan_keeps_order_and_skips_unsafe_paths
     assert ok is True
     assert names == [f"task-{index}" for index in reversed(range(12))]
     assert any(thread != main_thread for thread in worker_threads)
+    assert root_validations == [str(tasks_dir)]
 
 
 def test_task_manager_refresh_does_not_overwrite_replaced_task(tmp_path, monkeypatch):

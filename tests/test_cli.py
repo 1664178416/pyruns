@@ -623,6 +623,17 @@ def test_exec_keeps_legacy_unquoted_command_tail_after_non_option_token():
     assert parsed._command_tail == ["hello", "-n", "literal"]
 
 
+def test_exec_preserves_option_like_tokens_at_start_of_legacy_command_tail():
+    parser, _commands = build_parser("pyr", show_all_commands=True)
+
+    parsed = parser.parse_args(("exec", "-c", "echo", "-n"))
+
+    # Quote metadata is unavailable in argv. An incomplete Pyruns option
+    # therefore remains part of the legacy unquoted shell command.
+    assert parsed.shell_command == "echo -n"
+    assert parsed._command_tail == []
+
+
 def test_json_output_is_strict_and_versioned(capsys):
     from pyruns.cli.commands import CliError, _json_dump
 

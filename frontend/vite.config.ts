@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { fileURLToPath } from 'url'
+
+const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 
 function normalizeModuleId(id: string) {
   return id.replace(/\\/g, '/')
@@ -14,7 +17,7 @@ function includesPackage(id: string, packageName: string) {
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') },
+    alias: { '@': path.resolve(frontendRoot, 'src') },
   },
   server: {
     port: 5173,
