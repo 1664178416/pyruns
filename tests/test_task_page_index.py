@@ -210,3 +210,109 @@ def test_detached_metadata_application_does_not_discard_live_index(manager):
         manager._apply_info_to_task(dict(task), info)
         assert manager.get_task_page(sort_mode="name_asc")[2]["failed"] == 0
         assert sort.call_count == 0
+
+
+@pytest.mark.parametrize("operation", ["terminal", "pending_stop"])
+@pytest.mark.parametrize("interleaving", ["registry", "disk_only", "replacement"])
+def test_stop_publication_preserves_newer_run_or_completion(manager, monkeypatch, operation, interleaving):
+    task = manager._tasks_by_name["task2"]
+    original_update = update_task_metadata
+    seeded = original_update(task["dir"], lambda info: info.update({
+        "status": "running", "run_index": 1, "start_times": ["2026-10-15_12-00-00"],
+    }))
+    with manager._lock:
+        manager._apply_info_to_task(task, seeded)
+    manager.get_task_page()
+    new_status = "running" if operation == "terminal" else "completed"
+    new_run_index = 2 if operation == "terminal" else 1
+
+    def advance():
+        latest = original_update(task["dir"], lambda info: info.update({
+            "status": new_status, "run_index": new_run_index,
+            "start_times": ["2026-10-15_12-00-00", "2026-10-15_12-01-00"]
+            if operation == "terminal" else ["2026-10-15_12-00-00"],
+            "finish_times": ["", ""] if operation == "terminal" else ["2026-10-15_12-01-00"],
+        }))
+        with manager._lock:
+            if interleaving == "registry":
+                manager._apply_info_to_task(task, latest)
+            elif interleaving == "replacement":
+                replacement = dict(task)
+                manager._apply_info_to_task(replacement, latest)
+                replacement["_registry_revision"] = task["_registry_revision"]
+                manager.tasks = [replacement if current is task else current for current in manager.tasks]
+                manager._rebuild_indexes_locked()
+
+    if operation == "terminal":
+        monkeypatch.setattr(manager, "_append_error_summary", lambda *args, **kwargs: advance())
+        manager._mark_failed_on_disk(task, reason="controlled stop", expected_statuses={"running"})
+    else:
+        def advance_after_write(*args, **kwargs):
+            updated = original_update(*args, **kwargs)
+            advance()
+            return updated
+
+        monkeypatch.setattr(task_manager_module, "update_task_metadata", advance_after_write)
+        manager._persist_pending_stop_summary(
+            task, event="stopped", reason="controlled stop", expected_statuses={"running"},
+        )
+    persisted = load_task_metadata(task["dir"])
+    current = manager.get_task("task2", summary=True)
+    assert persisted["status"] == current["status"] == new_status
+    assert persisted["run_index"] == current["run_index"] == new_run_index
+    page = manager.get_task_page(status=new_status)
+    assert names(page) == ["task2"]
+    assert page[2][new_status] == 1
+    if interleaving == "replacement":
+        assert task["status"] == "running"
+        assert task["run_index"] == 1
+        assert task.get("cancel_requested_at") is None
+
+
+@pytest.mark.parametrize("operation", ["terminal", "pending_stop"])
+@pytest.mark.parametrize("detached", [False, True])
+def test_stop_publication_updates_normal_live_and_detached_inputs(manager, operation, detached):
+    live = manager._tasks_by_name["task2"]
+    seeded = update_task_metadata(live["dir"], lambda info: info.update(status="running", run_index=1))
+    with manager._lock:
+        manager._apply_info_to_task(live, seeded)
+    task = dict(live) if detached else live
+    if operation == "terminal":
+        manager._mark_failed_on_disk(task, expected_statuses={"running"})
+        assert task["status"] == "failed"
+    else:
+        manager._persist_pending_stop_summary(task, event="stopped", reason="requested", expected_statuses={"running"})
+        assert task["cancel_requested_at"]
+    if detached:
+        assert live["status"] == "running"
+        assert live.get("cancel_requested_at") is None
+    else:
+        assert manager.get_task("task2", summary=True)["status"] == task["status"]
+
+
+@pytest.mark.parametrize("operation", ["terminal", "pending_stop"])
+@pytest.mark.parametrize("detached", [False, True])
+def test_stop_publication_read_failure_keeps_live_state_and_detached_result(manager, operation, detached):
+    live = manager._tasks_by_name["task2"]
+    seeded = update_task_metadata(live["dir"], lambda info: info.update(status="running", run_index=1))
+    with manager._lock:
+        manager._apply_info_to_task(live, seeded)
+    task = dict(live) if detached else live
+    with patch.object(task_manager_module, "load_task_metadata", side_effect=OSError("temporarily unavailable")):
+        if operation == "terminal":
+            manager._mark_failed_on_disk(task, expected_statuses={"running"})
+        else:
+            manager._persist_pending_stop_summary(task, event="stopped", reason="requested", expected_statuses={"running"})
+    assert live["status"] == "running"
+    assert live.get("cancel_requested_at") is None
+    if detached:
+        if operation == "terminal":
+            assert task["status"] == "failed"
+        else:
+            assert task["cancel_requested_at"]
+    assert manager.refresh_from_disk(task_ids=["task2"])
+    if operation == "terminal":
+        assert manager.get_task("task2", summary=True)["status"] == "failed"
+    else:
+        assert manager.get_task("task2", summary=True)["status"] == "running"
+        assert manager.get_task("task2")["cancel_requested_at"]

@@ -5045,9 +5045,14 @@ class TaskManager:
     ) -> None:
         """Store a stop request without publishing a terminal state prematurely."""
 
-        task_dir = task["dir"]
         finish_now = get_now_str()
-        run_index = int(task.get("run_index", 0) or 0)
+        with self._lock:
+            task_dir = task["dir"]
+            run_index = int(task.get("run_index", 0) or 0)
+            observed_revision = (
+                task.get("_registry_revision", 0)
+                if self._tasks_by_name.get(task.get("name", "")) is task else None
+            )
 
         def _apply(task_info: Dict[str, Any]) -> None:
             original_status = str(task_info.get("status", "") or "").lower()
@@ -5076,9 +5081,45 @@ class TaskManager:
         if lock_timeout_sec is not None:
             update_kwargs["timeout_sec"] = lock_timeout_sec
         updated = update_task_metadata(task_dir, _apply, **update_kwargs)
-        if "status" in task:
-            with self._lock:
+        self._publish_stop_metadata(task, updated, observed_revision=observed_revision)
+
+    def _publish_stop_metadata(
+        self,
+        task: Dict[str, Any],
+        updated: Dict[str, Any],
+        *,
+        observed_revision: int | None,
+    ) -> None:
+        """Keep stop snapshots from replacing a later run or completion."""
+        if "status" not in task:
+            return
+        with self._lock:
+            if observed_revision is None:
+                # Cancel/delete use detached action copies of the original run.
                 self._apply_info_to_task(task, updated)
+                return
+            task_name = str(task.get("name", "") or "")
+            if (
+                self._tasks_by_name.get(task_name) is not task
+                or task.get("_registry_revision", 0) != observed_revision
+            ):
+                return
+            task_dir = task["dir"]
+        try:
+            # Another process can have started a run after the write even when
+            # our registry has not reconciled it yet. Read its current state.
+            latest = load_task_metadata(task_dir, raise_error=True)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.debug("Could not reconcile stop metadata for %s: %s", task_name, exc)
+            return
+        if not latest:
+            return
+        with self._lock:
+            if (
+                self._tasks_by_name.get(task_name) is task
+                and task.get("_registry_revision", 0) == observed_revision
+            ):
+                self._apply_info_to_task(task, latest)
 
     def _apply_terminal_status_to_info(
         self,
@@ -5128,10 +5169,15 @@ class TaskManager:
         final_status: str = "failed",
     ) -> None:
         """Persist a failed state and finalize the active run slot if needed."""
-        task_dir = task["dir"]
         finish_now = get_now_str()
-        run_index = int(task.get("run_index", 0) or 0)
         failure_context = {"finalized_run_slot": False, "original_status": ""}
+        with self._lock:
+            task_dir = task["dir"]
+            run_index = int(task.get("run_index", 0) or 0)
+            observed_revision = (
+                task.get("_registry_revision", 0)
+                if self._tasks_by_name.get(task.get("name", "")) is task else None
+            )
 
         def _apply(task_info: Dict[str, Any]) -> None:
             original_status = str(task_info.get("status", "") or "").lower()
@@ -5184,10 +5230,7 @@ class TaskManager:
                 title=title,
                 detail_lines=lines,
             )
-        if "status" in task:
-            with self._lock:
-                self._apply_info_to_task(task, updated)
-                task["status"] = final_status
+        self._publish_stop_metadata(task, updated, observed_revision=observed_revision)
 
     @staticmethod
     def _task_snapshot(task: Dict[str, Any]) -> tuple:
