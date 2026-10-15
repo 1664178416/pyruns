@@ -1,4 +1,4 @@
-"""GPU rule units, admission isolation, and durable CLI policy contracts."""
+"""GPU rule units, admission isolation, and per-submission policy contracts."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from pyruns.utils.settings import load_settings, save_settings_for_root
     ("text", "canonical"),
     [
         ("2-20-70-15-2", "2-20-70-15-2"),
-        ("1-8", "1-8-70-15-48"),
         ("2-20480MiB-70%-15SEC-120MIN", "2-20-70-15-2"),
         ("DEVICE=1,0-20GIB-70-0s-0HR", "device=1,0-20-70-0-0"),
         ("OFF", "off"),
@@ -43,8 +42,10 @@ def test_decimal_memory_and_fractional_hours_have_unambiguous_values():
 
 
 @pytest.mark.parametrize("text", [
-    "0-8", "1.5-8", "1-8-101", "1-8--15-2", "1-8-70-15-2-3",
-    "device=0,0-8", "device=-1-8", "1-8TB", "1-8-70-NaN-2", "1-8-70-15-1e9",
+    "1-8", "1-8-70", "1-8-70-15", "device=0-8",
+    "0-8-70-15-2", "1.5-8-70-15-2", "1-8-101-15-2", "1-8--15-2", "1-8-70-15-2-3",
+    "device=0,0-8-70-15-2", "device=-1-8-70-15-2", "1-8TB-70-15-2",
+    "1-8-70-NaN-2", "1-8-70-15-1e9",
 ])
 def test_invalid_rules_identify_the_expected_field_order(text):
     with pytest.raises(ValueError, match="GPUS-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS"):
@@ -155,13 +156,13 @@ def test_explicit_cuda_mask_that_hides_all_gpus_is_not_overridden(mask):
     assert "CUDA_VISIBLE_DEVICES" in decision.reason
 
 
-def test_task_rules_override_project_and_do_not_block_ready_tasks(tmp_path, monkeypatch):
+def test_submission_rules_override_project_and_do_not_block_ready_tasks(tmp_path, monkeypatch):
     tasks_dir = tmp_path / "tasks"
     tasks_dir.mkdir()
     generator = TaskGenerator(root_dir=str(tasks_dir))
-    slow = generator.create_task("slow", {}, task_metadata={"gpu_wait_rule": "2-20-70-0-0"})
-    ready = generator.create_task("ready", {}, task_metadata={"gpu_wait_rule": "1-8-70-0-1"})
-    plain = generator.create_task("plain", {}, task_metadata={"gpu_wait_rule": "off"})
+    slow = generator.create_task("slow", {})
+    ready = generator.create_task("ready", {})
+    plain = generator.create_task("plain", {})
     manager = TaskManager(tasks_dir=str(tasks_dir), lazy_scan=False, owns_task_lifecycle=False)
     monkeypatch.setattr(manager, "_submit_task", lambda *args, **kwargs: None)
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
@@ -169,16 +170,18 @@ def test_task_rules_override_project_and_do_not_block_ready_tasks(tmp_path, monk
         GpuDevice(0, "GPU", "GPU-0", 8192, 24576, 20),
     ]))
     try:
-        assert manager.start_batch_tasks([slow["name"], ready["name"]], max_workers=3) == ["slow", "ready"]
+        assert manager.start_batch_tasks([slow["name"]], max_workers=3, gpu_wait_rule="2-20-70-0-0") == ["slow"]
+        assert manager.start_batch_tasks([ready["name"]], gpu_wait_rule="1-8-70-0-1") == ["ready"]
         selected, run_index = manager._pick_queued_task()
         assert selected["name"] == "ready"
         assert run_index == 1
         assert selected["_scheduled_env"]["CUDA_VISIBLE_DEVICES"] == "0"
         saved = load_task_info(ready["dir"])
-        assert saved["gpu_wait_rule"] == "1-8-70-0-1"
+        assert "gpu_wait_rule" not in saved
         assert saved["gpu_wait_runs"]["1"]["min_free_memory_gb"] == 8
         # An off task can remain queued behind occupied worker slots, then become runnable.
-        assert manager._sync_status_to_disk(plain["name"], "queued", run_index=1)
+        assert manager.start_batch_tasks([plain["name"]], max_workers=1, gpu_wait_rule="off") == ["plain"]
+        assert load_task_info(plain["dir"])["status"] == "queued"
         unblocked, plain_index = manager._pick_queued_task()
         assert unblocked["name"] == "plain"
         assert plain_index == 1
@@ -190,6 +193,123 @@ def test_task_rules_override_project_and_do_not_block_ready_tasks(tmp_path, monk
         wait = manager.serialize_task(manager.get_task("slow"))["gpu_wait"]
         assert wait["remaining_seconds"] is None
         assert wait["deadline_at"] is None
+    finally:
+        manager.shutdown()
+
+
+@pytest.mark.parametrize(("outcome", "restart"), [
+    ("cancelled", "batch"), ("failed", "rerun"), ("cancelled", "immediate"),
+])
+def test_next_submission_uses_current_project_defaults_after_gpu_wait_ends(
+    tmp_path, monkeypatch, outcome, restart,
+):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task(
+        "train", {}, task_metadata={"gpu_wait_rule": "off"},
+    )
+    manager = TaskManager(tasks_dir=str(tasks_dir), lazy_scan=False, owns_task_lifecycle=False)
+    monkeypatch.setattr(manager, "_submit_task", lambda *args, **kwargs: None)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    manager.gpu_scheduler = GpuResourceScheduler(provider=_GpuProvider([
+        GpuDevice(0, "GPU", "GPU-0", 8192, 24576, 20),
+    ]))
+    try:
+        assert manager.start_batch_tasks(["train"], gpu_wait_rule="2-20-70-0-1") == ["train"]
+        assert manager._pick_queued_task()[0] is None
+        assert load_task_info(task["dir"])["gpu_wait"]["requested_gpu_count"] == 2
+        if outcome == "cancelled":
+            assert manager.cancel_task("train")
+        else:
+            update_task_info(
+                task["dir"],
+                lambda info: info["gpu_wait"].update({"started_at": time.time() - 7200, "deadline_at": time.time() - 1}),
+            )
+            manager.scan_disk()
+            assert manager._pick_queued_task()[0] is None
+        assert load_task_info(task["dir"])["status"] == outcome
+
+        # UI settings changed after the previous submission must apply immediately.
+        save_settings_for_root(str(tmp_path), {
+            "gpu_scheduler_enabled": True,
+            "gpu_scheduler_min_free_memory_gb": 12,
+            "gpu_scheduler_min_idle_pct": 70,
+            "gpu_scheduler_stable_seconds": 0,
+        })
+        if restart == "batch":
+            assert manager.start_batch_tasks(["train"]) == ["train"]
+        elif restart == "rerun":
+            assert manager.rerun_task("train")
+        else:
+            assert manager.start_task_now("train")
+        queued = load_task_info(task["dir"])
+        assert queued["status"] == "queued"
+        assert queued["gpu_wait"]["requested_gpu_count"] == 1
+        selected, run_index = manager._pick_queued_task()
+        assert selected["name"] == "train"
+        actual = load_task_info(task["dir"])["gpu_wait_runs"][str(run_index)]
+        assert actual["enabled"] is True
+        assert actual["min_free_memory_gb"] == 12
+        assert actual["gpus_per_task"] == 1
+    finally:
+        manager.shutdown()
+
+
+@pytest.mark.parametrize("legacy_rule", ["off", "2-20-70-0-0", "1-8", "bad"])
+def test_legacy_task_rule_is_ignored_and_off_only_skips_one_submission(tmp_path, monkeypatch, legacy_rule):
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+    task = TaskGenerator(root_dir=str(tasks_dir)).create_task(
+        "train", {}, task_metadata={"gpu_wait_rule": legacy_rule},
+    )
+    save_settings_for_root(str(tmp_path), {
+        "gpu_scheduler_enabled": True,
+        "gpu_scheduler_min_free_memory_gb": 12,
+        "gpu_scheduler_stable_seconds": 0,
+    })
+    manager = TaskManager(tasks_dir=str(tasks_dir), lazy_scan=False, owns_task_lifecycle=False)
+    monkeypatch.setattr(manager, "_submit_task", lambda *args, **kwargs: None)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    manager.gpu_scheduler = GpuResourceScheduler(provider=_GpuProvider([
+        GpuDevice(0, "GPU", "GPU-0", 8192, 24576, 20),
+    ]))
+
+    def finish_mock_worker():
+        current = load_task_info(task["dir"])
+        manager._finalize_task_attempt(
+            "train", expected_runner_id=current["runner_id"],
+            expected_run_index=current["run_index"],
+            error=RuntimeError("simulated worker failure"),
+        )
+        assert load_task_info(task["dir"])["status"] == "failed"
+
+    try:
+        assert manager.start_batch_tasks(["train"]) == ["train"]
+        assert load_task_info(task["dir"])["status"] == "queued"
+        update_task_info(task["dir"], lambda info: info.update({
+            "_gpu_wait_override": {"attempt_id": "stale-attempt", "rule": "off"},
+        }))
+        manager.scan_disk()
+        serialized = manager.serialize_task(manager.get_task("train"))
+        assert "_gpu_wait_override" not in serialized
+        assert serialized["gpu_wait_rule"] is None
+        selected, run_index = manager._pick_queued_task()
+        assert selected["name"] == "train"
+        assert load_task_info(task["dir"])["gpu_wait_runs"][str(run_index)]["min_free_memory_gb"] == 12
+        finish_mock_worker()
+
+        assert manager.start_batch_tasks(["train"], gpu_wait_rule="off") == ["train"]
+        assert load_task_info(task["dir"])["status"] == "running"
+        finish_mock_worker()
+
+        assert manager.start_batch_tasks(["train"]) == ["train"]
+        assert load_task_info(task["dir"])["status"] == "queued"
+        selected, run_index = manager._pick_queued_task()
+        assert selected["name"] == "train"
+        policy = load_task_info(task["dir"])["gpu_wait_runs"][str(run_index)]
+        assert policy["enabled"] is True
+        assert policy["min_free_memory_gb"] == 12
+        assert load_settings(str(tmp_path))["gpu_scheduler_enabled"] is True
     finally:
         manager.shutdown()
 

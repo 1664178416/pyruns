@@ -417,6 +417,7 @@ class TaskManager:
         data["dir"] = str(data.get("dir", "")).replace("\\", "/")
         data["config"] = to_container(data.get("config", {}) or {}, resolve=False)
         data.pop("_gpu_wait_persisted_signature", None)
+        data.pop("_gpu_wait_override", None)
         data.pop("_info_signature", None)
         data.pop("_payload_signature", None)
         data.pop("_config_file_explicit", None)
@@ -1394,7 +1395,8 @@ class TaskManager:
             "workdir": info.get("workdir"),
             "shell_executable": info.get("shell_executable"),
             "shell_kind": info.get("shell_kind"),
-            "gpu_wait_rule": info.get("gpu_wait_rule"),
+            "gpu_wait_rule": self._active_gpu_wait_rule(info),
+            "_gpu_wait_override": copy.deepcopy(info.get("_gpu_wait_override")),
             "launch_command": info.get("launch_command"),
             "launch_workdir": info.get("launch_workdir"),
             "launch_started_at": info.get("launch_started_at"),
@@ -1807,6 +1809,7 @@ class TaskManager:
             "_gpu_wait_refresh_width",
             "_gpu_wait_persisted_signature",
             "_queued_independent",
+            "_gpu_wait_override",
         ):
             task.pop(key, None)
 
@@ -4293,7 +4296,7 @@ class TaskManager:
 
     @staticmethod
     def _clear_runner_lease_fields(info: Dict[str, Any]) -> None:
-        for key in ("runner_id", "runner_host", "lease_heartbeat", "lease_until"):
+        for key in ("runner_id", "runner_host", "lease_heartbeat", "lease_until", "_gpu_wait_override"):
             info.pop(key, None)
 
     def _claim_task_for_run(
@@ -4447,8 +4450,13 @@ class TaskManager:
                 task_info.pop("_pending_stop_summary", None)
                 task_info["_attempt_id"] = attempt_id or uuid.uuid4().hex
             task_info["status"] = next_status
-            if gpu_wait_rule is not None:
-                task_info["gpu_wait_rule"] = gpu_wait_rule
+            # CLI overrides belong to this attempt, never to future reruns.
+            task_info.pop("gpu_wait_rule", None)
+            task_info.pop("_gpu_wait_override", None)
+            if gpu_wait_rule is not None and next_status in {"queued", "running"}:
+                task_info["_gpu_wait_override"] = {
+                    "attempt_id": task_info["_attempt_id"], "rule": gpu_wait_rule,
+                }
             if next_status == "running":
                 task_info["run_index"] = run_index
                 slot = ensure_run_slot(task_info, run_index)
@@ -4519,10 +4527,25 @@ class TaskManager:
         return GpuSchedulerConfig.from_settings(load_settings(self._settings_root()))
 
     @staticmethod
+    def _active_gpu_wait_rule(task: Dict[str, Any]) -> str | None:
+        """Read only the override attached to the current active attempt."""
+        if task.get("status") not in {"queued", "running"}:
+            return None
+        override = task.get("_gpu_wait_override")
+        if (
+            isinstance(override, dict)
+            and override.get("attempt_id")
+            and override.get("attempt_id") == task.get("_attempt_id")
+            and isinstance(override.get("rule"), str)
+        ):
+            return override["rule"]
+        return None
+
+    @staticmethod
     def _task_gpu_scheduler_config(
         task: Dict[str, Any], project: GpuSchedulerConfig, override: str | None = None,
     ) -> GpuSchedulerConfig:
-        rule = override if override is not None else task.get("gpu_wait_rule")
+        rule = override if override is not None else TaskManager._active_gpu_wait_rule(task)
         return GpuSchedulerConfig.from_wait_rule(rule) if rule is not None else project
 
     @staticmethod
@@ -5497,7 +5520,8 @@ class TaskManager:
                 "workdir": info.get("workdir", task.get("workdir")),
                 "shell_executable": info.get("shell_executable", task.get("shell_executable")),
                 "shell_kind": info.get("shell_kind", task.get("shell_kind")),
-                "gpu_wait_rule": info.get("gpu_wait_rule"),
+                "gpu_wait_rule": cls._active_gpu_wait_rule(info),
+                "_gpu_wait_override": copy.deepcopy(info.get("_gpu_wait_override")),
                 "launch_command": info.get("launch_command"),
                 "launch_workdir": info.get("launch_workdir"),
                 "launch_started_at": info.get("launch_started_at"),

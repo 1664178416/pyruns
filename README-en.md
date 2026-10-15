@@ -86,7 +86,7 @@ pyr ui shell
 
 ## Run automatically when GPUs are free
 
-Both `exec` and `run` accept `--gpu-wait` with a compact startup rule:
+Both `exec` and `run` accept `--gpu-wait` with all five startup fields in order:
 
 ```text
 COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS
@@ -95,17 +95,18 @@ COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS
 ```bash
 pyr exec -n gpu-train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
 # Save a complete multiline script and run it after GPUs become available
-pyr exec -nt gpu-pipeline -d --gpu-wait 1-8 --stdin < pipeline.sh
+pyr exec -nt gpu-pipeline -d --gpu-wait 1-8-70-15-2 --stdin < pipeline.sh
 ```
 
 `2-20-70-15-2` requires two GPUs, each with at least **20 GiB free** and **70% idle**,
 qualifying together for **15 seconds**, with at most **2 hours** of queueing.
 Idle percent is `100 - GPU utilization`; the timeout does not limit command runtime.
-The shorthand `1-8` requests one GPU with at least 8 GiB free and defaults to
-**70% idle, 15 seconds stable, and 48 hours timeout**. `-d` detaches both waiting and execution.
+All five fields are required; trailing fields cannot be omitted.
+`-d` detaches both waiting and execution.
 
-Rules are saved with the task and reused on reruns.
-Inspect the rule and waiting reason with
+The CLI rule applies only to this invocation and does not become a task default.
+Pass it again on a rerun, or omit it to use the default GPU settings saved through the UI or project configuration.
+Inspect this run's rule and waiting state with
 `pyr show gpu-train`, or current GPU metrics with `pyr metrics`.
 See the [CLI guide](docs/cli-guide.md) or `pyr exec --help` for device selection and units.
 

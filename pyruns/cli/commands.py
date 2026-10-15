@@ -599,7 +599,7 @@ def _task_record(
         "payload": _normalized_path(payload_path) if payload_path else None,
         "latest_log": _normalized_path(latest_log) if latest_log and os.path.isfile(latest_log) else None,
         "load_error": task.get("_load_error"),
-        "gpu_wait_rule": info.get("gpu_wait_rule", task.get("gpu_wait_rule")),
+        "gpu_wait_rule": TaskManager._active_gpu_wait_rule(info),
         "gpu_wait": TaskManager._serialized_gpu_wait(info),
     }
     if detailed:
@@ -1716,7 +1716,6 @@ def cmd_exec(context: Any, args: Any) -> int:
                     shell_executable=shell_executable,
                     shell_kind=shell_kind,
                     env=env,
-                    gpu_wait_rule=getattr(args, "gpu_wait", None),
                 )
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
@@ -1728,6 +1727,7 @@ def cmd_exec(context: Any, args: Any) -> int:
                 [task],
                 workers=1,
                 detach=bool(args.detach),
+                gpu_wait_rule=getattr(args, "gpu_wait", None),
             )
 
 

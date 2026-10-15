@@ -115,16 +115,16 @@ GPU 任务可同时使用 `-d` 和 `--gpu-wait`，在后台排队，达标后自
 ```bash
 pyr exec -n gpu-train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
 # 多行脚本也支持 GPU 等待，并保存完整正文
-pyr exec -nt gpu-pipeline -d --gpu-wait 1-8 --stdin < pipeline.sh
+pyr exec -nt gpu-pipeline -d --gpu-wait 1-8-70-15-2 --stdin < pipeline.sh
 ```
 
-规则依次为 **卡数-每卡空闲 GiB-最低 GPU 空闲率 %-连续满足秒数-最长等待小时**。
+规则依次为 **卡数-每卡空闲 GiB-最低 GPU 空闲率 %-连续满足秒数-最长等待小时**，五项必须完整填写。
 `2-20-70-15-2` 要求两张卡同时各自空闲至少 20 GiB、空闲率至少 70%，连续满足
-15 秒后启动，最多排队 2 小时；空闲率是 `100 - GPU 利用率`。`1-8` 省略尾项，
-默认 70% 空闲、持续 15 秒、最多等待 48 小时。超时只限制排队时间。
+15 秒后启动，最多排队 2 小时；空闲率是 `100 - GPU 利用率`。超时只限制排队时间。
 
-用 `pyr show gpu-train` 查看规则和等待原因，`pyr metrics` 查看当前 GPU 指标。
-规则保存到任务，重跑自动复用。
+CLI 规则仅本次运行生效，不会成为任务默认。再次 `run` 时需要重新传入；
+不传则使用 UI 或项目配置中保存的默认 GPU 设置。
+用 `pyr show gpu-train` 查看本次规则和等待状态，`pyr metrics` 查看当前 GPU 指标。
 指定卡、单位和其他细节见 [GPU 等待规则](cli-guide.md#gpu-wait) 或 `pyr exec --help`。
 
 ## 4. 使用 `-c` 执行完整命令

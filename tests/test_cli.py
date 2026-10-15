@@ -105,41 +105,103 @@ def test_exec_gpu_wait_preview_uses_fixed_ui_units_without_creating_files(tmp_pa
     assert not (tmp_path / "_pyruns_").exists()
 
 
-def test_exec_rejects_invalid_gpu_rule_before_creating_workspace(tmp_path):
-    result = _run_cli(tmp_path, "exec", "--gpu-wait", "2-20-70--2", "-c", "echo unused")
+@pytest.mark.parametrize("rule", ["2-20-70--2", "1-8", "1-8-70", "1-8-70-15"])
+def test_exec_rejects_invalid_gpu_rule_before_creating_workspace(tmp_path, rule):
+    result = _run_cli(tmp_path, "exec", "--gpu-wait", rule, "-c", "echo unused")
     assert result.returncode == 2
     assert "TIMEOUT_HOURS" in result.stderr
     assert not (tmp_path / "_pyruns_").exists()
 
 
-def test_exec_gpu_wait_stdin_detaches_and_reruns_saved_script_with_override(tmp_path):
+def test_exec_gpu_wait_is_passed_to_submission_without_becoming_task_default(tmp_path, monkeypatch):
+    from pyruns.cli import commands
+    from pyruns.core.task_generator import TaskGenerator
+
+    created = []
+    submitted = []
+    create_shell_task = TaskGenerator.create_shell_task
+
+    def create(self, *args, **kwargs):
+        assert "gpu_wait_rule" not in kwargs
+        task = create_shell_task(self, *args, **kwargs)
+        created.append(task)
+        return task
+
+    def submit(context, manager, tasks, **kwargs):
+        submitted.append(kwargs)
+        return 0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(TaskGenerator, "create_shell_task", create)
+    monkeypatch.setattr(commands, "_submit_and_wait", submit)
+    assert main(["exec", "-n", "gpu-script", "--gpu-wait", "1-8-70-0-1", "-c", "echo saved"]) == 0
+    assert submitted == [{"workers": 1, "detach": False, "gpu_wait_rule": "1-8-70-0-1"}]
+    assert "gpu_wait_rule" not in load_task_info(created[0]["dir"])
+
+
+@pytest.mark.parametrize("outcome", ["cancelled", "failed"])
+def test_exec_gpu_wait_stdin_detaches_and_restores_project_defaults(tmp_path, outcome):
+    from pyruns.utils.settings import save_settings_for_root
+
+    workspace = Path(bootstrap_shell_workspace(str(tmp_path / "_pyruns_")))
     script = "echo gpu-wait-saved-script\n"
+    rule = "device=2147483647-8-70-0-" + ("0" if outcome == "cancelled" else "0.001")
     result = _run_cli(
         tmp_path, "exec", "-n", "gpu-script", "-d", "--gpu-wait",
-        "device=2147483647-8-70-0-0", "--stdin", input_text=script,
+        rule, "--stdin", input_text=script,
     )
     assert result.returncode == 0, result.stderr
     try:
         shown = _run_cli(tmp_path, "-w", "shell", "show", "gpu-script", "--json")
         record = json.loads(shown.stdout)
-        assert record["status"] == "queued"
-        assert record["gpu_wait_rule"] == "device=2147483647-8-70-0-0"
-        assert record["gpu_wait"]["remaining_seconds"] is None
         assert Path(record["payload"]).read_text(encoding="utf-8") == script
+        if outcome == "cancelled":
+            assert record["status"] == "queued"
+            assert record["gpu_wait_rule"] == rule
+            assert record["gpu_wait"]["remaining_seconds"] is None
+        else:
+            _wait_status(workspace / TASKS_DIR / "gpu-script", {"failed"})
     finally:
-        stopped = _run_cli(tmp_path, "-w", "shell", "stop", "gpu-script", timeout=30)
-        assert stopped.returncode == 0, stopped.stderr
+        current = load_task_info(str(workspace / TASKS_DIR / "gpu-script"))
+        if current["status"] in {"running", "queued"}:
+            stopped = _run_cli(tmp_path, "-w", "shell", "stop", "gpu-script", timeout=30)
+            assert stopped.returncode == 0, stopped.stderr
+    assert load_task_info(str(workspace / TASKS_DIR / "gpu-script"))["status"] == outcome
+    # A new CLI process without an override uses the disabled project default.
+    default_run = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script")
+    assert default_run.returncode == 0, default_run.stderr
+    assert "gpu-wait-saved-script" in default_run.stdout
+
+    save_settings_for_root(str(workspace), {
+        "gpu_scheduler_enabled": True,
+        "gpu_scheduler_task_mode": "multi",
+        "gpu_scheduler_gpus_per_task": 2,
+        "gpu_scheduler_selection_mode": "specified",
+        "gpu_scheduler_device_ids": [2147483645, 2147483646],
+        "gpu_scheduler_stable_seconds": 0,
+        "gpu_scheduler_max_wait_seconds": 3600,
+    })
     rerun = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script", "--gpu-wait", "OFF")
     assert rerun.returncode == 0, rerun.stderr
     assert "gpu-wait-saved-script" in rerun.stdout
     shown = _run_cli(tmp_path, "-w", "shell", "show", "gpu-script", "--json")
     record = json.loads(shown.stdout)
     assert record["status"] == "completed"
-    assert record["gpu_wait_rule"] == "off"
+    assert record["gpu_wait_rule"] is None
     assert record["gpu_wait_runs"][str(record["run_index"])]["enabled"] is False
-    again = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script")
+    assert "_gpu_wait_override" not in load_task_info(str(workspace / TASKS_DIR / "gpu-script"))
+    again = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script", "-d")
     assert again.returncode == 0, again.stderr
-    assert "gpu-wait-saved-script" in again.stdout
+    try:
+        shown = _run_cli(tmp_path, "-w", "shell", "show", "gpu-script", "--json")
+        record = json.loads(shown.stdout)
+        assert record["status"] == "queued"
+        assert record["gpu_wait_rule"] is None
+        assert record["gpu_wait"]["requested_gpu_count"] == 2
+        assert record["gpu_wait"]["max_wait_seconds"] == 3600
+    finally:
+        stopped = _run_cli(tmp_path, "-w", "shell", "stop", "gpu-script", timeout=30)
+        assert stopped.returncode == 0, stopped.stderr
 
 
 def test_cli_app_module_runs_without_duplicate_import_warning():

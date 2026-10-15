@@ -344,7 +344,7 @@ pyr -w shell wait train
 
 ### 等待 GPU：`--gpu-wait` {#gpu-wait}
 
-`exec` 和 `run` 使用同一条紧凑规则，裸数字的单位与 Web UI 一致：
+`exec` 和 `run` 使用同一条规则，必须完整填写五项；裸数字的单位与 Web UI 一致：
 
 ```text
 卡数-每卡空闲GiB-最低GPU空闲率%-连续满足秒数-最长等待小时
@@ -353,8 +353,8 @@ pyr -w shell wait train
 ```bash
 pyr exec -nt train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
 pyr exec -nt pipeline -d --gpu-wait 2-20-70-15-2 --stdin < pipeline.sh
-pyr -w shell run pipeline --gpu-wait 1-8
-pyr -w train run --config sweep.yaml --gpu-wait 1-8
+pyr -w shell run pipeline --gpu-wait 1-8-70-15-2
+pyr -w train run --config sweep.yaml --gpu-wait 1-8-70-15-2
 ```
 
 `2-20-70-15-2` 表示需要两张卡，每张至少空闲 20 GiB、GPU 空闲率至少 70%，连续满足
@@ -362,19 +362,21 @@ pyr -w train run --config sweep.yaml --gpu-wait 1-8
 该卡恢复后重新计算连续满足时长。空闲率等于 `100 - GPU 利用率`；70% 空闲对应利用率
 不超过 30%。超时仅限制启动前的排队时间，不限制命令执行时长，也不会自动退回 CPU。
 
-- 可以省略尾项：`1-8` 默认空闲率 70%、持续 15 秒、最多等待 48 小时。
+CLI 的 `--gpu-wait` 仅对本次运行生效，不保存为任务默认，也不修改项目设置。
+再次 `run` 时需要重新传入；未传时使用 UI 或项目配置中保存的默认 GPU 设置，
+旧版本保存在任务中的规则也不会自动复用。
+
+- 五项都必须提供；`1-8` 等不完整规则会报用法错误。
 - 持续时间 `0` 表示一旦满足条件即启动；超时 `0` 表示无限等待。
-- `off` 用于关闭任务的 GPU 等待规则：`pyr run TASK --gpu-wait off`，后续重跑也沿用停用状态。
+- `pyr run TASK --gpu-wait off` 仅本次跳过项目默认的 GPU 等待。
 - `device=0,1-20-70-15-2` 指定两张物理卡的索引。
 - 显式单位不区分大小写：`G/GiB`、`M/MiB` 为二进制，`GB/MB` 为十进制；时间接受
   `s/sec`、`m/min`、`h/hr`，例如 `2-20480MiB-70%-15SEC-120MIN`。
-- 规则保存到任务，后续 CLI 和 UI 重跑会复用；再次传 `--gpu-wait` 可以更新规则。
-  没有显式或已保存规则时使用项目 GPU 设置；任务规则不会修改项目设置文件。
 - 调度尊重 `CUDA_VISIBLE_DEVICES`，只选择请求的卡数。需要保存可见卡范围时使用 `-e`。
   每张卡在同一工作区只分配给一个 Pyruns 任务，外部任务通过实时指标检测。
 
 ```bash
-pyr -w shell show pipeline --json   # 已保存规则、当前等待原因与时间
+pyr -w shell show pipeline --json   # 本次规则、当前等待原因与时间
 pyr -w shell log pipeline -f        # 跟随排队和执行日志
 pyr metrics                        # 当前 GPU 指标
 pyr ui shell                       # GPU 设置和任务监控面板

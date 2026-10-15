@@ -49,6 +49,7 @@ pyr exec -nt train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
 
 两张卡同时各自空闲至少 20 GiB、GPU 空闲率至少 70%，连续满足 15 秒后自动启动，
 最多排队 2 小时；`-d` 在后台等待和运行。参数依次为卡数、空闲 GiB、最低空闲率 %、
-持续秒数、等待小时数，详见 [GPU 等待规则](/cli-guide#gpu-wait)。
+持续秒数、等待小时数，五项必须完整填写。CLI 规则仅本次运行生效；再次运行不传时，
+使用 UI 或项目配置中保存的默认 GPU 设置。详见 [GPU 等待规则](/cli-guide#gpu-wait)。
 
 从 [安装与快速开始](/getting-started) 进入完整使用流程，或直接查看 [Web 界面操作](/ui-guide) 和 [命令行 CLI 控制](/cli-guide)。

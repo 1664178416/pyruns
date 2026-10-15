@@ -788,6 +788,7 @@ def _clear_runner_lease(info: Dict[str, Any], runner_id: str) -> None:
         "lease_until",
         "_scheduled_env",
         "_gpu_assignment",
+        "_gpu_wait_override",
     ):
         info.pop(key, None)
 
