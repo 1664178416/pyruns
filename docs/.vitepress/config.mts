@@ -28,6 +28,7 @@ export default defineConfig({
         items: [
           { text: "开发者 API", link: "/api-reference" },
           { text: "架构及设计理念", link: "/architecture" },
+          { text: "文件系统性能测量", link: "/performance" },
         ],
       },
     ],
