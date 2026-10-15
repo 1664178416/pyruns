@@ -495,7 +495,12 @@ pyr -w train log baseline
 
 ```bash
 pyr -w train log baseline --follow
+pyr -w train log baseline --tail 100 -f
+pyr -w train log baseline --tail 0 -f
 ```
+
+`--tail N` 只显示最后 N 行；配合 `-f` 会接着输出新增内容，`--tail 0 -f` 仅看新增内容。
+默认仍输出完整日志。历史 run 也支持 `--tail`，但不能与 `--path` 组合。
 
 查看历史 run 或只获取路径：
 

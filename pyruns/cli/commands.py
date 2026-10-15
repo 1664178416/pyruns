@@ -61,12 +61,14 @@ from pyruns.launcher import (
 from pyruns.utils.batch_utils import generate_batch_configs
 from pyruns.utils.config_utils import load_yaml_strict, parse_yaml_value, safe_filename, to_container
 from pyruns.utils.env_utils import is_valid_environment_name, normalize_environment
+from pyruns.utils.file_io import regular_file_opener
 from pyruns.utils.info_io import (
     MAX_RUN_HISTORY_SLOTS,
     load_script_info,
     load_task_info,
     load_task_metadata,
     resolve_log_path,
+    run_history_status,
     run_slot_count,
     task_info_lock,
     validate_task_directory,
@@ -75,7 +77,7 @@ from pyruns.utils.info_io import (
     validate_tasks_root,
     validate_workspace_directory,
 )
-from pyruns.utils.log_io import safe_read_log
+from pyruns.utils.log_io import log_file_identity, safe_read_log
 from pyruns.utils.log_utils import configure_project_root_logger
 from pyruns.utils.parse_utils import resolve_config_path
 from pyruns.utils.process_utils import (
@@ -480,11 +482,7 @@ def _selected_run_record(
         values = list(current_info.get(key, []) or [])
         return values[run_index - 1] if run_index <= len(values) else None
 
-    status = str(value_at("run_statuses") or "").lower() or None
-    if status is None and run_index == _latest_run_index(task, current_info):
-        current_status = str(current_info.get("status", "") or "").lower()
-        if current_status != "queued":
-            status = current_status or None
+    status = run_history_status(current_info, run_index)
     log_reference = _resolve_log_reference(
         task,
         run_index=run_index,
@@ -957,20 +955,38 @@ def _wait_for_task_records(
     require_started: bool = False,
 ) -> list[dict[str, Any]]:
     deadline = time.monotonic() + timeout if timeout > 0 else None
+    remaining = list(tasks)
+    results: dict[str, dict[str, Any]] = {}
+    previous_statuses: dict[str, str] = {}
+    interval = 0.1
     while True:
-        records = [
-            _bound_task_record(task, identities[str(task["name"])])
-            for task in tasks
-        ]
-        statuses = [str(record["status"]) for record in records]
-        if require_started and any(status == "pending" for status in statuses):
-            raise CliError("one or more tasks were not accepted by a runner")
-        if all(status in _FINAL_STATUSES for status in statuses):
-            return records
-        if deadline is not None and time.monotonic() >= deadline:
-            active = [record["name"] for record in records if record["status"] in _ACTIVE_STATUSES]
+        pending = []
+        progressed = False
+        for task in remaining:
+            name = str(task["name"])
+            record = _bound_task_record(task, identities[name])
+            results[name] = record
+            status = str(record["status"])
+            if require_started and status == "pending":
+                raise CliError("one or more tasks were not accepted by a runner")
+            if status in _FINAL_STATUSES:
+                # This result belongs to the captured run, even after the task reruns.
+                progressed = True
+            else:
+                pending.append(task)
+                progressed |= name in previous_statuses and previous_statuses[name] != status
+                previous_statuses[name] = status
+        if not pending:
+            return [results[str(task["name"])] for task in tasks]
+        now = time.monotonic()
+        if deadline is not None and now >= deadline:
+            active = [str(task["name"]) for task in pending]
             raise CliError("timed out waiting for: " + ", ".join(active))
-        time.sleep(0.1)
+        if progressed:
+            interval = 0.1
+        time.sleep(interval if deadline is None else min(interval, deadline - now))
+        interval = min(1.0, interval * 1.5)
+        remaining = pending
 
 
 class _QueueProgressOutput:
@@ -1016,27 +1032,70 @@ class _QueueProgressOutput:
             self.line = None
 
 
+def _log_tail_offset(path: str, lines: int) -> int:
+    """Find a line-aligned starting offset using bounded reverse reads."""
+    try:
+        with open(path, "rb", opener=regular_file_opener) as handle:
+            position = os.fstat(handle.fileno()).st_size
+            if lines == 0:
+                return position
+            needed = lines
+            first = True
+            while position:
+                read_size = min(position, 65536)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size)
+                if len(chunk) != read_size:
+                    # The log was truncated after the size snapshot; restart safely.
+                    return 0
+                if first:
+                    needed += int(chunk.endswith(b"\n"))
+                    first = False
+                breaks = chunk.count(b"\n")
+                if breaks >= needed:
+                    end = len(chunk)
+                    for _ in range(needed):
+                        end = chunk.rfind(b"\n", 0, end)
+                    return position + end + 1
+                needed -= breaks
+        return 0
+    except (OSError, ValueError) as exc:
+        raise CliError(f"cannot read log tail: {exc}") from exc
+
+
+def _print_log_chunk(content: str, progress: _QueueProgressOutput | None) -> None:
+    if progress is not None:
+        content = progress.render(content)
+    try:
+        sys.stdout.write(content)
+    except UnicodeEncodeError:
+        encoding = str(getattr(sys.stdout, "encoding", "") or "utf-8")
+        safe_content = content.encode(encoding, errors="replace").decode(encoding)
+        sys.stdout.write(safe_content)
+    sys.stdout.flush()
+
+
 def _write_available_log(path: str, offset: int, progress: _QueueProgressOutput | None = None) -> int:
+    pending_cr = ""
     while True:
         content, next_offset = safe_read_log(path, offset, max_bytes=65536)
         if next_offset < offset:
             offset = 0
+            pending_cr = ""
             continue
         if next_offset == offset:
+            if pending_cr:
+                _print_log_chunk(pending_cr, progress)
             return offset
         if not content:
             offset = next_offset
             continue
-        content = content.replace("\r\n", "\n")
-        if progress is not None:
-            content = progress.render(content)
-        try:
-            sys.stdout.write(content)
-        except UnicodeEncodeError:
-            encoding = str(getattr(sys.stdout, "encoding", "") or "utf-8")
-            safe_content = content.encode(encoding, errors="replace").decode(encoding)
-            sys.stdout.write(safe_content)
-        sys.stdout.flush()
+        content = pending_cr + content
+        pending_cr = "\r" if content.endswith("\r") else ""
+        if pending_cr:
+            content = content[:-1]
+        _print_log_chunk(content.replace("\r\n", "\n"), progress)
         offset = next_offset
 
 
@@ -1045,10 +1104,22 @@ def _follow_task(
     *,
     identity: _TaskRunIdentity,
     initial_queue_offset: int = 0,
+    tail: int | None = None,
 ) -> dict[str, Any]:
     progress = _QueueProgressOutput() if sys.stdout.isatty() else None
+    first_read = True
+    previous_path = ""
+    previous_identity = ""
 
     def write_log(path: str, position: int) -> int:
+        nonlocal first_read, previous_path, previous_identity
+        current_identity = log_file_identity(path)
+        if path == previous_path and current_identity and previous_identity != current_identity:
+            position = 0
+        if first_read and tail is not None:
+            position = _log_tail_offset(path, tail)
+        first_read = False
+        previous_path, previous_identity = path, current_identity
         if progress is not None:
             if os.path.basename(path) == QUEUE_LOG_FILENAME:
                 return _write_available_log(path, position, progress)
@@ -1809,9 +1880,11 @@ def cmd_ls(context: Any, args: Any, manager: TaskManager) -> int:
         tasks = [task for task in tasks if bool(task.get("pinned"))] + [
             task for task in tasks if not bool(task.get("pinned"))
         ]
-        records = [_task_record(task) for task in tasks]
+        if args.limit is not None:
+            tasks = tasks[: args.limit]
+        records = [_task_record(task, info_snapshot=task) for task in tasks]
 
-    if args.limit is not None:
+    if args.trash and args.limit is not None:
         records = records[: args.limit]
     if context.json_output:
         _json_dump({"tasks": records, "count": len(records), "trash": bool(args.trash)})
@@ -1960,6 +2033,8 @@ def cmd_log(context: Any, args: Any, manager: TaskManager) -> int:
         raise CliUsageError("log accepts either --follow or --run, not both")
     if args.follow and args.path:
         raise CliUsageError("log accepts either --follow or --path, not both")
+    if args.path and args.tail is not None:
+        raise CliUsageError("log accepts either --tail or --path, not both")
     if context.json_output and not args.path:
         raise CliUsageError("--json is only supported by log together with --path")
     log_info = None
@@ -1989,11 +2064,12 @@ def cmd_log(context: Any, args: Any, manager: TaskManager) -> int:
         return 0
 
     if not args.follow:
-        _write_available_log(reference.path, 0)
+        offset = _log_tail_offset(reference.path, args.tail) if args.tail is not None else 0
+        _write_available_log(reference.path, offset)
         return 0
 
     assert identity is not None
-    record = _follow_task(task, identity=identity)
+    record = _follow_task(task, identity=identity, **({"tail": args.tail} if args.tail is not None else {}))
     return 0 if record["status"] == "completed" else 1
 
 
@@ -2677,6 +2753,8 @@ def dispatch(context: Any, args: Any) -> int:
             raise CliUsageError("--follow cannot be combined with --run")
         if args.follow and args.path:
             raise CliUsageError("--follow cannot be combined with --path")
+        if args.tail is not None and args.path:
+            raise CliUsageError("--tail cannot be combined with --path")
         if context.json_output and not args.path:
             raise CliUsageError("log --json requires --path")
     if handler == "config" and not args.config_action:

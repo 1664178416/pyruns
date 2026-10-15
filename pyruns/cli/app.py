@@ -306,6 +306,16 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a non-negative integer: {value}") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be zero or greater")
+    return parsed
+
+
 def _run_index(value: str) -> int:
     from pyruns.utils.info_io import MAX_RUN_HISTORY_SLOTS
 
@@ -826,6 +836,7 @@ def build_parser(
             program,
             "log smoke",
             "log smoke -f",
+            "log smoke --tail 100 -f",
             "log smoke@2",
             "log smoke --run 2",
             "log smoke --path",
@@ -834,6 +845,7 @@ def build_parser(
                 "TASK@RUN cannot be combined with --run or --follow.",
                 "--follow cannot be combined with --run or --path and rejects a pending task.",
                 "Raw log output is intentionally not JSON; combine --json with --path instead.",
+                "--tail N starts with the last N lines; --tail 0 -f shows only new output. Cannot combine with --path.",
                 "--follow streams bytes until the task finishes; it is not an interactive terminal.",
                 "Plain log returns 0 when read successfully; --follow returns 0 for completed tasks, 1 for failed or cancelled tasks.",
                 "Ctrl+C stops following and returns 130; it does not stop the task.",
@@ -843,6 +855,7 @@ def build_parser(
     )
     logs.add_argument("task", metavar="TASK[@RUN]", help="exact task name, optionally at one run number")
     logs.add_argument("-f", "--follow", action="store_true", help="wait for new output until the task finishes")
+    logs.add_argument("--tail", type=_non_negative_int, metavar="N", help="print the last N lines, then follow if -f; zero skips existing output")
     logs.add_argument("--run", type=_run_index, help="select a historical run number")
     logs.add_argument("--path", action="store_true", help="print only the selected log path")
 

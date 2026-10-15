@@ -382,6 +382,7 @@ pyr -w train show baseline@2
 pyr -w train show baseline --run 2
 pyr -w train diff baseline@1 baseline@2
 pyr -w train log baseline -f
+pyr -w train log baseline --tail 100 -f
 pyr -w train log baseline@2
 pyr -w train wait baseline --timeout 600
 pyr -w train stop baseline
@@ -393,6 +394,8 @@ pyr -w train restore baseline-lr1e3
 ```
 
 `ls` 会用 `PIN` 标记置顶任务并始终将其排在普通任务之前；`--reverse` 只反转两组各自内部的顺序。JSON 列表和 `show` 都包含明确的 `pinned` 字段。
+
+`log --tail N` 只看最后 N 行，可配合 `-f` 继续跟随；`--tail 0 -f` 仅输出新增内容。省略 `--tail` 则打印完整日志。
 
 `rm` 会立即执行，不询问确认，但它只是可恢复的软删除。
 
