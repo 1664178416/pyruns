@@ -586,6 +586,7 @@ def _task_record(
     latest_log = latest_log_reference.path
     pids = info.get("pids", task.get("pids", [])) or []
     latest_pid = next((pid for pid in reversed(pids) if pid), None)
+    gpu_wait_rule = TaskManager._active_gpu_wait_rule(info)
 
     record: dict[str, Any] = {
         "name": str(task.get("name", "") or os.path.basename(task_dir)),
@@ -599,7 +600,7 @@ def _task_record(
         "payload": _normalized_path(payload_path) if payload_path else None,
         "latest_log": _normalized_path(latest_log) if latest_log and os.path.isfile(latest_log) else None,
         "load_error": task.get("_load_error"),
-        "gpu_wait_rule": TaskManager._active_gpu_wait_rule(info),
+        "gpu_wait_rule": None if gpu_wait_rule == "off" else gpu_wait_rule,
         "gpu_wait": TaskManager._serialized_gpu_wait(info),
     }
     if detailed:
@@ -1006,10 +1007,45 @@ def _wait_for_task_records(
 
 
 class _QueueProgressOutput:
-    """Fit carriage-return GPU updates to one terminal row, leaving stored logs intact."""
+    """Redraw complete carriage-return GPU updates within the terminal."""
 
     def __init__(self) -> None:
         self.line: str | None = None
+        self._rows: list[str] = []
+
+    @staticmethod
+    def _wrap(text: str, columns: int) -> list[str]:
+        rows = [""]
+        width = 0
+        for char in text:
+            if not char.isprintable():
+                continue
+            char_width = (
+                0 if unicodedata.combining(char) else
+                2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+            )
+            if rows[-1] and width + char_width > columns:
+                rows.append("")
+                width = 0
+            rows[-1] += char
+            width += char_width
+        return rows
+
+    def _draw(self) -> str:
+        size = shutil.get_terminal_size()
+        columns = max(1, size.columns)
+        # Hard line breaks keep the existing block stable when widening. When
+        # narrowing, terminals may reflow each old hard line onto several rows.
+        old_rows = sum(len(self._wrap(row, columns)) for row in self._rows)
+        old_rows = min(old_rows, max(0, size.lines - 1))
+        clear = "\r\x1b[2K"
+        clear += "\x1b[1A\r\x1b[2K" * old_rows
+        # Leave the last column unused to avoid the terminal's pending autowrap
+        # state; trailing padding in queue.log does not need its own rows.
+        self._rows = self._wrap((self.line or "").rstrip(), max(1, columns - 1))
+        # Keep the cursor below the block. Some terminals do not reflow the
+        # cursor's own line on resize, so leaving it on a status row is unsafe.
+        return clear + "\r\n".join(self._rows) + "\r\n"
 
     def render(self, content: str) -> str:
         output = []
@@ -1020,32 +1056,21 @@ class _QueueProgressOutput:
                 output.append(part)
             elif part == "\n":
                 self.line = None
-                output.append(part)
+                if not self._rows:
+                    output.append("\r\n")
+                self._rows = []
             elif part:
-                columns = max(1, shutil.get_terminal_size().columns - 1)
-                self.line = (self.line + part)[:columns + 1]
-                characters = [
-                    (char, 0 if unicodedata.combining(char) else
-                     2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1)
-                    for char in self.line if char.isprintable()
-                ]
-                suffix = "." * min(3, columns) if sum(width for _, width in characters) > columns else ""
-                budget = columns - len(suffix)
-                visible = ""
-                width = 0
-                for char, char_width in characters:
-                    if width + char_width > budget:
-                        break
-                    visible += char
-                    width += char_width
-                output.append("\r" + visible + suffix + " " * (columns - width - len(suffix)))
+                self.line += part
+                output.append(self._draw())
         return "".join(output)
 
     def finish(self) -> None:
         if self.line is not None:
-            sys.stdout.write("\n")
+            if not self._rows:
+                sys.stdout.write("\r\n")
             sys.stdout.flush()
             self.line = None
+            self._rows = []
 
 
 def _log_tail_offset(path: str, lines: int) -> int:

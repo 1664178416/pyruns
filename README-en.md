@@ -104,8 +104,13 @@ Idle percent is `100 - GPU utilization`; the timeout does not limit command runt
 All five fields are required; trailing fields cannot be omitted.
 `-d` detaches both waiting and execution.
 
+Waiting output compares current values with all five requirements: GPU count, per-GPU free memory and idle percent,
+continuous qualifying time, and queueing time, with `ready` / `blocked` states and reasons.
+For example, 93% GPU utilization means 7% idle, which does not meet a 100% idle requirement.
+
 The CLI rule applies only to this invocation and does not become a task default.
-Pass it again on a rerun, or omit it to use the default GPU settings saved through the UI or project configuration.
+Pass it again on a rerun. Omitting `--gpu-wait` skips GPU waiting.
+The UI Runtime switch affects only future tasks submitted from the UI.
 Inspect this run's rule and waiting state with
 `pyr show gpu-train`, or current GPU metrics with `pyr metrics`.
 See the [CLI guide](docs/cli-guide.md) or `pyr exec --help` for device selection and units.

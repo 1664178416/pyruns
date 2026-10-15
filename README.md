@@ -101,8 +101,11 @@ pyr exec -nt gpu-pipeline -d --gpu-wait 1-8-70-15-2 --stdin < pipeline.sh
 超时只限制排队，不限制命令运行时长。五项都必须提供，不能省略尾项。
 `-d` 让排队和运行都在后台进行。
 
-CLI 规则仅本次运行生效，不会成为任务默认。再次 `run` 时需要重新传入；
-不传则使用 UI 或项目配置中保存的默认 GPU 设置。
+等待输出会逐项显示卡数、每卡空闲显存与空闲率、连续达标时间、排队时长的当前值和要求，
+并标明 `ready` / `blocked` 及原因。例如 GPU 利用率 93% 对应空闲率 7%，未达到 100% 空闲的要求。
+
+CLI 规则仅本次运行生效，再次 `run` 时需要重新传入；不传 `--gpu-wait` 就不进行 GPU 等待。
+UI 的 Runtime 开关只影响之后从 UI 提交的任务。
 用 `pyr show gpu-train` 查看本次规则和等待状态，`pyr metrics` 查看当前 GPU 指标。
 指定卡、单位等完整说明见 [CLI 指南](docs/cli-guide.md) 或 `pyr exec --help`。
 

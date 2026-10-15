@@ -105,11 +105,11 @@ def test_exec_gpu_wait_preview_uses_fixed_ui_units_without_creating_files(tmp_pa
     assert not (tmp_path / "_pyruns_").exists()
 
 
-@pytest.mark.parametrize("rule", ["2-20-70--2", "1-8", "1-8-70", "1-8-70-15"])
+@pytest.mark.parametrize("rule", ["2-20-70--2", "1-8", "1-8-70", "1-8-70-15", "off"])
 def test_exec_rejects_invalid_gpu_rule_before_creating_workspace(tmp_path, rule):
     result = _run_cli(tmp_path, "exec", "--gpu-wait", rule, "-c", "echo unused")
     assert result.returncode == 2
-    assert "TIMEOUT_HOURS" in result.stderr
+    assert "TIMEOUT_HOURS" in result.stderr or "all 5 fields" in result.stderr
     assert not (tmp_path / "_pyruns_").exists()
 
 
@@ -139,11 +139,28 @@ def test_exec_gpu_wait_is_passed_to_submission_without_becoming_task_default(tmp
     assert "gpu_wait_rule" not in load_task_info(created[0]["dir"])
 
 
+def _enable_ui_gpu_wait(workspace):
+    from pyruns.utils.settings import load_settings, save_settings_for_root
+
+    save_settings_for_root(str(workspace), {
+        "gpu_scheduler_enabled": True,
+        "gpu_scheduler_task_mode": "multi",
+        "gpu_scheduler_gpus_per_task": 2,
+        "gpu_scheduler_selection_mode": "specified",
+        "gpu_scheduler_device_ids": [2147483645, 2147483646],
+        "gpu_scheduler_stable_seconds": 0,
+        "gpu_scheduler_max_wait_seconds": 3600,
+    })
+    return load_settings(str(workspace))
+
+
 @pytest.mark.parametrize("outcome", ["cancelled", "failed"])
-def test_exec_gpu_wait_stdin_detaches_and_restores_project_defaults(tmp_path, outcome):
-    from pyruns.utils.settings import save_settings_for_root
+def test_exec_gpu_wait_stdin_detaches_without_changing_ui_runtime(tmp_path, outcome, monkeypatch):
+    from pyruns.core.task_manager import TaskManager
+    from pyruns.utils.settings import load_settings
 
     workspace = Path(bootstrap_shell_workspace(str(tmp_path / "_pyruns_")))
+    ui_settings = _enable_ui_gpu_wait(workspace)
     script = "echo gpu-wait-saved-script\n"
     rule = "device=2147483647-8-70-0-" + ("0" if outcome == "cancelled" else "0.001")
     result = _run_cli(
@@ -167,41 +184,58 @@ def test_exec_gpu_wait_stdin_detaches_and_restores_project_defaults(tmp_path, ou
             stopped = _run_cli(tmp_path, "-w", "shell", "stop", "gpu-script", timeout=30)
             assert stopped.returncode == 0, stopped.stderr
     assert load_task_info(str(workspace / TASKS_DIR / "gpu-script"))["status"] == outcome
-    # A new CLI process without an override uses the disabled project default.
+    # Omission disables waiting for CLI even when the Web UI enables it.
     default_run = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script")
     assert default_run.returncode == 0, default_run.stderr
     assert "gpu-wait-saved-script" in default_run.stdout
-
-    save_settings_for_root(str(workspace), {
-        "gpu_scheduler_enabled": True,
-        "gpu_scheduler_task_mode": "multi",
-        "gpu_scheduler_gpus_per_task": 2,
-        "gpu_scheduler_selection_mode": "specified",
-        "gpu_scheduler_device_ids": [2147483645, 2147483646],
-        "gpu_scheduler_stable_seconds": 0,
-        "gpu_scheduler_max_wait_seconds": 3600,
-    })
-    rerun = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script", "--gpu-wait", "OFF")
-    assert rerun.returncode == 0, rerun.stderr
-    assert "gpu-wait-saved-script" in rerun.stdout
     shown = _run_cli(tmp_path, "-w", "shell", "show", "gpu-script", "--json")
     record = json.loads(shown.stdout)
     assert record["status"] == "completed"
     assert record["gpu_wait_rule"] is None
     assert record["gpu_wait_runs"][str(record["run_index"])]["enabled"] is False
     assert "_gpu_wait_override" not in load_task_info(str(workspace / TASKS_DIR / "gpu-script"))
-    again = _run_cli(tmp_path, "-w", "shell", "run", "gpu-script", "-d")
-    assert again.returncode == 0, again.stderr
+
+    # A direct Web UI start still uses the unchanged Runtime settings.
+    assert load_settings(str(workspace)) == ui_settings
+    monkeypatch.setattr(TaskManager, "_scheduler_loop", lambda self: None)
+    manager = TaskManager(tasks_dir=str(workspace / TASKS_DIR), lazy_scan=False)
     try:
-        shown = _run_cli(tmp_path, "-w", "shell", "show", "gpu-script", "--json")
-        record = json.loads(shown.stdout)
+        assert manager.start_task_now("gpu-script")
+        record = load_task_info(str(workspace / TASKS_DIR / "gpu-script"))
         assert record["status"] == "queued"
-        assert record["gpu_wait_rule"] is None
+        assert "_gpu_wait_override" not in record
         assert record["gpu_wait"]["requested_gpu_count"] == 2
         assert record["gpu_wait"]["max_wait_seconds"] == 3600
     finally:
-        stopped = _run_cli(tmp_path, "-w", "shell", "stop", "gpu-script", timeout=30)
-        assert stopped.returncode == 0, stopped.stderr
+        manager.shutdown()
+
+
+@pytest.mark.parametrize("source", ["exec", "run-config"])
+def test_cli_without_gpu_wait_ignores_ui_runtime(tmp_path, source):
+    from pyruns.utils.settings import load_settings
+
+    if source == "exec":
+        workspace = Path(bootstrap_shell_workspace(str(tmp_path / "_pyruns_")))
+        arguments = ["exec", "-n", "plain", "--stdin"]
+        input_text = "echo cli-no-gpu-wait\n"
+    else:
+        script = tmp_path / "train.py"
+        script.write_text("import pyruns\npyruns.load()\nprint('cli-no-gpu-wait')\n", encoding="utf-8")
+        config = tmp_path / "config.yaml"
+        config.write_text("value: 1\n", encoding="utf-8")
+        workspace = Path(bootstrap_workspace(str(script), str(config)))
+        arguments = ["-w", "train", "run", "--config", str(config), "--name", "plain"]
+        input_text = None
+    ui_settings = _enable_ui_gpu_wait(workspace)
+
+    result = _run_cli(tmp_path, *arguments, input_text=input_text)
+
+    assert result.returncode == 0, result.stderr
+    assert "cli-no-gpu-wait" in result.stdout
+    record = load_task_info(str(workspace / TASKS_DIR / "plain"))
+    assert record["status"] == "completed"
+    assert record["gpu_wait_runs"][str(record["run_index"])]["enabled"] is False
+    assert load_settings(str(workspace)) == ui_settings
 
 
 def test_cli_app_module_runs_without_duplicate_import_warning():
@@ -1388,9 +1422,38 @@ def test_write_available_log_does_not_duplicate_crlf_rows(tmp_path, capsys):
     assert capsys.readouterr().out == "first\nsecond\nprogress 1%\rprogress 100%"
 
 
-def test_follow_task_keeps_gpu_refresh_on_one_terminal_row(tmp_path, monkeypatch):
+def _progress_screen_rows(output):
+    """Apply the progress renderer's standard VT controls to terminal cells."""
     import unicodedata
 
+    rows = [[]]
+    row = column = 0
+    for part in re.split(r"(\x1b\[\d*[AK]|\r|\n)", output):
+        if part == "\r":
+            column = 0
+        elif part == "\n":
+            row += 1
+            while len(rows) <= row:
+                rows.append([])
+        elif part == "\x1b[2K":
+            rows[row] = []
+        elif part.startswith("\x1b[") and part.endswith("A"):
+            row = max(0, row - int(part[2:-1] or "1"))
+        else:
+            for char in part:
+                if unicodedata.combining(char):
+                    if column:
+                        rows[row][column - 1] += char
+                    continue
+                width = 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+                while len(rows[row]) < column + width:
+                    rows[row].append(" ")
+                rows[row][column:column + width] = [char] + [""] * (width - 1)
+                column += width
+    return ["".join(cells).rstrip() for cells in rows]
+
+
+def test_follow_task_redraws_complete_gpu_refresh_without_leaving_old_rows(tmp_path, monkeypatch):
     from pyruns.cli import commands
 
     queue = tmp_path / QUEUE_LOG_FILENAME
@@ -1405,10 +1468,12 @@ def test_follow_task_keeps_gpu_refresh_on_one_terminal_row(tmp_path, monkeypatch
         commands, "shutil", SimpleNamespace(get_terminal_size=lambda: os.terminal_size((48, 24))),
     )
     statuses = iter(["queued", "queued", "completed"])
+    screens = []
 
     def record(_task, _identity):
         status = next(statuses)
         if status == "queued" and output.getvalue():
+            screens.append(_progress_screen_rows(output.getvalue()))
             with queue.open("a", encoding="utf-8", newline="") as handle:
                 handle.write("\rshort wait")
         return {"status": status}
@@ -1428,17 +1493,40 @@ def test_follow_task_keeps_gpu_refresh_on_one_terminal_row(tmp_path, monkeypatch
 
     assert result["status"] == "completed"
     rendered = output.getvalue()
-    assert "..." in rendered
-    assert "\rshort wait" in rendered
-    assert "\nrun started\n" in rendered
-    for update in rendered.split("\r")[1:]:
-        row = update.split("\n", 1)[0]
-        width = sum(
-            0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
-            for char in row
-        )
-        assert width < 48
+    assert "..." not in rendered
+    assert "".join(screens[0][1:]).replace(" ", "") == initial.split("\r", 1)[1].replace(" ", "")
+    rows = _progress_screen_rows(rendered)
+    assert rows[:3] == ["GPU WAIT", "short wait", "run started"]
+    assert not any(rows[3:])
     assert queue.read_bytes().decode("utf-8") == initial + "\rshort wait"
+
+
+@pytest.mark.parametrize("chunk_size", [1, 7, 65536])
+def test_queue_progress_keeps_all_fields_across_chunks_and_finishes_once(monkeypatch, chunk_size):
+    from pyruns.cli import commands
+
+    output = io.StringIO()
+    monkeypatch.setattr(commands, "sys", SimpleNamespace(stdout=output))
+    monkeypatch.setattr(commands, "shutil", SimpleNamespace(get_terminal_size=lambda: os.terminal_size((24, 40))))
+    progress = commands._QueueProgressOutput()
+    update = "GPU 0 显存 e\u0301 | memory 7<20 WAIT | idle 90>=70 OK | stable 3<15 WAIT | timeout 2h"
+    text = "ordinary log\n\r" + update
+    for start in range(0, len(text), chunk_size):
+        output.write(progress.render(text[start:start + chunk_size]))
+    rows = _progress_screen_rows(output.getvalue())
+    assert rows[0] == "ordinary log"
+    assert "".join(rows[1:]).replace(" ", "") == update.replace(" ", "")
+    output.write(progress.render("\rready\nnext log\n"))
+    progress.finish()
+    assert _progress_screen_rows(output.getvalue())[:3] == ["ordinary log", "ready", "next log"]
+    assert not any(_progress_screen_rows(output.getvalue())[3:])
+
+    output.write(progress.render("\rfinal"))
+    progress.finish()
+    finished = output.getvalue()
+    progress.finish()
+    assert output.getvalue() == finished
+    assert _progress_screen_rows(finished)[:4] == ["ordinary log", "ready", "next log", "final"]
 
 
 def test_write_available_log_restarts_after_truncation(tmp_path, capsys):
@@ -2906,6 +2994,32 @@ def test_show_json_encodes_yaml_dates_as_iso_8601(tmp_path):
     config = json.loads(result.stdout)["config"]
     assert config["day"] == "2026-01-02"
     assert config["started"] == "2026-01-02T03:04:05"
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+@pytest.mark.parametrize("rule", ["off", "2-20-70-15-2"])
+def test_show_hides_internal_gpu_disable_but_keeps_explicit_rules(tmp_path, monkeypatch, capsys, status, rule):
+    from pyruns.cli import commands
+    from pyruns.core.task_generator import TaskGenerator
+
+    task = TaskGenerator(root_dir=str(tmp_path / TASKS_DIR)).create_task("tracked", {})
+    override = {"attempt_id": "current-attempt", "rule": rule}
+    update_task_info(task["dir"], lambda info: info.update({
+        "status": status, "_attempt_id": "current-attempt", "_gpu_wait_override": override,
+    }))
+    monkeypatch.setattr(commands, "_resolve_task_run_reference", lambda *_: (task, None))
+    args = SimpleNamespace(task="tracked", run=None)
+
+    assert commands.cmd_show(SimpleNamespace(json_output=False), args, None) == 0
+    human = capsys.readouterr().out
+    if rule == "off":
+        assert "GPU rule:" not in human
+    else:
+        assert f"GPU rule:   {rule}" in human
+    assert commands.cmd_show(SimpleNamespace(json_output=True), args, None) == 0
+    record = json.loads(capsys.readouterr().out)
+    assert record["gpu_wait_rule"] == (None if rule == "off" else rule)
+    assert load_task_info(task["dir"])["_gpu_wait_override"] == override
 
 
 def test_human_task_table_truncates_long_names_without_changing_json(capsys):

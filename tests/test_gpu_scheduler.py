@@ -120,7 +120,10 @@ def test_gpu_scheduler_keeps_unavailable_gpu_blocked_while_healthy_gpu_can_run(m
     assert decision.assignment.gpu_ids == [1]
     assert decision.devices[0].eligible is False
     assert "metrics" in decision.devices[0].reason
-    assert "GPU 0 blocked: metrics unavailable" in TaskManager._gpu_snapshot_lines(decision.snapshot, config)[0]
+    diagnostic = TaskManager._gpu_device_status_lines(decision, config)[0]
+    assert "GPU 0 [blocked]" in diagnostic
+    assert "metrics unavailable or invalid" in diagnostic
+    assert "stable unknown" in diagnostic
 
 
 @pytest.mark.parametrize("used,total", [(1e308, 1e-308), (-1e308, 1e308), (0, 0)])
@@ -153,6 +156,7 @@ def test_gpu_scheduler_reserves_multi_gpu_after_stable_window():
     first = scheduler.try_reserve("task-a", 1, config, task_env={})
     assert first.assignment is None
     assert "stabilizing 0.0/4s" in first.reason
+    assert [device.stable_elapsed_seconds for device in first.devices] == [0.0, 0.0]
 
     second_task = scheduler.try_reserve("task-b", 1, config, task_env={})
     assert second_task.assignment is None
@@ -162,6 +166,7 @@ def test_gpu_scheduler_reserves_multi_gpu_after_stable_window():
         now[0] = timestamp
         warming = scheduler.try_reserve("task-a", 1, config, task_env={})
         assert warming.assignment is None
+        assert [device.stable_elapsed_seconds for device in warming.devices] == [timestamp - 100.0] * 2
 
     now[0] = 104.0
     assigned = scheduler.try_reserve("task-a", 1, config, task_env={})
@@ -169,10 +174,13 @@ def test_gpu_scheduler_reserves_multi_gpu_after_stable_window():
     assert assigned.assignment.gpu_ids == [0, 1]
     assert assigned.assignment.env["CUDA_VISIBLE_DEVICES"] == "0,1"
     assert assigned.assignment.env["PYRUNS_ASSIGNED_GPUS"] == "0,1"
+    assert [device.stable_elapsed_seconds for device in assigned.devices] == [4.0, 4.0]
 
     blocked_by_reservation = scheduler.try_reserve("task-b", 1, config, task_env={})
     assert blocked_by_reservation.assignment is None
     assert "reserved" in blocked_by_reservation.reason
+    assert all(not device.eligible for device in blocked_by_reservation.devices)
+    assert [device.stable_elapsed_seconds for device in blocked_by_reservation.devices] == [4.0, 4.0]
 
     scheduler.release("task-a")
     released = scheduler.try_reserve("task-b", 1, config, task_env={})
@@ -192,6 +200,28 @@ def test_gpu_scheduler_synced_reservations_block_new_assignments():
 
     assert decision.assignment is None
     assert "GPU 0 reserved (1/1)" in decision.reason
+
+
+def test_gpu_device_decisions_report_separate_stability_progress():
+    now = [0.0]
+    ready = _gpu(0, used=1024)
+    second_ready = _gpu(1, used=1024)
+    second_busy = _gpu(1, used=1024, util=80)
+    scheduler = GpuResourceScheduler(
+        provider=SequenceGpuProvider([
+            [ready, second_busy], [ready, second_ready],
+            [ready, second_ready], [ready, second_busy],
+        ]),
+        clock=lambda: now[0],
+    )
+    config = GpuSchedulerConfig.from_wait_rule("2-8-70-2-1")
+
+    for timestamp, elapsed in enumerate(([0, 0], [1, 0], [2, 1], [3, 0])):
+        now[0] = float(timestamp)
+        decision = scheduler.try_reserve("two-cards", 1, config, task_env={})
+        assert decision.assignment is None
+        assert [device.stable_elapsed_seconds for device in decision.devices] == elapsed
+        assert [device.eligible for device in decision.devices] == [timestamp >= 2, False]
 
 
 def test_gpu_scheduler_respects_existing_cuda_visible_devices_when_parseable():
@@ -587,6 +617,7 @@ def test_gpu_scheduler_restarts_stable_window_after_unsampled_gap():
     stale_sample = scheduler.try_reserve("gap", 1, config, task_env={})
     assert stale_sample.assignment is None
     assert "stabilizing 0.0/4s" in stale_sample.reason
+    assert stale_sample.devices[0].stable_elapsed_seconds == 0.0
 
     for timestamp in (75.1, 76.1, 77.1):
         now[0] = timestamp
@@ -1125,11 +1156,13 @@ def test_gpu_scheduler_observes_stability_from_sample_completion():
     initial = scheduler.try_reserve("slow", 1, config, task_env={}, refresh_snapshot=False)
     assert initial.assignment is None
     assert "stabilizing 0.0/0.5s" in initial.reason
+    assert initial.devices[0].stable_elapsed_seconds == 0.0
 
     now[0] += 0.5
     observed = scheduler.try_reserve("slow", 1, config, task_env={})
     assert observed.assignment is not None
     assert provider.calls == 2
+    assert observed.devices[0].stable_elapsed_seconds == 0.5
 
 
 def test_shared_snapshot_age_does_not_extend_observed_stability():
@@ -1144,9 +1177,11 @@ def test_shared_snapshot_age_does_not_extend_observed_stability():
     assert unobserved.assignment is None
     assert "stabilizing 0.0/0.5s" in unobserved.reason
     assert provider.calls == 1
+    assert unobserved.devices[0].stable_elapsed_seconds == 0.0
 
     observed = scheduler.try_reserve("delayed", 1, config, task_env={})
     assert observed.assignment is not None
+    assert observed.devices[0].stable_elapsed_seconds == 0.75
 
 
 @pytest.mark.parametrize("mask", ["0", "GPU-0", "MIG-GPU-0/0/1"])
@@ -1165,6 +1200,10 @@ def test_gpu_wait_diagnostics_only_count_visible_candidate_devices(mask):
     assert decision.eligible_gpu_count == 0
     assert decision.total_gpu_count == 1
     assert [device.index for device in decision.devices] == [0]
+    diagnostic = "\n".join(TaskManager._gpu_device_status_lines(decision, config))
+    assert "GPU 0 [blocked]" in diagnostic
+    assert "GPU 1" not in diagnostic
+    assert "GPU 2" not in diagnostic
 
 
 def test_gpu_scheduler_keeps_unmappable_mig_uuid_waiting():

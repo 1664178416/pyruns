@@ -217,6 +217,7 @@ class GpuDeviceDecision:
     memory_used_pct: float | None
     free_memory_gb: float | None
     compute_util_pct: float | None
+    stable_elapsed_seconds: float = 0.0
 
 
 class GpuResourceScheduler:
@@ -572,10 +573,14 @@ class GpuResourceScheduler:
                 f"(compute {compute_util_pct:.0f}% > {config.compute_used_pct:g}%)"
             )
         since = self._eligible_since.get((*self._stability_limits(config), _gpu_stability_key(gpu)))
-        observed = 0.0 if since is None else max(0.0, self._snapshot_at - since)
+        observed = self._stable_elapsed_seconds(gpu, config)
         if since is None or observed < config.stable_seconds:
             return f"GPU {gpu.index} stabilizing {observed:.1f}/{config.stable_seconds:g}s"
         return ""
+
+    def _stable_elapsed_seconds(self, gpu: GpuDevice, config: GpuSchedulerConfig) -> float:
+        since = self._eligible_since.get((*self._stability_limits(config), _gpu_stability_key(gpu)))
+        return 0.0 if since is None else max(0.0, self._snapshot_at - since)
 
     def _device_decisions(
         self, config: GpuSchedulerConfig, now: float, *, allowed_ids: set[int] | None = None,
@@ -595,6 +600,7 @@ class GpuResourceScheduler:
                     memory_used_pct=gpu.memory_used_pct,
                     free_memory_gb=gpu.free_memory_gb,
                     compute_util_pct=gpu.compute_util_pct,
+                    stable_elapsed_seconds=self._stable_elapsed_seconds(gpu, config),
                 )
             )
         return decisions

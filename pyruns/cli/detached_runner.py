@@ -299,7 +299,8 @@ def main() -> int:
                 [name],
                 max_workers=args.jobs,
                 expected_run_indices={name: expected_run_index},
-                **({"gpu_wait_rule": payload.gpu_wait_rule} if payload.gpu_wait_rule is not None else {}),
+                # UI scheduler settings do not enable GPU waiting for CLI submissions.
+                gpu_wait_rule=payload.gpu_wait_rule or "off",
             )
             if claimed_now != [name]:
                 status = "partial" if claimed else "rejected"

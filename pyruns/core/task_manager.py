@@ -3439,7 +3439,7 @@ class TaskManager:
         monotonic_now = self.gpu_scheduler.clock()
         wall_now = time.time()
         wait_logs: List[tuple[Dict[str, Any], List[str]]] = []
-        assignment_log: tuple[Dict[str, Any], GpuAssignment] | None = None
+        assignment_log: tuple[Dict[str, Any], GpuAssignment, List[str]] | None = None
         timeout_log: tuple[Dict[str, Any], int, float, float] | None = None
         gpu_wait_persists: List[tuple[str, str, Dict[str, Any], tuple[Any, ...]]] = []
         target: Dict[str, Any] | None = None
@@ -3589,7 +3589,10 @@ class TaskManager:
                             current["run_index"] = run_index
                             self._mark_running_locked(current["name"], counts_for_batch=not is_independent)
                             self._recompute_processing_flag_locked()
-                            assignment_log = (current, assignment)
+                            assignment_log = (
+                                current, assignment,
+                                self._gpu_wait_status_lines(current, gpu_config, decision, waited),
+                            )
                             target = current
                             result_run_index = run_index
 
@@ -3637,7 +3640,7 @@ class TaskManager:
             )
             self.trigger_update()
         if assignment_log:
-            self._append_gpu_assignment(assignment_log[0], assignment_log[1])
+            self._append_gpu_assignment(*assignment_log)
         if target is not None:
             return target, result_run_index
         return None, 1
@@ -4980,24 +4983,7 @@ class TaskManager:
         if not clean_lines:
             return ""
 
-        summary = clean_lines[0]
-        reason = ""
-        snapshot = ""
-        for line in clean_lines[1:]:
-            if line.startswith("Blocked: "):
-                reason = "blocked: " + line[len("Blocked: "):]
-            elif line.startswith("Stabilizing: "):
-                reason = "stabilizing: " + line[len("Stabilizing: "):]
-            elif line.startswith("GPU "):
-                snapshot = line
-                break
-
-        parts = [summary]
-        if reason:
-            parts.append(reason)
-        if snapshot:
-            parts.append(snapshot)
-        return "[PYRUNS] " + " | ".join(parts)
+        return "[PYRUNS] " + " | ".join(clean_lines)
 
     def _append_gpu_wait_started(
         self,
@@ -5006,7 +4992,8 @@ class TaskManager:
         config: GpuSchedulerConfig,
     ) -> None:
         task["_gpu_wait_logged_for"] = run_index
-        task["_gpu_last_wait_log_at"] = time.monotonic()
+        # Show the first sampled decision immediately, then keep periodic updates bounded.
+        task["_gpu_last_wait_log_at"] = 0.0
         timeout = self._format_duration(config.max_wait_seconds) if config.max_wait_seconds else "unlimited"
         mode = "multi" if config.required_gpu_count > 1 else "single"
         self._append_gpu_queue_log(
@@ -5015,7 +5002,7 @@ class TaskManager:
             [
                 (
                     f"Run #{run_index} waiting for GPU resources, mode={mode}, "
-                    f"need={self._gpu_need_label(config)}, timeout={timeout}, max wait={timeout}"
+                    f"need={self._gpu_need_label(config)}, timeout={timeout}"
                 ),
                 f"GPU selection={config.selection_mode}",
                 f"GPU pool={self._gpu_pool_label(config)}",
@@ -5049,7 +5036,6 @@ class TaskManager:
         waited: float,
         now: float,
     ) -> List[str] | None:
-        reason = str(decision.reason or "waiting")
         last_log_at = float(task.get("_gpu_last_wait_log_at", 0.0) or 0.0)
         periodic_seconds = self._gpu_wait_log_interval(config)
         if last_log_at > now:
@@ -5058,16 +5044,45 @@ class TaskManager:
             return None
 
         task["_gpu_last_wait_log_at"] = now
-        reason_line = "Stabilizing" if "stabilizing" in reason else "Blocked"
-        lines = [
+        return [
             f"Run #{run_index} still waiting after {self._format_elapsed(waited)}",
-            f"{reason_line}: {reason}",
-            format_gpu_rule(config),
+            *self._gpu_wait_status_lines(task, config, decision, waited),
         ]
-        lines.extend(self._gpu_snapshot_lines(decision.snapshot, config))
+
+    def _gpu_wait_status_lines(
+        self, task: Dict[str, Any], config: GpuSchedulerConfig, decision: GpuDecision, waited: float,
+    ) -> List[str]:
+        reason = str(decision.reason or "waiting")
+        reason_line = "Stabilizing" if "stabilizing" in reason else "Blocked"
+        ready = decision.eligible_gpu_count
+        required = config.required_gpu_count
+        count_state = "ready" if ready >= required else "blocked"
+        waited = max(0.0, waited)
+        wait_state = task.get("gpu_wait")
+        timeout = max(0.0, float(
+            wait_state.get("max_wait_seconds", config.max_wait_seconds)
+            if isinstance(wait_state, dict) else config.max_wait_seconds
+        ))
+        if timeout:
+            remaining = max(0.0, timeout - waited)
+            time_state = "ready" if remaining > 0 else "blocked: timeout reached"
+            timing = (
+                f"Wait: {self._format_elapsed(waited)} / {self._format_elapsed(timeout)} "
+                f"[{time_state}]; remaining {self._format_elapsed(remaining)}"
+            )
+        else:
+            timing = f"Wait: {self._format_elapsed(waited)} / unlimited [ready]; no timeout"
+        lines = [
+            f"GPU count: {ready}/{required} ready [{count_state}]; {decision.total_gpu_count} candidates",
+            timing,
+            "Decision: GPUs ready" if decision.assignment is not None else f"{reason_line}: {reason}",
+        ]
+        lines.extend(self._gpu_device_status_lines(decision, config))
         return lines
 
-    def _append_gpu_assignment(self, task: Dict[str, Any], assignment: GpuAssignment) -> None:
+    def _append_gpu_assignment(
+        self, task: Dict[str, Any], assignment: GpuAssignment, detail_lines: List[str] | None = None,
+    ) -> None:
         gpu_label = assignment.cuda_visible_devices or ",".join(str(gpu_id) for gpu_id in assignment.gpu_ids)
         cuda_visible = assignment.cuda_visible_devices or str(assignment.env.get("CUDA_VISIBLE_DEVICES", "") or gpu_label)
         self._append_gpu_queue_log(
@@ -5078,44 +5093,69 @@ class TaskManager:
                     f"Run #{assignment.run_index} assigned GPUs {gpu_label} "
                     f"after {self._format_elapsed(assignment.waited_seconds)}"
                 ),
+                *(detail_lines or []),
                 f"PYRUNS_ASSIGNED_GPUS={gpu_label}",
                 f"CUDA_VISIBLE_DEVICES={cuda_visible}",
             ],
         )
 
     @staticmethod
-    def _gpu_snapshot_lines(snapshot: List[Any], config: GpuSchedulerConfig) -> List[str]:
-        if not snapshot:
-            return ["GPU snapshot: no NVIDIA GPU metrics available"]
+    def _gpu_device_status_lines(decision: GpuDecision, config: GpuSchedulerConfig) -> List[str]:
+        if not decision.devices:
+            return [
+                "GPU metrics: [blocked] no NVIDIA GPU metrics available"
+                if not decision.snapshot else "GPU candidates: [blocked] no GPUs in the visible configured pool"
+            ]
 
-        allowed = set(config.device_ids or [])
+        def threshold(label: str, current: float | None, minimum: float, unit: str, *, stale: bool) -> str:
+            requirement = f"{minimum:g}{unit}"
+            if current is None or stale:
+                reason = "metrics expired" if stale else "metrics unavailable or invalid"
+                return f"{label} unknown / {requirement} [blocked: {reason}]"
+            passed = current >= minimum
+            return f"{label} {current:g}{unit} {'>=' if passed else '<'} {requirement} [{'ready' if passed else 'blocked'}]"
+
         lines: List[str] = []
-        for gpu in sorted(snapshot, key=lambda item: int(getattr(item, "index", 0)))[:8]:
-            index = int(getattr(gpu, "index", 0))
-            if allowed and index not in allowed:
-                continue
-            memory_pct = getattr(gpu, "memory_used_pct", None)
-            compute_pct = getattr(gpu, "compute_util_pct", None)
-            free_gib = getattr(gpu, "free_memory_gb", None)
-            if (
-                not getattr(gpu, "metrics_available", True)
-                or memory_pct is None
-                or compute_pct is None
-                or free_gib is None
-            ):
-                lines.append(f"GPU {index} blocked: metrics unavailable or invalid")
-                continue
-            is_eligible = (
-                memory_pct <= config.memory_used_pct
-                and compute_pct <= config.compute_used_pct
-                and free_gib >= config.min_free_memory_gb
+        for device in decision.devices:
+            stale = "metrics expired" in device.reason
+            compute = device.compute_util_pct
+            idle = 100 - compute if compute is not None and 0 <= compute <= 100 else None
+            fields = [
+                threshold("free memory", device.free_memory_gb, config.min_free_memory_gb, " GiB", stale=stale),
+                threshold("idle", idle, 100 - config.compute_used_pct, "%", stale=stale),
+            ]
+            if compute is not None and idle is not None and not stale:
+                fields[-1] += f" (utilization {compute:g}%)"
+            metrics_valid = (
+                not stale and device.memory_used_pct is not None
+                and device.free_memory_gb is not None and device.compute_util_pct is not None
+                and 0 <= device.compute_util_pct <= 100
             )
-            state = "eligible" if is_eligible else "blocked"
+            if not metrics_valid:
+                stability = f"stable unknown / {config.stable_seconds:g}s [blocked: valid fresh metrics required]"
+            else:
+                assert device.free_memory_gb is not None
+                assert device.memory_used_pct is not None
+                assert device.compute_util_pct is not None
+                thresholds_met = (
+                    device.free_memory_gb >= config.min_free_memory_gb
+                    and device.memory_used_pct <= config.memory_used_pct
+                    and device.compute_util_pct <= config.compute_used_pct
+                )
+                observed = min(device.stable_elapsed_seconds, config.stable_seconds) if thresholds_met else 0.0
+                state = (
+                    "ready" if thresholds_met and observed >= config.stable_seconds else
+                    "blocked: observing" if thresholds_met else "blocked: waiting for thresholds"
+                )
+                stability = f"stable {observed:g}/{config.stable_seconds:g}s [{state}]"
+            fields.append(stability)
+            if device.reason:
+                fields.append(f"reason: {device.reason}")
+            state = "ready" if device.eligible else "blocked"
             lines.append(
-                f"GPU {index} {state}: memory {memory_pct:.0f}%, "
-                f"compute {compute_pct:.0f}%, free {free_gib:.1f} GiB"
+                f"GPU {device.index} [{state}]: " + "; ".join(fields)
             )
-        return lines or ["GPU snapshot: configured GPU pool is empty"]
+        return lines
 
     def _append_error_summary(
         self,

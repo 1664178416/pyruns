@@ -156,7 +156,10 @@ def _gpu_wait_argument(value: str) -> str:
     from pyruns.utils.gpu_wait import parse_gpu_wait_rule
 
     try:
-        return parse_gpu_wait_rule(value).canonical
+        rule = parse_gpu_wait_rule(value)
+        if not rule.enabled:
+            raise ValueError("--gpu-wait requires all 5 fields; omit --gpu-wait to run without GPU waiting")
+        return rule.canonical
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
@@ -164,7 +167,7 @@ def _gpu_wait_argument(value: str) -> str:
 def _add_gpu_wait_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gpu-wait", type=_gpu_wait_argument, metavar="RULE",
-        help="GPU wait for this run: COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS (all required); or off",
+        help="GPU wait for this run: COUNT-FREE_GIB-IDLE_PERCENT-STABLE_SECONDS-TIMEOUT_HOURS (all required)",
     )
 
 
@@ -176,20 +179,27 @@ def _gpu_wait_help(program: str) -> str:
         "  Example 2-20-70-15-2: two GPUs, each with >=20 GiB free and >=70% idle,\n"
         "  continuously eligible for 15 seconds; wait at most 2 hours before starting.\n"
         "  GPU idle percent = 100 - reported GPU utilization. All thresholds are per GPU.\n"
+        "  For example, 93% utilization means 7% idle; 100% idle requires 0% utilization.\n"
         "  All requested GPUs must qualify together.\n"
         "  All five fields are required; incomplete rules such as 1-8 are usage errors.\n"
         "  Stability 0 starts as soon as eligible; timeout 0 waits indefinitely.\n"
         "  Optional units are case-insensitive: G/GiB, M/MiB (binary); GB/MB (decimal);\n"
         "  s/sec, m/min, h/hr for time. For example 2-20GiB-70%-15s-2hr.\n"
         "  Use device=0,1-20-70-15-2 to select exactly GPU indices 0 and 1.\n"
-        "  Use off to skip project GPU waiting for this invocation only.\n"
         "  Execution never falls back to CPU while waiting.\n"
         "  Each GPU is reserved for one task in this workspace; live metrics detect other work.\n"
         "  This rule applies only to this invocation; it does not become a task default.\n"
-        "  Pass it again on reruns, or omit it to use GPU defaults saved through the UI or project config.\n"
+        "  Pass it again on reruns. Omitting --gpu-wait skips GPU waiting.\n"
+        "  The UI Runtime switch affects only future tasks submitted from the UI.\n"
         "  Legacy rules stored with tasks are not automatically reused.\n"
         "  CUDA_VISIBLE_DEVICES is respected; unavailable devices remain queued until timeout.\n"
         "  GPU timeout limits queueing only, not the running command's duration.\n"
+        "  Waiting output compares current values with requirements: ready/required GPU count,\n"
+        "  per-GPU free memory and idle %, stable elapsed/required seconds, and wait elapsed/timeout.\n"
+        "  ready/blocked states explain each condition; all blocking reasons are shown.\n"
+        "  Stability resets on failed memory/idle thresholds, missing metrics, or interrupted sampling.\n"
+        "  A reserved GPU can meet the stability target and still be blocked from allocation.\n"
+        "  Missing metrics, devices outside the visible set, and workspace reservations are explicit.\n"
         f"  {program} exec --gpu-wait 2-20-70-15-2 -c \"python train.py --epochs 10\"\n"
         f"  {program} -w shell run TASK --gpu-wait 1-8-70-15-2\n"
         f"  {program} -w shell show TASK --json    current run's rule and GPU wait details\n"

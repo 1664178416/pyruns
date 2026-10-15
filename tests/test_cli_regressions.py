@@ -983,9 +983,11 @@ def test_detached_runner_exits_when_claimed_task_state_disappears(tmp_path, monk
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             assert max_workers == 1
             assert expected_run_indices == {"lost": 1}
+            assert gpu_wait_rule == "off"
             return ["lost"] if names == ["lost"] else []
 
         def shutdown(self):
@@ -1049,10 +1051,12 @@ def test_detached_runner_observes_submitted_run_after_new_rerun_starts(
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             assert names == ["repeat"]
             assert max_workers == 1
             assert expected_run_indices == {"repeat": 1}
+            assert gpu_wait_rule == "off"
             return ["repeat"]
 
         def shutdown(self):
@@ -1132,6 +1136,7 @@ def test_detached_runner_settled_task_does_not_abort_or_follow_other_attempts(
             return tasks[name]
 
         def start_batch_tasks(self, selected, **_kwargs):
+            assert _kwargs["gpu_wait_rule"] == "off"
             return selected
 
         def shutdown(self):
@@ -1195,10 +1200,12 @@ def test_detached_runner_rejects_run_completed_before_claim(tmp_path, monkeypatc
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             assert names == ["race"]
             assert max_workers == 1
             assert expected_run_indices == {"race": 1}
+            assert gpu_wait_rule == "off"
             update_task_info(task["dir"], complete_first_run)
             events.append("claim-rejected")
             return []
@@ -2109,11 +2116,13 @@ def test_detached_runner_cancels_claimed_tasks_before_reporting_partial(tmp_path
             names,
             max_workers=None,
             expected_run_indices=None,
+            gpu_wait_rule=None,
         ):
             name = names[0]
             events.append(f"claim:{name}")
             assert max_workers == 1
             assert expected_run_indices == {name: 1}
+            assert gpu_wait_rule == "off"
             if name == "batch-a":
                 states[task_a["dir"]] = {
                     "status": "queued",

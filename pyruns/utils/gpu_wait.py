@@ -92,5 +92,5 @@ def parse_gpu_wait_rule(value: str) -> GpuWaitRule:
         return GpuWaitRule(True, count, device_ids, free_memory, idle, stable, timeout)
     except ValueError as exc:
         raise ValueError(
-            f"invalid --gpu-wait: {exc}; use {GPU_WAIT_FORMAT}, e.g. 2-20-70-15-2, or off"
+            f"invalid --gpu-wait: {exc}; use {GPU_WAIT_FORMAT}, e.g. 2-20-70-15-2"
         ) from exc
