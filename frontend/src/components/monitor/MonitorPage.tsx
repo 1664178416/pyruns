@@ -73,6 +73,7 @@ import {
   splitTaskSearchSnippet,
 } from '@/utils/monitorSearch'
 import { pickInitialMonitorTask } from '@/utils/monitorSelection'
+import { taskDetailRefreshKey } from '@/utils/taskSnapshots'
 
 const MONITOR_SIDEBAR_WIDTH_STORAGE_KEY = 'pyruns.monitorSidebarWidthPct'
 const DEFAULT_MONITOR_SIDEBAR_WIDTH = 14
@@ -196,6 +197,7 @@ export default function MonitorPage() {
   })))
   const maxResults = useSearchSettingsStore(state => state.maxResults)
   const workspace = useWorkspaceStore(state => state.workspace)
+  const workspaceEpoch = useWorkspaceStore(state => state.workspaceEpoch)
   const pageVisible = usePageVisible()
   const {
     selectedTaskName, logContent, logTextVersion, logTextEnd, logOffset, logIdentity, availableLogs, selectedLog,
@@ -207,6 +209,9 @@ export default function MonitorPage() {
   const [compactSearchFocused, setCompactSearchFocused] = useState(false)
   const [exportMode, setExportMode] = useState(false)
   const [detailTask, setDetailTask] = useState<Task | null>(null)
+  const detailTaskRef = useRef(detailTask)
+  const detailRequestSeqRef = useRef(0)
+  detailTaskRef.current = detailTask
   const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<Task | null>(null)
   const [streamStatus, setStreamStatus] = useState<LogStreamStatus>('idle')
   const [streamError, setStreamError] = useState('')
@@ -294,6 +299,23 @@ export default function MonitorPage() {
   const [compactMonitorLayout, setCompactMonitorLayout] = useState(readCompactMonitorLayout)
   const [resizingMonitorSidebar, setResizingMonitorSidebar] = useState(false)
   const notify = useToastStore(state => state.notify)
+  const loadDetailTask = useCallback((task: Task) => {
+    const requestId = ++detailRequestSeqRef.current
+    const requestedKey = taskDetailRefreshKey(task)
+    const requestedWorkspaceKey = workspaceKeyRef.current
+    const requestIsCurrent = () => requestId === detailRequestSeqRef.current
+      && workspaceEpoch === useWorkspaceStore.getState().workspaceEpoch
+      && detailWorkspaceKeyRef.current === requestedWorkspaceKey
+    void api.getTask(task.name).then(fullTask => {
+      if (!requestIsCurrent()) return
+      setDetailTask(current => current?.name === task.name && taskDetailRefreshKey(current) === requestedKey
+        ? fullTask : current)
+    }).catch(err => {
+      if (requestIsCurrent()) {
+        notify({ tone: 'error', title: t('Could not load task details'), detail: errorMessage(err) })
+      }
+    })
+  }, [notify, workspaceEpoch])
   const pendingMonitorSidebarWidthRef = useRef(monitorSidebarWidthPct)
   const monitorResizeFrameRef = useRef<number | null>(null)
   const terminalVisible = Boolean(selectedTaskName)
@@ -477,6 +499,7 @@ export default function MonitorPage() {
 
   useEffect(() => {
     taskActionRequestRef.current += 1
+    detailRequestSeqRef.current += 1
     detailWorkspaceKeyRef.current = ''
     selectedTaskSnapshotWorkspaceKeyRef.current = ''
     selectedTaskNameRef.current = null
@@ -953,24 +976,18 @@ export default function MonitorPage() {
   }, [isTerminalSearchShortcutTarget, runPendingTerminalSearchNow, terminalSearchOpen])
 
   useEffect(() => {
-    setDetailTask(current => {
-      if (!current) {
-        return current
-      }
-
-      const refreshed = monitorTasks.find(task => task.name === current.name)
-      if (!refreshed) {
-        // Filtering, pagination, or a transient refresh may hide the summary.
-        // Keep the full detail and any local draft until the user closes it.
-        return current
-      }
-      if (refreshed === current) {
-        return current
-      }
-
-      return mergeMonitorTaskSummary(current, refreshed)
-    })
-  }, [monitorTasks])
+    const current = detailTaskRef.current
+    if (!current) return
+    const refreshed = monitorTasks.find(task => task.name === current.name)
+    // Filtering and pagination can hide the summary without deleting the task.
+    if (!refreshed || refreshed === current) return
+    const replaced = current.task_identity !== refreshed.task_identity
+    const next = replaced ? refreshed : mergeMonitorTaskSummary(current, refreshed)
+    setDetailTask(next)
+    if (taskDetailRefreshKey(current) !== taskDetailRefreshKey(refreshed)) {
+      loadDetailTask(next)
+    }
+  }, [monitorTasks, detailTask?.name, loadDetailTask])
 
   selectedTaskNameRef.current = selectedTaskName
   selectedLogRef.current = selectedLog
@@ -1470,24 +1487,10 @@ export default function MonitorPage() {
   }, [selectedTaskName, selectedTask, taskActionPending, fetchMonitorTasks, selectTask, updateMonitorTask, notify])
 
   const openDetailTask = useCallback((task: Task) => {
-    const requestedWorkspaceKey = workspaceKeyRef.current
-    detailWorkspaceKeyRef.current = requestedWorkspaceKey
+    detailWorkspaceKeyRef.current = workspaceKeyRef.current
     setDetailTask(task)
-    void api.getTask(task.name).then(fullTask => {
-      if (workspaceKeyRef.current !== requestedWorkspaceKey) {
-        return
-      }
-      setDetailTask(current => (
-        detailWorkspaceKeyRef.current === requestedWorkspaceKey && current?.name === task.name
-          ? fullTask
-          : current
-      ))
-    }).catch(err => {
-      if (workspaceKeyRef.current === requestedWorkspaceKey) {
-        notify({ tone: 'error', title: t("Could not load task details"), detail: errorMessage(err) })
-      }
-    })
-  }, [notify])
+    loadDetailTask(task)
+  }, [loadDetailTask])
 
   const handleExport = useCallback(async () => {
     const names = [...exportIds]
@@ -1903,28 +1906,6 @@ export default function MonitorPage() {
                   className="bg-transparent"
                 />
 
-                <ActionButton
-                  icon={<Download className="h-3.5 w-3.5" />}
-                  variant="ghost"
-                  aria-label="Download full log"
-                  title={`Download full ${selectedLog || liveLogName || 'selected log'}`}
-                  disabled={loading || !(selectedLog || liveLogName)}
-                  className="max-[900px]:px-2 max-[900px]:[&>span]:sr-only"
-                  onClick={() => {
-                    if (!selectedTaskName || !(selectedLog || liveLogName)) return
-                    const anchor = document.createElement('a')
-                    anchor.href = api.getTaskLogDownloadUrl(
-                      selectedTaskName, selectedLog || liveLogName, logIdentity, workspaceKey,
-                    )
-                    anchor.download = ''
-                    document.body.appendChild(anchor)
-                    anchor.click()
-                    anchor.remove()
-                  }}
-                >
-                  Download
-                </ActionButton>
-
                 {(selectedTask.status === 'pending'
                   || selectedTask.status === 'failed'
                   || selectedTask.status === 'completed'
@@ -2116,6 +2097,7 @@ export default function MonitorPage() {
         <TaskDetailPanel
           task={detailTask}
           onClose={() => {
+            detailRequestSeqRef.current += 1
             detailWorkspaceKeyRef.current = ''
             setDetailTask(null)
           }}

@@ -808,7 +808,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           aria-labelledby={`task-detail-tab-${tab}`}
           className="task-detail-body min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:py-6"
         >
-          {tab === 'info' && <InfoTab task={task} />}
+          {tab === 'info' && <InfoTab key={task.task_identity || `${task.dir}:${task.created_at}`} task={task} />}
           {tab === 'config' && <ConfigTab task={task} />}
           {tab === 'notes' && (
             <div className="flex min-h-full flex-col gap-3">

@@ -30,6 +30,7 @@ import type { Task, TaskSortMode } from '@/types'
 import type { TaskStatus } from '@/theme/tokens'
 import { ALL_STATUSES, STATUS_LABELS } from '@/theme/tokens'
 import { errorMessage } from '@/utils/errors'
+import { taskDetailRefreshKey } from '@/utils/taskSnapshots'
 import * as api from '@/api'
 
 const STATUS_OPTIONS = ['All', ...ALL_STATUSES]
@@ -229,12 +230,29 @@ export default function ManagerPage() {
   const pendingTaskActionsRef = useRef<Map<string, PendingTaskAction>>(new Map())
   const bulkActionRef = useRef<'run' | 'delete' | null>(null)
   const detailRequestSeqRef = useRef(0)
+  const detailTaskRef = useRef(detailTask)
+  detailTaskRef.current = detailTask
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const focusTaskName = searchParams.get('task')
   const notify = useToastStore(state => state.notify)
   const workspaceEpoch = useWorkspaceStore(state => state.workspaceEpoch)
   const workspaceKind = useWorkspaceStore(state => state.workspace?.workspace_kind)
+  const loadDetailTask = useCallback((task: Task) => {
+    const requestId = ++detailRequestSeqRef.current
+    const requestedKey = taskDetailRefreshKey(task)
+    const requestIsCurrent = () => requestId === detailRequestSeqRef.current
+      && workspaceEpoch === useWorkspaceStore.getState().workspaceEpoch
+    void api.getTask(task.name).then(fullTask => {
+      if (!requestIsCurrent()) return
+      setDetailTask(current => current?.name === task.name && taskDetailRefreshKey(current) === requestedKey
+        ? fullTask : current)
+    }).catch(err => {
+      if (requestIsCurrent()) {
+        notify({ tone: 'error', title: t('Could not load task details'), detail: errorMessage(err) })
+      }
+    })
+  }, [notify, workspaceEpoch])
   const rejectIncompleteReorder = useCallback((page: { has_more: boolean; total: number }) => {
     if (!page.has_more) {
       return false
@@ -262,6 +280,7 @@ export default function ManagerPage() {
 
   useEffect(() => {
     detailRequestSeqRef.current += 1
+    detailTaskRef.current = null
     dragCandidateRef.current = null
     draggedTaskNameRef.current = ''
     dragOverTargetRef.current = null
@@ -292,9 +311,11 @@ export default function ManagerPage() {
     }
 
     let cancelled = false
+    const requestId = ++detailRequestSeqRef.current
     const requestWorkspaceEpoch = workspaceEpoch
     const requestIsCurrent = () => (
       !cancelled
+      && requestId === detailRequestSeqRef.current
       && requestWorkspaceEpoch === useWorkspaceStore.getState().workspaceEpoch
     )
     void api.getTask(focusTaskName).then(task => {
@@ -360,26 +381,25 @@ export default function ManagerPage() {
   }, [bulkAction, deleteConfirm, visibleSelectedCount])
 
   useEffect(() => {
-    setDetailTask(current => {
-      if (!current) {
-        return current
-      }
+    const current = detailTaskRef.current
+    if (!current) return
+    const refreshed = tasks.find(task => task.name === current.name)
+    if (!refreshed || refreshed === current) return
 
-      const refreshed = tasks.find(task => task.name === current.name)
-      if (!refreshed || refreshed === current) {
-        return current
-      }
-
-      return {
-        ...current,
-        ...refreshed,
-        config: current.config,
-        config_text: current.config_text,
-        records: current.records,
-        tracks: current.tracks,
-      }
-    })
-  }, [tasks])
+    const replaced = current.task_identity !== refreshed.task_identity
+    const next = replaced ? refreshed : {
+      ...current,
+      ...refreshed,
+      config: current.config,
+      config_text: current.config_text,
+      records: current.records,
+      tracks: current.tracks,
+    }
+    setDetailTask(next)
+    if (taskDetailRefreshKey(current) !== taskDetailRefreshKey(refreshed)) {
+      loadDetailTask(next)
+    }
+  }, [tasks, detailTask?.name, loadDetailTask])
 
   const beginTaskAction = useCallback((taskName: string, action: PendingTaskAction) => {
     if (
@@ -832,22 +852,8 @@ export default function ManagerPage() {
       return
     }
     setDetailTask(task)
-    const requestId = ++detailRequestSeqRef.current
-    const requestWorkspaceEpoch = workspaceEpoch
-    const requestIsCurrent = () => (
-      requestId === detailRequestSeqRef.current
-      && requestWorkspaceEpoch === useWorkspaceStore.getState().workspaceEpoch
-    )
-    void api.getTask(task.name).then(fullTask => {
-      if (requestIsCurrent()) {
-        setDetailTask(current => current?.name === task.name ? fullTask : current)
-      }
-    }).catch(err => {
-      if (requestIsCurrent()) {
-        notify({ tone: 'error', title: t("Could not load task details"), detail: errorMessage(err) })
-      }
-    })
-  }, [selectMode, toggleSelect, notify, workspaceEpoch])
+    loadDetailTask(task)
+  }, [selectMode, toggleSelect, loadDetailTask])
 
   const closeDetailPanel = useCallback(() => {
     detailRequestSeqRef.current += 1

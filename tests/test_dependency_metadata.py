@@ -107,7 +107,8 @@ def test_ci_installs_declared_web_test_dependencies():
     assert any(item.startswith("httpx2>=") for item in optional["test"])
     assert any(item.startswith("tomli>=") for item in optional["test"])
     assert any(item.startswith("flake8>=") for item in optional["lint"])
-    assert 'pip install -e ".[test,lint]"' in workflow
+    assert 'pip install -e ".[test]"' in workflow
+    assert 'python -m pip install -e ".[lint]"' in workflow
 
 
 def test_python_version_metadata_matches_modern_type_syntax():

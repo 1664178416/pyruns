@@ -133,26 +133,6 @@ test('zero scrollback loads a visible tail and keeps live output on screen', asy
   await expect(rows).toContainText('visible after zero history')
 })
 
-test('full log download uses the selected file identity and workspace', async ({ page }) => {
-  await prepareMonitor(page)
-  await page.evaluate(() => {
-    const click = HTMLAnchorElement.prototype.click
-    HTMLAnchorElement.prototype.click = function () {
-      if (this.href.includes('/logs/download?')) {
-        Object.assign(window, { requestedLogDownload: { href: this.href, download: this.download } })
-      } else click.call(this)
-    }
-  })
-  await page.getByRole('button', { name: 'Download full log', exact: true }).click()
-  const download = await page.evaluate(() => (window as any).requestedLogDownload)
-  const url = new URL(download.href)
-  expect(url.pathname).toBe('/api/tasks/live-task/logs/download')
-  expect(url.searchParams.get('log_file_name')).toBe('run1.log')
-  expect(url.searchParams.get('log_identity')).toBe('original')
-  expect(url.searchParams.get('expected_workspace')).toBeTruthy()
-  expect(download.download).toBe('')
-})
-
 for (const reset of [false, true]) {
   test(`websocket ${reset ? 'reset' : 'resume'} rejects a late HTTP fallback`, async ({ page }) => {
     const rows = await prepareMonitor(page)

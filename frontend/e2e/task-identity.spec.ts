@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 for (const field of ['notes', 'env'] as const) {
   test(`a ${field} draft cannot overwrite a replacement task with the same name`, async ({ page }) => {
@@ -68,4 +68,161 @@ for (const field of ['notes', 'env'] as const) {
     if (field === 'notes') expect(notes).toBe('replacement draft')
     else expect(env).toEqual({ NEW: 'replacement draft' })
   })
+}
+
+async function installDetailFixture(page: Page, view: 'manager' | 'monitor') {
+  const now = new Date()
+  await page.clock.install({ time: now })
+  await page.clock.pauseAt(new Date(now.getTime() + 100))
+  const state = {
+    identity: 'original-task', status: 'running', run: 1, progress: 0,
+    record: 'original-record', holdNextDetail: false,
+    releaseDetail: null as null | (() => void),
+  }
+  const task = (summary = false) => ({
+    name: 'alpha', status: state.status, task_kind: 'shell', dir: '/tmp/alpha',
+    task_identity: state.identity, config_file: '/tmp/alpha/config.sh',
+    config: {}, config_text: summary ? '' : `echo ${state.identity}`, preview_text: `echo ${state.identity}`,
+    created_at: '2026-10-15_12-00-00', run_index: state.run, progress: state.progress,
+    pinned: false, notes: '', env: {},
+    start_times: ['2026-10-15_12-00-00'],
+    finish_times: state.status === 'running' ? [] : ['2026-10-15_12-00-10'],
+    pids: [123], run_statuses: [state.status],
+    records: summary ? [] : [{ result: state.record }], tracks: [],
+  })
+  let summaryReads = 0
+  const detailReads: string[] = []
+  await page.route('**/api/tasks?*', route => {
+    summaryReads++
+    return route.fulfill({ json: { items: [task(true)], total: 1, offset: 0, limit: 50, has_more: false } })
+  })
+  await page.route('**/api/tasks/alpha?*', async route => {
+    if (new URL(route.request().url()).searchParams.get('summary') === 'true') {
+      return route.fulfill({ json: task(true) })
+    }
+    const captured = task()
+    detailReads.push(captured.task_identity)
+    if (state.holdNextDetail) {
+      state.holdNextDetail = false
+      await new Promise<void>(resolve => { state.releaseDetail = resolve })
+    }
+    await route.fulfill({ json: captured })
+  })
+  await page.route('**/api/tasks/alpha/runs/1/input**', route => route.fulfill({ json: {
+    input: { payload_text: `echo saved-${state.identity}`, workdir: '/tmp', environment: {}, shell_executable: '/bin/bash' },
+  } }))
+  await page.route('**/api/tasks/alpha/logs**', route => route.fulfill({ json: {
+    content: '', selected_log: 'run1.log', available_logs: ['run1.log'], offset: 0, log_identity: state.identity,
+  } }))
+  await page.routeWebSocket('**/api/tasks/alpha/logs/stream?*', socket => {
+    socket.send(JSON.stringify({ type: 'ready', task_name: 'alpha', log_file_name: 'run1.log', offset: 0 }))
+  })
+  await page.route('**/api/tasks/alpha/runs/1/compare**', route => {
+    const run = { reference: 'alpha@1', record: {}, input_available: true, source_state: state.identity }
+    return route.fulfill({ json: { left: run, right: run, input_diff: {
+      available: true, equal: false, changed_fields: ['payload_text'], diff: `comparison-${state.identity}`,
+    } } })
+  })
+  let send: undefined | ((value: string) => void)
+  await page.routeWebSocket('**/api/tasks/events?*', socket => {
+    send = value => socket.send(value)
+    socket.send(JSON.stringify({ type: 'ready' }))
+  })
+  await page.goto(`/${view}?token=pyruns-e2e-access-token`)
+  const openDetail = page.getByRole('button', { name: view === 'manager' ? 'Open details for alpha' : 'View Details', exact: true })
+  await expect(openDetail).toBeVisible()
+  await expect.poll(() => Boolean(send)).toBe(true)
+  await page.clock.runFor(250)
+  const invalidate = async () => {
+    const before = summaryReads
+    send!(JSON.stringify({ type: 'changed' }))
+    await page.clock.runFor(250)
+    await expect.poll(() => summaryReads).toBeGreaterThan(before)
+    await page.clock.runFor(250)
+  }
+  return { state, detailReads, invalidate, openDetail }
+}
+
+for (const view of ['manager', 'monitor'] as const) {
+test(`${view} same-name replacement reloads detail and discards saved input and comparison state`, async ({ page }) => {
+  const { state, detailReads, invalidate, openDetail } = await installDetailFixture(page, view)
+  await openDetail.click()
+  const panel = page.getByRole('dialog', { name: 'Task details for alpha' })
+  const history = panel.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Run #1' }) })
+  await history.locator('summary').click()
+  await expect(history).toContainText('original-record')
+  await history.getByRole('button', { name: 'Saved input', exact: true }).click()
+  await expect(history).toContainText('echo saved-original-task')
+  await history.getByRole('button', { name: 'Compare runs', exact: true }).click()
+  await history.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(history).toContainText('comparison-original-task')
+
+  state.identity = 'replacement-task'
+  state.record = 'replacement-record'
+  await invalidate()
+  await expect.poll(() => detailReads).toEqual(['original-task', 'replacement-task'])
+  await expect(panel.getByText('comparison-original-task', { exact: true })).toHaveCount(0)
+  await expect(history).not.toHaveAttribute('open')
+  await history.locator('summary').click()
+  await expect(history).toContainText('replacement-record')
+  await expect(history).not.toContainText('original-record')
+  await expect(history.getByLabel('Run comparison results')).toHaveCount(0)
+  await history.getByRole('button', { name: 'Saved input', exact: true }).click()
+  await expect(history).toContainText('echo saved-replacement-task')
+  await panel.getByRole('tab', { name: 'Script', exact: true }).click()
+  await expect(panel.getByRole('tabpanel')).toContainText('echo replacement-task')
+  await expect(panel.getByRole('tabpanel')).not.toContainText('echo original-task')
+})
+
+test(`${view} a delayed original detail response cannot replace a newer task identity`, async ({ page }) => {
+  const { state, detailReads, invalidate, openDetail } = await installDetailFixture(page, view)
+  state.holdNextDetail = true
+  await openDetail.click()
+  await expect.poll(() => Boolean(state.releaseDetail)).toBe(true)
+  const panel = page.getByRole('dialog', { name: 'Task details for alpha' })
+  await panel.getByRole('tab', { name: 'Notes', exact: true }).click()
+  await panel.getByRole('textbox', { name: 'Task notes' }).fill('keep my draft')
+  state.identity = 'replacement-task'
+  await invalidate()
+  await expect.poll(() => detailReads).toEqual(['original-task', 'replacement-task'])
+  state.releaseDetail!()
+  await page.clock.runFor(250)
+  await expect(panel.getByRole('textbox', { name: 'Task notes' })).toHaveValue('keep my draft')
+  await panel.getByRole('tab', { name: 'Script', exact: true }).click()
+  await expect(panel.getByRole('tabpanel')).toContainText('echo replacement-task')
+  await expect(panel.getByRole('tabpanel')).not.toContainText('echo original-task')
+})
+
+test(`${view} run boundaries refresh records while ordinary progress updates preserve detail and drafts`, async ({ page }) => {
+  const { state, detailReads, invalidate, openDetail } = await installDetailFixture(page, view)
+  await openDetail.click()
+  await expect.poll(() => detailReads.length).toBe(1)
+  const panel = page.getByRole('dialog', { name: 'Task details for alpha' })
+  await panel.getByRole('tab', { name: 'Notes', exact: true }).click()
+  await panel.getByRole('textbox', { name: 'Task notes' }).fill('keep notes')
+  await panel.getByRole('tab', { name: 'Env', exact: true }).click()
+  await panel.getByRole('button', { name: 'Add environment variable' }).click()
+  await panel.getByRole('textbox', { name: 'Environment variable key' }).fill('LOCAL')
+  await panel.getByRole('textbox', { name: 'Environment variable value' }).fill('keep env')
+  state.progress = 50
+  await invalidate()
+  expect(detailReads).toHaveLength(1)
+
+  state.status = 'completed'
+  state.record = 'completed-record'
+  await invalidate()
+  await expect.poll(() => detailReads.length).toBe(2)
+  await expect(panel.getByRole('textbox', { name: 'Environment variable value' })).toHaveValue('keep env')
+  await panel.getByRole('tab', { name: 'Notes', exact: true }).click()
+  await expect(panel.getByRole('textbox', { name: 'Task notes' })).toHaveValue('keep notes')
+  await panel.getByRole('tab', { name: 'Info', exact: true }).click()
+  const history = panel.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'Run #1' }) })
+  await history.locator('summary').click()
+  await expect(history).toContainText('completed-record')
+  await invalidate()
+  expect(detailReads).toHaveLength(2)
+  state.run = 2
+  await invalidate()
+  await expect.poll(() => detailReads.length).toBe(3)
+})
 }

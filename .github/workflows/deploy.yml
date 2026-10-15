@@ -3,6 +3,11 @@ name: Deploy documentation
 on:
   push:
     branches: [main]
+    paths:
+      - "docs/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:
