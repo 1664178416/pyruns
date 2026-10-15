@@ -108,6 +108,25 @@ pyr stop train
 
 取消请求会送到真正拥有该任务的 runner，而不是只修改显示状态。
 
+### 等待 GPU 空闲后自动运行
+
+GPU 任务可同时使用 `-d` 和 `--gpu-wait`，在后台排队，达标后自动执行：
+
+```bash
+pyr exec -n gpu-train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
+# 多行脚本也支持 GPU 等待，并保存完整正文
+pyr exec -nt gpu-pipeline -d --gpu-wait 1-8 --stdin < pipeline.sh
+```
+
+规则依次为 **卡数-每卡空闲 GiB-最低 GPU 空闲率 %-连续满足秒数-最长等待小时**。
+`2-20-70-15-2` 要求两张卡同时各自空闲至少 20 GiB、空闲率至少 70%，连续满足
+15 秒后启动，最多排队 2 小时；空闲率是 `100 - GPU 利用率`。`1-8` 省略尾项，
+默认 70% 空闲、持续 15 秒、最多等待 48 小时。超时只限制排队时间。
+
+用 `pyr show gpu-train` 查看规则和等待原因，`pyr metrics` 查看当前 GPU 指标。
+规则保存到任务，重跑自动复用。
+指定卡、单位和其他细节见 [GPU 等待规则](cli-guide.md#gpu-wait) 或 `pyr exec --help`。
+
 ## 4. 使用 `-c` 执行完整命令
 
 普通程序和脚本文件都使用 `-c "完整命令"`。脚本需要的解释器写在命令内，

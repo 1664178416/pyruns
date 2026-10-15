@@ -74,12 +74,36 @@ pyr ui shell
 - 每个任务都有稳定目录，不再靠终端滚屏和记忆找结果。
 - 命令、参数、环境变量、日志、指标和 artifacts 一起落盘。
 - Shell 命令与 Python 配置实验使用同一套任务生命周期。
+- `--gpu-wait` 按卡数、每卡空闲显存和空闲率等待 GPU 达标后自动运行。
 - CLI 一次调用完成一件事，适合人、脚本、CI 和 AI agent。
 - 前台执行返回真实结果；批量任务任一失败，整体退出非零。
 - detached runner 独立于调用终端；Windows 上的任务进程和后台探测也不会弹出额外控制台窗口。
 - Web UI 与 CLI 共享磁盘状态，不存在两套数据源。
 
 ![Home](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/tab_home.png)
+
+## 等待 GPU 空闲后自动运行
+
+`exec` 和 `run` 都支持 `--gpu-wait`，用一组数字描述启动条件：
+
+```text
+卡数-每卡空闲GiB-最低GPU空闲率%-连续满足秒数-最长等待小时
+```
+
+```bash
+pyr exec -n gpu-train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
+# 也可保存完整的多行脚本，等待 GPU 后运行
+pyr exec -nt gpu-pipeline -d --gpu-wait 1-8 --stdin < pipeline.sh
+```
+
+`2-20-70-15-2` 表示两张卡同时各自至少空闲 **20 GiB**、GPU 空闲率至少 **70%**，
+连续满足 **15 秒**后启动，最多排队 **2 小时**。空闲率是 `100 - GPU 利用率`；
+超时只限制排队，不限制命令运行时长。`1-8` 是简写：一张卡、至少空闲 8 GiB，
+其余默认 **70% 空闲、持续 15 秒、最多等待 48 小时**。`-d` 让排队和运行都在后台进行。
+
+规则随任务保存，重跑自动复用。
+用 `pyr show gpu-train` 查看规则和等待原因，`pyr metrics` 查看当前 GPU 指标。
+指定卡、单位等完整说明见 [CLI 指南](docs/cli-guide.md) 或 `pyr exec --help`。
 
 ## Git 式 CLI
 

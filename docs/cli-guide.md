@@ -342,7 +342,7 @@ pyr exec --name train --detach -c "python train.py --epochs 100"
 pyr -w shell wait train
 ```
 
-### 等待 GPU：`--gpu-wait`
+### 等待 GPU：`--gpu-wait` {#gpu-wait}
 
 `exec` 和 `run` 使用同一条紧凑规则，裸数字的单位与 Web UI 一致：
 
@@ -364,7 +364,8 @@ pyr -w train run --config sweep.yaml --gpu-wait 1-8
 
 - 可以省略尾项：`1-8` 默认空闲率 70%、持续 15 秒、最多等待 48 小时。
 - 持续时间 `0` 表示一旦满足条件即启动；超时 `0` 表示无限等待。
-- `off` 显式停用此任务的 GPU 等待；`device=0,1-20-70-15-2` 指定两张物理卡的索引。
+- `off` 用于关闭任务的 GPU 等待规则：`pyr run TASK --gpu-wait off`，后续重跑也沿用停用状态。
+- `device=0,1-20-70-15-2` 指定两张物理卡的索引。
 - 显式单位不区分大小写：`G/GiB`、`M/MiB` 为二进制，`GB/MB` 为十进制；时间接受
   `s/sec`、`m/min`、`h/hr`，例如 `2-20480MiB-70%-15SEC-120MIN`。
 - 规则保存到任务，后续 CLI 和 UI 重跑会复用；再次传 `--gpu-wait` 可以更新规则。

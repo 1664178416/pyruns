@@ -21,6 +21,7 @@ export default defineConfig({
           { text: "批量生成语法", link: "/batch-syntax" },
           { text: "Web 界面操作", link: "/ui-guide" },
           { text: "命令行 CLI 控制", link: "/cli-guide" },
+          { text: "GPU 空闲等待", link: "/cli-guide#gpu-wait" },
         ],
       },
       {
