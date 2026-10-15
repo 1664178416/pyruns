@@ -10,6 +10,7 @@ from typing import TypedDict
 import regex
 
 REGEX_TIMEOUT_SECONDS = 0.2
+REGEX_CONCURRENT_MIN_CHARS = 4096
 DEFAULT_MAX_SEARCH_RESULTS = 20_000
 
 
@@ -102,10 +103,13 @@ class SearchQuery:
         if self.cancelled is not None and self.cancelled.is_set():
             raise CancelledError()
         text = self.normalize(str(text or ""))
+        # regex uses process CPU time for its timeout. Avoid releasing the GIL
+        # for short fields, where competing threads can exhaust that budget.
+        concurrent = len(text) >= REGEX_CONCURRENT_MIN_CHARS
         try:
             return {
                 needle for needle in self.needles
-                if (self.patterns[needle].search(text, timeout=REGEX_TIMEOUT_SECONDS, concurrent=True)
+                if (self.patterns[needle].search(text, timeout=REGEX_TIMEOUT_SECONDS, concurrent=concurrent)
                     if self.patterns else needle in text)
             }
         except TimeoutError as exc:
@@ -117,6 +121,7 @@ class SearchQuery:
             raise CancelledError()
         text = str(text or "")
         normalized = self.normalize(text)
+        concurrent = len(normalized) >= REGEX_CONCURRENT_MIN_CHARS
         count = 0
         found: set[str] = set()
         spans: list[tuple[int, int]] = []
@@ -124,7 +129,7 @@ class SearchQuery:
             for needle in self.needles:
                 if self.patterns:
                     kept = 0
-                    for match in self.patterns[needle].finditer(normalized, timeout=REGEX_TIMEOUT_SECONDS, concurrent=True):
+                    for match in self.patterns[needle].finditer(normalized, timeout=REGEX_TIMEOUT_SECONDS, concurrent=concurrent):
                         if max_count is not None and count >= max_count:
                             break
                         found.add(needle)
