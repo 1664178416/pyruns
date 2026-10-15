@@ -3755,6 +3755,59 @@ def test_ui_requests_share_inflight_scan_without_losing_invalidation(tmp_path, f
     assert page.total == (3 if followup == "invalidated" else 2)
 
 
+def test_background_refresh_limits_history_io_and_targeted_invalidations(tmp_path, monkeypatch):
+    import pyruns.core.task_manager as task_manager_module
+
+    clock = MagicMock(wraps=time)
+    clock.monotonic.return_value = 100.0
+    monkeypatch.setattr(task_manager_module, "time", clock)
+    workspace = _make_workspace(tmp_path, "main")
+    for name in ("active", "history", "edited"):
+        _add_task(workspace, name)
+    runtime = _build_runtime(workspace, owns_task_lifecycle=False)
+    try:
+        runtime.ensure_tasks_loaded()
+        manager = runtime.task_manager
+        # Model a locally owned run; the unchanged disk signature must not
+        # cause the refresh to mistake it for an orphaned external process.
+        manager._tasks_by_name["active"]["status"] = "running"
+        manager._running_ids.add("active")
+        changed_config = workspace / TASKS_DIR / "history" / CONFIG_FILENAME
+        changed_config.write_text("epochs: 42\n", encoding="utf-8")
+        with patch.object(manager, "_probe_refresh_task", wraps=manager._probe_refresh_task) as probe:
+            clock.monotonic.return_value = 101.0
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert [call.args[0]["name"] for call in probe.call_args_list] == ["active"]
+            assert not probe.call_args.kwargs["check_payload"]
+            probe.reset_mock()
+
+            clock.monotonic.return_value = 104.0
+            _add_task(workspace, "new")
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert manager.get_task("new") is not None
+            assert [call.args[0]["name"] for call in probe.call_args_list] == ["active"]
+            assert manager.get_task("history")["config"].get("epochs") != 42
+            probe.reset_mock()
+
+            update_task_info(str(workspace / TASKS_DIR / "edited"), lambda info: info.update(notes="changed"))
+            manager.invalidate_ui_snapshot(["edited"])
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert [call.args[0]["name"] for call in probe.call_args_list] == ["edited"]
+            assert manager.get_task("edited")["notes"] == "changed"
+            probe.reset_mock()
+
+            clock.monotonic.return_value = 130.0
+            manager.refresh_ui_snapshot(min_interval=1, payload_interval=30, background=True)
+            assert {call.args[0]["name"] for call in probe.call_args_list} == {"active", "history", "edited", "new"}
+            assert all(call.kwargs["check_payload"] for call in probe.call_args_list)
+            assert manager.get_task("history")["config"]["epochs"] == 42
+            changed_config.write_text("epochs: 43\n", encoding="utf-8")
+            runtime.list_tasks(summary=True, force_refresh=True)
+            assert manager.get_task("history")["config"]["epochs"] == 43
+    finally:
+        runtime.shutdown()
+
+
 def test_metadata_search_cancels_between_lines_without_holding_task_lock(tmp_path, monkeypatch):
     from concurrent.futures import CancelledError
     from pyruns.utils.search_query import SearchQuery

@@ -1096,12 +1096,12 @@ class PyrunsRuntime:
                 self._metrics_sampler = self._metrics_factory()
             return self._metrics_sampler
 
-    def invalidate_cache(self) -> None:
+    def invalidate_cache(self, task_names: List[str] | None = None) -> None:
         """Invalidate the snapshot shared by UI requests and the scheduler."""
         with self._lock:
             manager = self._task_manager
         if manager is not None:
-            manager.invalidate_ui_snapshot()
+            manager.invalidate_ui_snapshot(task_names)
 
     @_with_stable_workspace
     def ensure_tasks_loaded(self, *, full_refresh: bool = False, force_refresh: bool = False) -> None:
@@ -1424,7 +1424,7 @@ class PyrunsRuntime:
         task = self.require_task(task_name, summary=True)
         if task.get("_load_error"):
             raise ValueError(str(task["_load_error"]))
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         started = self.task_manager.start_task_now(task_name)
         if not started:
             raise ValueError(f"Task '{task_name}' could not be started")
@@ -1447,7 +1447,7 @@ class PyrunsRuntime:
                 return self.get_task(task_name, include_tracks=include_tracks) or task
             raise ValueError(f"Task '{task_name}' cannot be cancelled")
         requested_run_index = active_task_run_index(info)
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         ok = manager.request_task_cancel(
             task_name,
             expected_runner_id=str(info.get("runner_id", "") or ""),
@@ -1500,7 +1500,7 @@ class PyrunsRuntime:
         if not normalized_names:
             raise ValueError("No valid tasks were provided for batch run.")
 
-        self.invalidate_cache()
+        self.invalidate_cache(normalized_names)
         claimed_names = self.task_manager.start_batch_tasks(
             normalized_names,
             max_workers=max_workers,
@@ -1577,7 +1577,7 @@ class PyrunsRuntime:
     ) -> Dict[str, Any]:
         """Toggle or set one task's pinned state."""
         self.require_task(task_name, refresh=False, summary=True)
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         ok, result = self.task_manager.set_task_pinned(task_name, pinned)
         if not ok:
             if str(result) == "Task not found":
@@ -1633,7 +1633,7 @@ class PyrunsRuntime:
     ) -> Dict[str, Any]:
         """Persist notes for one task."""
         self.require_task(task_name, refresh=False, summary=True)
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         try:
             ok, result = self.task_manager.update_task_notes(task_name, notes, expected_notes)
         except TaskStateConflict as exc:
@@ -1655,7 +1655,7 @@ class PyrunsRuntime:
     ) -> Dict[str, Any]:
         """Persist env vars for one task."""
         self.require_task(task_name, refresh=False, summary=True)
-        self.invalidate_cache()
+        self.invalidate_cache([task_name])
         try:
             ok, result = self.task_manager.update_task_env(task_name, env, expected_env)
         except TaskStateConflict as exc:

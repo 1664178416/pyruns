@@ -162,6 +162,9 @@ class TaskManager:
         self._ui_refresh_revision = 0
         self._last_ui_refresh_time: float | None = None
         self._last_payload_refresh_time: float | None = None
+        self._last_active_refresh_time: float | None = None
+        self._last_discovery_refresh_time: float | None = None
+        self._dirty_ui_tasks: set[str] = set()
         self._executor_lock = threading.Lock()
         self._shutdown_lock = threading.RLock()
         self._shutdown_event = threading.Event()
@@ -1356,12 +1359,17 @@ class TaskManager:
         self._refresh_derived_fields(task)
         return task
 
-    def invalidate_ui_snapshot(self) -> None:
+    def invalidate_ui_snapshot(self, task_names: List[str] | None = None) -> None:
         """Request a new UI snapshot without waiting for an ongoing disk scan."""
         with self._lock:
             self._ui_refresh_revision += 1
-            self._last_ui_refresh_time = None
-            self._last_payload_refresh_time = None
+            if task_names is None:
+                self._last_ui_refresh_time = None
+                self._last_payload_refresh_time = None
+                self._last_active_refresh_time = None
+                self._last_discovery_refresh_time = None
+            else:
+                self._dirty_ui_tasks.update(task_names)
 
     def refresh_ui_snapshot(
         self,
@@ -1369,6 +1377,7 @@ class TaskManager:
         min_interval: float = 4.0,
         payload_interval: float = 4.0,
         force: bool = False,
+        background: bool = False,
     ) -> bool | None:
         """Share one disk reconciliation between UI requests and the scheduler.
 
@@ -1386,17 +1395,43 @@ class TaskManager:
                 payload_due = force or self._last_payload_refresh_time is None or (
                     now - self._last_payload_refresh_time >= payload_interval
                 )
-            if not state_due and not payload_due:
+                active_due = background and (
+                    force or self._last_active_refresh_time is None
+                    or now - self._last_active_refresh_time >= min_interval
+                )
+                # Background consumers share the current registry. Only their
+                # periodic full reconciliation checks historical task payloads.
+                if background:
+                    state_due = payload_due
+                full_check = state_due or payload_due
+                discover = full_check or (background and (
+                    self._last_discovery_refresh_time is None
+                    or now - self._last_discovery_refresh_time >= 4.0
+                ))
+                dirty = set(self._dirty_ui_tasks)
+                targets = dirty | {
+                    task["name"] for task in self.tasks
+                    if active_due and (task["status"] in ("running", "queued")
+                                       or task.get("_terminal_write_pending"))
+                }
+            if not state_due and not payload_due and not active_due and not discover and not dirty:
                 return None
             changed = self.refresh_from_disk(
-                check_all=True, discover=True, check_payload=payload_due,
+                task_ids=sorted(targets) if targets and not full_check else None,
+                check_all=full_check, discover=discover,
+                check_payload=payload_due or bool(dirty),
             )
             # Time the cooldown from completion, including slow NFS reads. An
             # invalidation during I/O must survive until a subsequent scan.
             completed = time.monotonic()
             with self._lock:
                 if revision == self._ui_refresh_revision:
-                    self._last_ui_refresh_time = completed
+                    self._dirty_ui_tasks.difference_update(dirty)
+                    self._last_active_refresh_time = completed
+                    if full_check:
+                        self._last_ui_refresh_time = completed
+                    if discover:
+                        self._last_discovery_refresh_time = completed
                     if payload_due:
                         self._last_payload_refresh_time = completed
         if changed:
@@ -3104,7 +3139,10 @@ class TaskManager:
             try:
                 now = time.monotonic()
                 snapshot_refreshed = self.has_reactive_watchers() and (
-                    self.refresh_ui_snapshot(min_interval=_REACTIVE_DISK_REFRESH_INTERVAL_SEC) is not None
+                    self.refresh_ui_snapshot(
+                        min_interval=_REACTIVE_DISK_REFRESH_INTERVAL_SEC,
+                        payload_interval=30.0, background=True,
+                    ) is not None
                 )
                 should_refresh = (
                     self._running_ids or

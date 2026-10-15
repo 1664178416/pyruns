@@ -5795,7 +5795,8 @@ def test_task_manager_scheduler_refresh_ignores_wall_clock_adjustments(tmp_path,
     updates = []
 
     def refresh(**kwargs):
-        assert kwargs == {"check_all": True, "discover": True, "check_payload": not refreshes}
+        assert kwargs == {"task_ids": None, "check_all": not refreshes,
+                          "discover": not refreshes, "check_payload": not refreshes}
         refreshes.append(elapsed_now[0])
         return True
 
