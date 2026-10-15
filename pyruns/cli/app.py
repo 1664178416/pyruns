@@ -105,6 +105,139 @@ class _ArgumentParser(argparse.ArgumentParser):
             self.error(message)
         super()._check_value(action, value)
 
+    def parse_args(self, args=None, namespace=None):
+        """Parse argv while keeping ``exec -c`` options ergonomic.
+
+        ``exec`` retains a hidden ``REMAINDER`` positional for compatibility with
+        unquoted ``-c`` commands.  Argparse consequently treats every token after
+        the command value as that remainder, including normal Pyruns options.  Move
+        an immediately following, recognised exec-option segment before ``-c``;
+        command text already inside one argv token remains untouched.
+        """
+
+        values = list(sys.argv[1:] if args is None else args)
+        return super().parse_args(_normalize_exec_option_order(values), namespace)
+
+
+_EXEC_FLAG_OPTIONS = frozenset({"-h", "--help", "-d", "--detach", "--dry-run", "--json"})
+_EXEC_VALUE_OPTIONS = frozenset(
+    {
+        "-n",
+        "--name",
+        "-nt",
+        "--name-timestamp",
+        "--gpu-wait",
+        "--env-file",
+    }
+)
+
+
+def _exec_option_token_length(argv: Sequence[str], index: int) -> int | None:
+    """Return the length of one trailing exec option, or ``None`` if unknown.
+
+    The command parser accepts ``-e/--env`` with one or more values, so that
+    option is handled separately and consumes the contiguous value tokens.  A
+    value that starts with ``-`` is left for argparse to report as invalid,
+    matching normal option parsing.
+    """
+
+    token = str(argv[index])
+    if token in _EXEC_FLAG_OPTIONS:
+        return 1
+    if token in _EXEC_VALUE_OPTIONS:
+        if index + 1 >= len(argv) or str(argv[index + 1]).startswith("-"):
+            # Move the option itself so argparse can report its missing value
+            # instead of silently treating it as shell command text.
+            return 1
+        return 2
+    if token == "-e" or token == "--env":
+        value_index = index + 1
+        if value_index >= len(argv) or str(argv[value_index]).startswith("-"):
+            return 1
+        value_index += 1
+        while value_index < len(argv) and not str(argv[value_index]).startswith("-"):
+            value_index += 1
+        return value_index - index
+    for option in (*_EXEC_VALUE_OPTIONS, "-e", "--env"):
+        if token.startswith(option + "="):
+            return 1
+    return None
+
+
+def _normalize_exec_option_order(argv: Sequence[str]) -> list[str]:
+    """Allow recognised ``exec`` options immediately after a quoted ``-c``.
+
+    A quoted command arrives from the calling shell as one argv value.  Legacy
+    unquoted ``-c echo hello`` remains supported: because its first tail token
+    (``hello``) is not an exec option, the entire tail is preserved verbatim.
+    This keeps command arguments such as ``-n`` and ``-d`` safe when they are
+    inside the command string itself.
+    """
+
+    values = [str(item) for item in argv]
+    command_index = None
+    index = 0
+    while index < len(values):
+        token = values[index]
+        if token in {"-C", "--directory", "-w", "--workspace"}:
+            index += 2
+            continue
+        if token.startswith(("--directory=", "--workspace=")):
+            index += 1
+            continue
+        if token in {"-h", "--help", "--debug", "--version"}:
+            index += 1
+            continue
+        if token == "exec":
+            command_index = index
+            break
+        index += 1
+    if command_index is None:
+        return values
+
+    command_option_index = None
+    command_value_end = None
+    index = command_index + 1
+    while index < len(values):
+        token = values[index]
+        if token in {"-c", "--command"}:
+            command_option_index = index
+            command_value_end = index + 2
+            break
+        if token.startswith("--command="):
+            command_option_index = index
+            command_value_end = index + 1
+            break
+        if token == "--stdin":
+            return values
+        length = _exec_option_token_length(values, index)
+        index += length if length is not None else 1
+    if command_option_index is None or command_value_end is None:
+        return values
+    if command_value_end > len(values):
+        return values
+
+    tail_index = command_value_end
+    if _exec_option_token_length(values, tail_index) is None:
+        return values
+
+    moved: list[str] = []
+    index = tail_index
+    while index < len(values):
+        length = _exec_option_token_length(values, index)
+        if length is None:
+            break
+        moved.extend(values[index : index + length])
+        index += length
+    if not moved:
+        return values
+    return (
+        values[:command_option_index]
+        + moved
+        + values[command_option_index:command_value_end]
+        + values[index:]
+    )
+
 
 @dataclass(frozen=True)
 class CliContext:

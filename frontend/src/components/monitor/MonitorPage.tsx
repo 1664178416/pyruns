@@ -87,6 +87,7 @@ const RUN_LOG_PATTERN = /^run\d+\.log$/
 // Coalesce tiny stdout chunks so carriage-return progress bars paint as one frame.
 const LOG_STREAM_FLUSH_MS = 50
 const LIVE_LOG_REQUEST_TIMEOUT_MS = 10_000
+const TASK_DETAIL_REQUEST_TIMEOUT_MS = 10_000
 // Cancel any incomplete escape sequence, then reset in xterm's write queue.
 // A synchronous reset can be overtaken by pending writes from the previous log.
 const TERMINAL_RESET_SEQUENCE = '\x18\x1bc'
@@ -211,6 +212,7 @@ export default function MonitorPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const detailTaskRef = useRef(detailTask)
   const detailRequestSeqRef = useRef(0)
+  const detailTaskControllerRef = useRef<AbortController | null>(null)
   detailTaskRef.current = detailTask
   const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<Task | null>(null)
   const [streamStatus, setStreamStatus] = useState<LogStreamStatus>('idle')
@@ -303,19 +305,34 @@ export default function MonitorPage() {
     const requestId = ++detailRequestSeqRef.current
     const requestedKey = taskDetailRefreshKey(task)
     const requestedWorkspaceKey = workspaceKeyRef.current
+    detailTaskControllerRef.current?.abort()
+    const controller = new AbortController()
+    detailTaskControllerRef.current = controller
+    let timedOut = false
+    const timeout = window.setTimeout(
+      () => {
+        timedOut = true
+        controller.abort(new Error('Task detail loading timed out. Please retry.'))
+      },
+      TASK_DETAIL_REQUEST_TIMEOUT_MS,
+    )
     const requestIsCurrent = () => requestId === detailRequestSeqRef.current
       && workspaceEpoch === useWorkspaceStore.getState().workspaceEpoch
       && detailWorkspaceKeyRef.current === requestedWorkspaceKey
-    void api.getTask(task.name).then(fullTask => {
-      if (!requestIsCurrent()) return
+    void api.getTask(task.name, true, false, controller.signal).then(fullTask => {
+      if (!requestIsCurrent() || controller.signal.aborted) return
       setDetailTask(current => current?.name === task.name && taskDetailRefreshKey(current) === requestedKey
         ? fullTask : current)
     }).catch(err => {
-      if (requestIsCurrent()) {
+      if (requestIsCurrent() && (!controller.signal.aborted || timedOut)) {
         notify({ tone: 'error', title: t('Could not load task details'), detail: errorMessage(err) })
       }
+    }).finally(() => {
+      window.clearTimeout(timeout)
+      if (detailTaskControllerRef.current === controller) detailTaskControllerRef.current = null
     })
   }, [notify, workspaceEpoch])
+  useEffect(() => () => detailTaskControllerRef.current?.abort(), [workspaceEpoch])
   const pendingMonitorSidebarWidthRef = useRef(monitorSidebarWidthPct)
   const monitorResizeFrameRef = useRef<number | null>(null)
   const terminalVisible = Boolean(selectedTaskName)
@@ -2098,6 +2115,8 @@ export default function MonitorPage() {
           task={detailTask}
           onClose={() => {
             detailRequestSeqRef.current += 1
+            detailTaskControllerRef.current?.abort()
+            detailTaskControllerRef.current = null
             detailWorkspaceKeyRef.current = ''
             setDetailTask(null)
           }}

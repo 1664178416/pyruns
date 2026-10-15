@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 
@@ -749,7 +750,10 @@ def test_react_task_lists_use_summaries_and_fetch_full_details_on_open():
     assert "Math.floor((page.total - 1) / limit) * limit" in store
     assert "retryPage = await api.getTasks" in store
     assert "api.getTask(task.name).then(fullTask" in manager
-    assert "api.getTask(task.name).then(fullTask" in monitor
+    assert re.search(
+        r"api\.getTask\(\s*task\.name\s*,\s*true\s*,\s*false\s*,\s*controller\.signal\s*\)\s*\.then\(\s*fullTask",
+        monitor,
+    )
     assert "dropIndicator" in manager
     assert "data-task-card={task.name}" in manager
     assert "data-task-card-pinned={task.pinned ? 'true' : 'false'}" in manager

@@ -79,6 +79,18 @@ async function installDetailFixture(page: Page, view: 'manager' | 'monitor') {
     record: 'original-record', holdNextDetail: false,
     releaseDetail: null as null | (() => void),
   }
+  await page.addInitScript(() => {
+    const state = { detailAborts: 0 }
+    Object.assign(window, { taskDetailLifecycle: state })
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), location.origin)
+      if (url.pathname === '/api/tasks/alpha' && init?.signal) {
+        init.signal.addEventListener('abort', () => { state.detailAborts++ }, { once: true })
+      }
+      return originalFetch(input, init)
+    }) as typeof window.fetch
+  })
   const task = (summary = false) => ({
     name: 'alpha', status: state.status, task_kind: 'shell', dir: '/tmp/alpha',
     task_identity: state.identity, config_file: '/tmp/alpha/config.sh',
@@ -143,6 +155,21 @@ async function installDetailFixture(page: Page, view: 'manager' | 'monitor') {
   return { state, detailReads, invalidate, openDetail }
 }
 
+test('monitor closes the detail panel and cancels its pending refresh', async ({ page }) => {
+  const { state, openDetail } = await installDetailFixture(page, 'monitor')
+  state.holdNextDetail = true
+  await openDetail.click()
+  await expect.poll(() => Boolean(state.releaseDetail)).toBe(true)
+  const panel = page.getByRole('dialog', { name: 'Task details for alpha' })
+  await panel.getByRole('button', { name: 'Close task details', exact: true }).click()
+  await expect(panel).toBeHidden()
+  await expect.poll(() => page.evaluate(() => (window as typeof window & {
+    taskDetailLifecycle: { detailAborts: number }
+  }).taskDetailLifecycle.detailAborts)).toBe(1)
+  state.releaseDetail!()
+  await page.clock.runFor(250)
+})
+
 for (const view of ['manager', 'monitor'] as const) {
 test(`${view} same-name replacement reloads detail and discards saved input and comparison state`, async ({ page }) => {
   const { state, detailReads, invalidate, openDetail } = await installDetailFixture(page, view)
@@ -185,6 +212,11 @@ test(`${view} a delayed original detail response cannot replace a newer task ide
   state.identity = 'replacement-task'
   await invalidate()
   await expect.poll(() => detailReads).toEqual(['original-task', 'replacement-task'])
+  if (view === 'monitor') {
+    await expect.poll(() => page.evaluate(() => (window as typeof window & {
+      taskDetailLifecycle: { detailAborts: number }
+    }).taskDetailLifecycle.detailAborts)).toBe(1)
+  }
   state.releaseDetail!()
   await page.clock.runFor(250)
   await expect(panel.getByRole('textbox', { name: 'Task notes' })).toHaveValue('keep my draft')

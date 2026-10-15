@@ -32,13 +32,14 @@ jobs:
           python -m pip install -e ".[test]" "omegaconf~=${{ matrix.omegaconf }}.0"
           python -m pip check
       - name: Verify configuration and startup
-        run: >-
-          python -m pytest -q
-          tests/test_config_views.py tests/test_core.py tests/test_task_generator.py
-          tests/test_utils.py::TestYamlIO tests/test_package_imports.py
-          tests/test_dependency_metadata.py
-          tests/test_cli.py::test_cli_dependency_import_failure_is_reported_once
-          --junitxml=test-results/compatibility.xml
+        run: |
+          mkdir -p test-results
+          python -m pytest -q \
+            tests/test_config_views.py tests/test_core.py tests/test_task_generator.py \
+            tests/test_utils.py::TestYamlIO tests/test_package_imports.py \
+            tests/test_dependency_metadata.py \
+            tests/test_cli.py::test_cli_dependency_import_failure_is_reported_once \
+            --junitxml=test-results/compatibility.xml
       - name: Verify clean installation with latest dependencies
         if: matrix.omegaconf == '2.4'
         run: |

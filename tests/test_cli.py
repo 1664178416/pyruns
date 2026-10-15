@@ -580,6 +580,49 @@ def test_exec_parses_timestamped_name_option_without_confusing_exact_name():
     assert parsed.shell_command == _command_string(["python", "-V"])
 
 
+def test_exec_accepts_options_after_quoted_command_without_rewriting_command_text():
+    parser, _commands = build_parser("pyr", show_all_commands=True)
+
+    parsed = parser.parse_args(
+        (
+            "exec",
+            "-c",
+            "echo -n '-d'",
+            "-n",
+            "after-command",
+            "-d",
+            "--json",
+            "--gpu-wait",
+            "2-20-70-15-2",
+        )
+    )
+
+    assert parsed.name == "after-command"
+    assert parsed.detach is True
+    assert parsed.json_output is True
+    assert parsed.gpu_wait == "2-20-70-15-2"
+    assert parsed.shell_command == "echo -n '-d'"
+
+    inline = parser.parse_args(
+        ("exec", "--command=echo hi", "--name=inline", "--detach")
+    )
+    assert inline.name == "inline"
+    assert inline.detach is True
+    assert inline.shell_command == "echo hi"
+
+
+def test_exec_keeps_legacy_unquoted_command_tail_after_non_option_token():
+    parser, _commands = build_parser("pyr", show_all_commands=True)
+
+    parsed = parser.parse_args(
+        ("exec", "-n", "legacy", "-c", "echo", "hello", "-n", "literal")
+    )
+
+    assert parsed.name == "legacy"
+    assert parsed.shell_command == "echo"
+    assert parsed._command_tail == ["hello", "-n", "literal"]
+
+
 def test_json_output_is_strict_and_versioned(capsys):
     from pyruns.cli.commands import CliError, _json_dump
 
