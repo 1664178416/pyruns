@@ -17,7 +17,7 @@ import webbrowser
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Annotated, Any, Awaitable, Literal, TYPE_CHECKING, TypeVar
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 import uvicorn
 from anyio import CancelScope
@@ -42,6 +42,8 @@ from pyruns.utils.log_io import log_file_identity
 from pyruns.utils.shell_runtime import get_follow_shell_runtime
 from pyruns.utils.search_query import DEFAULT_MAX_SEARCH_RESULTS, SearchQueryError
 from pyruns.web.runtime import (
+    LogFileChangedError,
+    OpenedTaskLog,
     PyrunsRuntime,
     TaskEnvConflictError,
     TaskNotesConflictError,
@@ -82,6 +84,8 @@ LOG_STREAM_PENDING_CHARS = 1024 * 1024
 LOG_STREAM_TAIL_INTERVAL_SEC = 0.5
 LOG_STREAM_TAIL_CHUNK_SIZE = 64 * 1024
 LOG_STREAM_EMITTER_QUIET_SEC = 2.0
+LOG_STREAM_HEARTBEAT_SEC = 15.0
+LOG_STREAM_MAX_READ_FAILURES = 3
 TASK_EVENT_HEARTBEAT_SEC = 15.0
 MAX_API_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_TASK_BATCH_ITEMS = 10_000
@@ -134,6 +138,39 @@ async def _acquire_task_event_context(runtime: PyrunsRuntime, workspace_root: st
         await _finish_stream_work(asyncio.to_thread(runtime.release_task_event_stream_context, *context))
         raise asyncio.CancelledError
     return context
+
+
+class _TaskLogDownloadResponse(StreamingResponse):
+    """Stream one pinned handle and close it even before iteration begins."""
+
+    def __init__(self, download: OpenedTaskLog):
+        self.download = download
+
+        async def chunks():
+            remaining = download.size
+            while remaining > 0:
+                chunk, cancelled = await _finish_stream_work(
+                    asyncio.to_thread(download.handle.read, min(64 * 1024, remaining))
+                )
+                if cancelled:
+                    raise asyncio.CancelledError
+                if not chunk:
+                    raise EOFError("Log truncated while downloading")
+                remaining -= len(chunk)
+                yield chunk
+
+        super().__init__(chunks(), media_type="application/octet-stream", headers={
+            "Content-Disposition": f"attachment; filename*=utf-8''{quote(download.filename, safe='')}",
+            "Content-Length": str(download.size),
+            "Accept-Ranges": "none",
+            "X-Pyruns-Log-Identity": download.identity,
+        })
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await _finish_stream_work(asyncio.to_thread(self.download.handle.close))
 
 
 def _compact_monitor_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -1231,7 +1268,7 @@ def create_app(
         offset: int | None = Query(default=None, ge=0),
         log_identity: str | None = Query(default=None, max_length=512),
         tail_bytes: int | None = Query(default=None, ge=1, le=MAX_LOG_RESPONSE_BYTES),
-        tail_lines: int | None = Query(default=None, ge=1, le=MAX_LOG_TAIL_LINES),
+        tail_lines: int | None = Query(default=None, ge=0, le=MAX_LOG_TAIL_LINES),
         chunk_size: int | None = Query(default=None, ge=1, le=MAX_LOG_RESPONSE_BYTES),
     ) -> dict[str, Any]:
         try:
@@ -1246,6 +1283,29 @@ def create_app(
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"Task '{task_name}' not found") from exc
+
+    @app.get("/api/tasks/{task_name}/logs/download")
+    async def download_task_log(
+        task_name: str,
+        log_file_name: str = Query(min_length=1, max_length=255),
+        log_identity: str | None = Query(default=None, max_length=512),
+        expected_workspace: Annotated[str | None, Query(max_length=MAX_PATH_CHARS)] = None,
+    ) -> Response:
+        try:
+            download, cancelled = await _finish_stream_work(asyncio.to_thread(
+                get_runtime().open_task_log_download, task_name, log_file_name,
+                log_identity=log_identity, expected_workspace_root=expected_workspace,
+            ))
+        except (KeyError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="Task log not found") from exc
+        except LogFileChangedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if cancelled:
+            await _finish_stream_work(asyncio.to_thread(download.handle.close))
+            raise asyncio.CancelledError
+        return _TaskLogDownloadResponse(download)
 
     @app.websocket("/api/tasks/events")
     async def stream_task_events(
@@ -1376,6 +1436,10 @@ def create_app(
             root, task = runtime.get_task_log_stream_context(
                 task_name, **({"workspace_root": expected_workspace} if expected_workspace is not None else {})
             )
+            if log_file_name and (
+                "/" in log_file_name or "\\" in log_file_name or log_file_name in {".", ".."}
+            ):
+                raise ValueError("Invalid log filename")
             return root, os.path.normcase(os.path.abspath(str(task["dir"])))
 
         try:
@@ -1387,6 +1451,10 @@ def create_app(
         except WorkspaceChangedError:
             await websocket.accept()
             await websocket.close(code=4409, reason="Workspace changed")
+            return
+        except ValueError:
+            await websocket.accept()
+            await websocket.close(code=4400, reason="Invalid log file")
             return
 
         requested_log_name = str(log_file_name or "").strip()
@@ -1413,6 +1481,9 @@ def create_app(
         pending_run_chars = 0
         pending_run_overflow = False
         last_emitter_chunk_at = 0.0
+        health_sent = False
+        last_health_at = 0.0
+        read_failures = 0
 
         def written_byte_length(chunk_text: str, metadata: dict[str, Any] | None) -> int:
             try:
@@ -1522,12 +1593,26 @@ def create_app(
                     message["offset"] = chunk_offset
             enqueue_message(message)
 
+        async def mark_healthy() -> None:
+            nonlocal health_sent, last_health_at, read_failures
+            read_failures = 0
+            now = time.monotonic()
+            if not health_sent or now - last_health_at >= LOG_STREAM_HEARTBEAT_SEC:
+                await queue.put({"type": "heartbeat" if health_sent else "ready", "task_name": task_name})
+                health_sent = True
+                last_health_at = now
+
+        async def read_logs(**kwargs):
+            payload = await asyncio.to_thread(runtime.get_task_logs, task_name, strict=True, **kwargs)
+            await mark_healthy()
+            return payload
+
         def read_log_state(log_name: str) -> tuple[str, int]:
             path = validate_task_log_path(stream_task_dir, log_name)
-            identity = log_file_identity(path)
+            identity = log_file_identity(path, strict=True)
             try:
                 size = os.path.getsize(path)
-            except OSError:
+            except FileNotFoundError:
                 size = 0
             return identity, size
 
@@ -1540,7 +1625,7 @@ def create_app(
         async def tail_log_file() -> None:
             nonlocal stream_initialized, stream_log_name, stream_offset, stream_identity, replaying_backlog
             nonlocal pending_run_log, pending_run_chars, pending_run_overflow
-            nonlocal close_code
+            nonlocal close_code, read_failures
             while not disconnected.is_set():
                 tail_wakeup.clear()
                 try:
@@ -1549,18 +1634,14 @@ def create_app(
                         break
                     if not stream_initialized:
                         if requested_offset is None:
-                            payload = await asyncio.to_thread(
-                                runtime.get_task_logs,
-                                task_name,
+                            payload = await read_logs(
                                 log_file_name=requested_log_name or None,
                                 tail_lines=0,
                                 expected_workspace_root=stream_root,
                                 expected_task_dir=stream_task_dir,
                             )
                         else:
-                            payload = await asyncio.to_thread(
-                                runtime.get_task_logs,
-                                task_name,
+                            payload = await read_logs(
                                 log_file_name=requested_log_name or None,
                                 offset=requested_offset,
                                 log_identity=requested_identity or None,
@@ -1604,9 +1685,7 @@ def create_app(
                         if stream_log_name and replaying_backlog:
                             continue
                     elif not stream_log_name:
-                        payload = await asyncio.to_thread(
-                            runtime.get_task_logs,
-                            task_name,
+                        payload = await read_logs(
                             tail_lines=0,
                             expected_workspace_root=stream_root,
                             expected_task_dir=stream_task_dir,
@@ -1637,9 +1716,7 @@ def create_app(
                         )
                         if identity_changed or current_size < stream_offset:
                             replaying_backlog = True
-                            payload = await asyncio.to_thread(
-                                runtime.get_task_logs,
-                                task_name,
+                            payload = await read_logs(
                                 log_file_name=stream_log_name,
                                 offset=stream_offset,
                                 log_identity=stream_identity or None,
@@ -1688,9 +1765,7 @@ def create_app(
                                     disconnected.set()
                                     break
                                 if str(latest_task.get("status", "")).lower() != "queued" or not current_identity:
-                                    queue_payload = await asyncio.to_thread(
-                                        runtime.get_task_logs,
-                                        task_name,
+                                    queue_payload = await read_logs(
                                         tail_lines=0,
                                         expected_workspace_root=stream_root,
                                         expected_task_dir=stream_task_dir,
@@ -1716,9 +1791,7 @@ def create_app(
                                 continue
                             if not switched_log and current_size > stream_offset:
                                 read_offset = stream_offset
-                                payload = await asyncio.to_thread(
-                                    runtime.get_task_logs,
-                                    task_name,
+                                payload = await read_logs(
                                     log_file_name=stream_log_name,
                                     offset=read_offset,
                                     log_identity=stream_identity or None,
@@ -1766,12 +1839,25 @@ def create_app(
                                 if new_offset > read_offset and pending_run_log and stream_log_name == QUEUE_LOG_FILENAME:
                                     continue
                             replaying_backlog = False
+                    await mark_healthy()
                 except WorkspaceChangedError:
                     close_code = 4409
                     disconnected.set()
                     break
+                except ValueError:
+                    close_code = 4400
+                    disconnected.set()
+                    break
                 except Exception as exc:
                     logger.debug("Log file tail fallback failed for %s: %s", task_name, exc)
+                    read_failures += 1
+                    if read_failures >= LOG_STREAM_MAX_READ_FAILURES:
+                        await queue.put({
+                            "type": "error", "task_name": task_name,
+                            "detail": "Live log reads failed. Retrying with incremental polling.",
+                        })
+                        close_code = 1013
+                        return
 
                 await wait_for_tail()
 
@@ -1804,6 +1890,9 @@ def create_app(
                     continue
                 try:
                     await websocket.send_json(message)
+                    if message.get("type") == "error":
+                        disconnected.set()
+                        break
                 except (WebSocketDisconnect, RuntimeError):
                     disconnected.set()
                     break

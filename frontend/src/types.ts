@@ -303,9 +303,10 @@ export interface TaskLogs {
 }
 
 export interface LogStreamMessage {
-  type: 'chunk' | 'reset'
+  type: 'chunk' | 'reset' | 'ready' | 'heartbeat' | 'error'
   task_name: string
-  content: string
+  content?: string
+  detail?: string
   offset?: number
   log_file_name?: string
   log_identity?: string

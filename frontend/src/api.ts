@@ -400,6 +400,14 @@ export function createLogStream(taskName: string, options: {
   return createWorkspaceStream(`/api/tasks/${encodeURIComponent(taskName)}/logs/stream`, sp)
 }
 
+export function getTaskLogDownloadUrl(
+  taskName: string, logFileName: string, logIdentity: string, workspaceRoot = workspaceContext.root,
+) {
+  const sp = new URLSearchParams({ log_file_name: logFileName, expected_workspace: workspaceRoot })
+  if (logIdentity) sp.set('log_identity', logIdentity)
+  return `${BASE}/api/tasks/${encodeURIComponent(taskName)}/logs/download?${sp}`
+}
+
 export const getMetrics = (
   options: { includeProcesses?: boolean; detail?: boolean } = {},
   signal?: AbortSignal,

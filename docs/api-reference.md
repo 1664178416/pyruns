@@ -326,9 +326,19 @@ pin / unpin 任务。
 
 读取某个日志文件的历史内容。
 
+`tail_lines=0` 只取得当前文件末尾游标，不读取正文。`log_identity` 与 `offset` 可用于安全续读；文件替换或截断时返回 `reset`。
+
+#### `GET /api/tasks/{task_name}/logs/download`
+
+通过 `log_file_name` 指定完整原始日志，可附带 `log_identity` 和 `expected_workspace` 防止下载到已替换的文件或其他工作区；不匹配返回 `409`。与其他 API 一样需要有效 UI 会话。
+
+响应以 `任务名--日志名` 下载，包含 `X-Pyruns-Log-Identity`，按打开时文件大小分块读取；下载期间追加的输出不包含在本次文件中。使用已经校验的普通文件句柄，不支持 Range 续传（`Accept-Ranges: none`）。
+
 #### `WS /api/tasks/{task_name}/logs/stream`
 
 订阅日志增量。
+
+成功读取日志状态后发送 `ready`；正常静默时发送健康 `heartbeat`。连续读取失败发送带 `detail` 的 `error`，随后以 `1013` 关闭，客户端可退避重连并使用增量 HTTP 读取。`chunk` 和 `reset` 含续读所需的 `offset`、`log_identity` 和 `log_file_name`。
 
 消息示例：
 

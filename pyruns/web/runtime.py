@@ -15,7 +15,7 @@ from concurrent.futures import CancelledError
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Callable, Dict, List
+from typing import Any, BinaryIO, Callable, Dict, List
 
 import yaml
 from omegaconf import DictConfig
@@ -122,6 +122,18 @@ _GPU_SCHEDULER_PAYLOAD_KEYS = {
 
 class WorkspaceChangedError(RuntimeError):
     """Raised when a request or stream outlives its source workspace."""
+
+
+class LogFileChangedError(ValueError):
+    """The selected log was replaced before its download could be opened."""
+
+
+@dataclass
+class OpenedTaskLog:
+    handle: BinaryIO
+    filename: str
+    size: int
+    identity: str
 
 
 expected_workspace: ContextVar[str | None] = ContextVar("expected_workspace", default=None)
@@ -1783,6 +1795,7 @@ class PyrunsRuntime:
         include_log_options: bool = True,
         expected_workspace_root: str | None = None,
         expected_task_dir: str | None = None,
+        strict: bool = False,
     ) -> Dict[str, Any]:
         """Load a historical log chunk for the monitor page."""
         if expected_workspace_root is not None:
@@ -1844,6 +1857,18 @@ class PyrunsRuntime:
             selected_path = resolve_log_path(task_dir)
             selected_name = os.path.basename(selected_path) if selected_path else ""
 
+        if strict and not selected_path and selected_name:
+            # isfile/exists deliberately suppress permission and remote I/O
+            # errors. Streams must distinguish those errors from a log which
+            # has not been created yet, so the health protocol can report them.
+            candidate = validate_task_log_path(task_dir, selected_name)
+            try:
+                os.stat(candidate)
+            except FileNotFoundError:
+                pass
+            else:
+                selected_path = candidate
+
         if not selected_path:
             return {
                 "task_name": task_name,
@@ -1859,7 +1884,7 @@ class PyrunsRuntime:
 
         tail_truncated = False
         tail_limit_bytes = MAX_MONITOR_LOG_TAIL_BYTES
-        selected_identity = log_file_identity(selected_path)
+        selected_identity = log_file_identity(selected_path, **({"strict": True} if strict else {}))
         reset = False
         if offset is None:
             if tail_lines is not None:
@@ -1873,6 +1898,7 @@ class PyrunsRuntime:
                     selected_path,
                     max_lines=max(0, tail_lines),
                     max_bytes=tail_limit_bytes,
+                    **({"strict": True} if strict else {}),
                 )
                 if tail_lines > 0:
                     try:
@@ -1888,7 +1914,9 @@ class PyrunsRuntime:
                         _cfg.DEFAULT_MONITOR_CHUNK_SIZE,
                     )
                 tail_limit_bytes = min(MAX_MONITOR_LOG_TAIL_BYTES, max(1, int(byte_limit)))
-                content, new_offset = read_last_bytes(selected_path, n_bytes=tail_limit_bytes)
+                content, new_offset = read_last_bytes(
+                    selected_path, n_bytes=tail_limit_bytes, **({"strict": True} if strict else {}),
+                )
                 try:
                     tail_truncated = os.path.getsize(selected_path) > tail_limit_bytes
                 except OSError:
@@ -1905,6 +1933,8 @@ class PyrunsRuntime:
             try:
                 selected_size = os.path.getsize(selected_path)
             except OSError:
+                if strict:
+                    raise
                 selected_size = 0
             identity_changed = bool(
                 log_identity
@@ -1913,7 +1943,10 @@ class PyrunsRuntime:
             )
             reset = identity_changed or requested_offset > selected_size
             read_offset = 0 if reset else requested_offset
-            content, new_offset = safe_read_log(selected_path, read_offset, max_bytes=max(1, byte_limit))
+            content, new_offset = safe_read_log(
+                selected_path, read_offset, max_bytes=max(1, byte_limit),
+                **({"strict": True} if strict else {}),
+            )
 
         return {
             "task_name": task_name,
@@ -1926,6 +1959,44 @@ class PyrunsRuntime:
             "tail_truncated": tail_truncated,
             "tail_limit_bytes": tail_limit_bytes,
         }
+
+    @_with_stable_workspace
+    def open_task_log_download(
+        self, task_name: str, log_file_name: str, *, log_identity: str | None = None,
+        expected_workspace_root: str | None = None,
+    ) -> OpenedTaskLog:
+        """Open and pin one validated log; callers own and must close the handle."""
+        self._check_expected_workspace(expected_workspace_root)
+        task = self.get_task(task_name, refresh=False, summary=True)
+        if task is None:
+            raise KeyError(task_name)
+        if log_file_name not in {_cfg.QUEUE_LOG_FILENAME, _cfg.ERROR_LOG_FILENAME} and not (
+            log_file_name.startswith("run") and log_file_name.endswith(".log")
+        ):
+            raise ValueError("Select a task log file")
+        task_dir = str(task["dir"])
+        path = validate_task_log_path(task_dir, log_file_name)
+        before = os.stat(path, follow_symlinks=False)
+
+        def opener(filename: str, flags: int) -> int:
+            return regular_file_opener(filename, flags | getattr(os, "O_NOFOLLOW", 0))
+
+        handle = open(path, "rb", opener=opener)
+        try:
+            opened = os.fstat(handle.fileno())
+            # Revalidate directory boundaries and the path after opening. Stream
+            # this handle, never reopen the path after the identity check.
+            current_path = validate_task_log_path(task_dir, log_file_name)
+            current = os.stat(current_path, follow_symlinks=False)
+            if not os.path.samestat(before, opened) or not os.path.samestat(current, opened):
+                raise LogFileChangedError("This log changed. Refresh it before downloading.")
+            identity = f"{opened.st_dev:x}:{opened.st_ino:x}" if opened.st_ino > 0 else ""
+            if log_identity and identity != log_identity:
+                raise LogFileChangedError("This log changed. Refresh it before downloading.")
+            return OpenedTaskLog(handle, f"{task_name}--{log_file_name}", opened.st_size, identity)
+        except BaseException:
+            handle.close()
+            raise
 
     def get_metrics(
         self,

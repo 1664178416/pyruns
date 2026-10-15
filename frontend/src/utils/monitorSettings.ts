@@ -4,6 +4,12 @@ export const DEFAULT_MONITOR_LINE_HEIGHT = 1
 export const MAX_MONITOR_CHUNK_SIZE = 4 * 1024 * 1024
 export const MAX_MONITOR_SCROLLBACK = 1_000_000
 export const MAX_MONITOR_LINE_HEIGHT = 2.5
+// Keep a small redraw window even when xterm's history is disabled.
+export const MIN_MONITOR_VISIBLE_LINES = 100
+
+export function monitorLogTailLines(scrollback: number) {
+  return scrollback === 0 ? MIN_MONITOR_VISIBLE_LINES : scrollback
+}
 
 function resolveIntegerSetting(
   settings: Record<string, any> | null | undefined,

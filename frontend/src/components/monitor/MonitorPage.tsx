@@ -207,6 +207,7 @@ export default function MonitorPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<Task | null>(null)
   const [streamStatus, setStreamStatus] = useState<LogStreamStatus>('idle')
+  const [streamError, setStreamError] = useState('')
   const [logStreamRevision, setLogStreamRevision] = useState(0)
   const [taskActionPending, setTaskActionPending] = useState<'run' | 'cancel' | null>(null)
   const [stopConfirmTask, setStopConfirmTask] = useState('')
@@ -1196,6 +1197,7 @@ export default function MonitorPage() {
       return
     }
 
+    if (!message.content) return
     const key = `${activeWorkspaceKey}::${activeTaskName}::${activeLog || messageLog || liveLog}::${state.logGeneration}`
     const buffer = pendingLiveLogChunkRef.current
     const chunk: PendingLiveLogChunk = typeof message.offset === 'number' && Number.isFinite(message.offset)
@@ -1232,12 +1234,15 @@ export default function MonitorPage() {
     onChunk: handleChunk,
     onDisconnect: handleLogStreamDisconnect,
     onStatusChange: handleLogStreamStatus,
+    onError: setStreamError,
     enabled: !loading && isLive && canUseLogStream,
     logFileName: selectedLog || liveLogName || undefined,
     offset: logOffsetRef.current,
     logIdentity: logIdentityRef.current,
     generationKey: `${workspaceKey}:${logGeneration}:${logStreamRevision}`,
   })
+
+  useEffect(() => setStreamError(''), [workspaceKey, selectedTaskName, selectedLog, logGeneration])
 
   useEffect(() => () => {
     livePollControllerRef.current?.abort()
@@ -1882,6 +1887,28 @@ export default function MonitorPage() {
                   className="bg-transparent"
                 />
 
+                <ActionButton
+                  icon={<Download className="h-3.5 w-3.5" />}
+                  variant="ghost"
+                  aria-label="Download full log"
+                  title={`Download full ${selectedLog || liveLogName || 'selected log'}`}
+                  disabled={loading || !(selectedLog || liveLogName)}
+                  className="max-[900px]:px-2 max-[900px]:[&>span]:sr-only"
+                  onClick={() => {
+                    if (!selectedTaskName || !(selectedLog || liveLogName)) return
+                    const anchor = document.createElement('a')
+                    anchor.href = api.getTaskLogDownloadUrl(
+                      selectedTaskName, selectedLog || liveLogName, logIdentity, workspaceKey,
+                    )
+                    anchor.download = ''
+                    document.body.appendChild(anchor)
+                    anchor.click()
+                    anchor.remove()
+                  }}
+                >
+                  Download
+                </ActionButton>
+
                 {(selectedTask.status === 'pending'
                   || selectedTask.status === 'failed'
                   || selectedTask.status === 'completed'
@@ -1941,6 +1968,11 @@ export default function MonitorPage() {
               </ActionButton>
             </div>
             <SearchMatchContext match={logMatch} />
+          </div>
+        )}
+        {isLive && streamError && (
+          <div role="status" className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+            {streamError}
           </div>
         )}
         {logError && (

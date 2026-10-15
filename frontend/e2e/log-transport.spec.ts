@@ -83,6 +83,76 @@ function stream(page: Page, content: string, offset: number, identity = 'origina
   }, { content, offset, identity, reset })
 }
 
+test('an open socket waits for successful read health and exposes a read failure', async ({ page }) => {
+  await prepareMonitor(page)
+  await page.evaluate(() => (window as any).monitorTransportTest.sockets.at(-1).onopen?.())
+  await expect(page.getByText('Connecting', { exact: true })).toBeVisible()
+  await page.evaluate(() => (window as any).monitorTransportTest.sockets.at(-1).onmessage?.({ data: JSON.stringify({
+    type: 'ready', task_name: 'live-task',
+  }) }))
+  await expect(page.getByRole('status').filter({ hasText: /^Live$/ }).last()).toBeVisible()
+  await page.evaluate(() => {
+    const socket = (window as any).monitorTransportTest.sockets.at(-1)
+    // Simulate a close handshake which has not finished: HTTP must resume now.
+    socket.close = () => { socket.closed = true }
+    socket.onmessage?.({ data: JSON.stringify({
+      type: 'error', task_name: 'live-task', detail: 'Live log reads failed. Retrying with incremental polling.',
+    }) })
+  })
+  await expect(page.getByText('Live log reads failed. Retrying with incremental polling.')).toBeVisible()
+  await expect(page.getByText('Reconnecting', { exact: true })).toBeVisible()
+  await expect.poll(() => snapshot(page)).toMatchObject({ sockets: [{ closed: true }] })
+  await completeRead(page, '', byteLength(initial))
+  await page.clock.runFor(1600)
+  expect((await snapshot(page)).reads).toHaveLength(2)
+})
+
+test('quiet successful heartbeats keep a healthy socket live', async ({ page }) => {
+  await prepareMonitor(page)
+  await page.evaluate(() => (window as any).monitorTransportTest.sockets.at(-1).onopen?.())
+  for (let index = 0; index < 3; index++) {
+    await page.evaluate(() => (window as any).monitorTransportTest.sockets.at(-1).onmessage?.({ data: JSON.stringify({
+      type: 'heartbeat', task_name: 'live-task',
+    }) }))
+    await page.clock.runFor(15_000)
+  }
+  await expect(page.getByRole('status').filter({ hasText: /^Live$/ }).last()).toBeVisible()
+  expect((await snapshot(page)).sockets).toHaveLength(1)
+})
+
+test('zero scrollback loads a visible tail and keeps live output on screen', async ({ page }) => {
+  await page.route('**/api/workspace', async route => {
+    const response = await route.fetch()
+    const workspace = await response.json()
+    await route.fulfill({ json: { ...workspace, settings: { ...workspace.settings, monitor_scrollback: 0 } } })
+  })
+  const rows = await prepareMonitor(page)
+  await expect(rows).toContainText('INITIAL')
+  await stream(page, 'visible after zero history\n', byteLength(initial + 'visible after zero history\n'))
+  await page.clock.runFor(200)
+  await expect(rows).toContainText('visible after zero history')
+})
+
+test('full log download uses the selected file identity and workspace', async ({ page }) => {
+  await prepareMonitor(page)
+  await page.evaluate(() => {
+    const click = HTMLAnchorElement.prototype.click
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.href.includes('/logs/download?')) {
+        Object.assign(window, { requestedLogDownload: { href: this.href, download: this.download } })
+      } else click.call(this)
+    }
+  })
+  await page.getByRole('button', { name: 'Download full log', exact: true }).click()
+  const download = await page.evaluate(() => (window as any).requestedLogDownload)
+  const url = new URL(download.href)
+  expect(url.pathname).toBe('/api/tasks/live-task/logs/download')
+  expect(url.searchParams.get('log_file_name')).toBe('run1.log')
+  expect(url.searchParams.get('log_identity')).toBe('original')
+  expect(url.searchParams.get('expected_workspace')).toBeTruthy()
+  expect(download.download).toBe('')
+})
+
 for (const reset of [false, true]) {
   test(`websocket ${reset ? 'reset' : 'resume'} rejects a late HTTP fallback`, async ({ page }) => {
     const rows = await prepareMonitor(page)

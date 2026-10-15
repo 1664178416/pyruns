@@ -62,12 +62,16 @@ def decode_log_bytes(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def log_file_identity(filepath: str) -> str:
+def log_file_identity(filepath: str, *, strict: bool = False) -> str:
     """Return a stable, opaque identity for one concrete log file."""
 
     try:
         stat_result = os.stat(filepath)
+    except FileNotFoundError:
+        return ""
     except OSError:
+        if strict:
+            raise
         return ""
 
     device = int(getattr(stat_result, "st_dev", 0) or 0)
@@ -130,7 +134,7 @@ def read_log_chunk(log_path: str, offset: int) -> Tuple[str, int]:
         return "", offset
 
 
-def read_last_bytes(log_path: str, n_bytes: int = 10000) -> Tuple[str, int]:
+def read_last_bytes(log_path: str, n_bytes: int = 10000, *, strict: bool = False) -> Tuple[str, int]:
     """Read the last ``n_bytes`` from a log file."""
 
     try:
@@ -147,6 +151,8 @@ def read_last_bytes(log_path: str, n_bytes: int = 10000) -> Tuple[str, int]:
                 new_offset = min(new_offset, os.fstat(handle.fileno()).st_size) if data else 0
             return content, new_offset
     except Exception:
+        if strict:
+            raise
         return "", 0
 
 
@@ -169,7 +175,9 @@ def _split_lf_lines_keepends(data: bytes) -> list[bytes]:
     return lines
 
 
-def read_last_lines(log_path: str, max_lines: int = 10000, max_bytes: int | None = None) -> Tuple[str, int]:
+def read_last_lines(
+    log_path: str, max_lines: int = 10000, max_bytes: int | None = None, *, strict: bool = False,
+) -> Tuple[str, int]:
     """Read up to the last ``max_lines`` LF-delimited log lines."""
 
     try:
@@ -211,6 +219,8 @@ def read_last_lines(log_path: str, max_lines: int = 10000, max_bytes: int | None
 
         return normalize_log_newlines(decode_log_bytes(data)), size
     except Exception:
+        if strict:
+            raise
         return "", 0
 
 
@@ -249,11 +259,11 @@ def _complete_log_character(handle, chunk: bytes, remaining: int) -> bytes:
     return chunk
 
 
-def safe_read_log(filepath: str, offset: int, max_bytes: int = 50000) -> Tuple[str, int]:
+def safe_read_log(filepath: str, offset: int, max_bytes: int = 50000, *, strict: bool = False) -> Tuple[str, int]:
     """Read a bounded chunk, allowing up to three extra bytes for one character."""
 
     try:
-        if not os.path.exists(filepath):
+        if not strict and not os.path.exists(filepath):
             return "", offset
 
         file_size = os.path.getsize(filepath)
@@ -276,4 +286,6 @@ def safe_read_log(filepath: str, offset: int, max_bytes: int = 50000) -> Tuple[s
 
             return normalize_log_newlines(decode_log_bytes(chunk)), offset + len(chunk)
     except OSError:
+        if strict:
+            raise
         return "", offset

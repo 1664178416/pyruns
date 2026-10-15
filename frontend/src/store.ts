@@ -16,7 +16,7 @@ import type {
   WorkspaceInfo,
 } from './types'
 import * as api from './api'
-import { resolveMonitorScrollback } from './utils/monitorSettings'
+import { monitorLogTailLines, resolveMonitorScrollback } from './utils/monitorSettings'
 import { configPathId } from './utils/configPaths'
 import { retainTaskSnapshots } from './utils/taskSnapshots'
 
@@ -305,8 +305,8 @@ function readStoredStringArray(key: string) {
 }
 
 export function trimMonitorLogContent(content: string, maxLines = currentMonitorScrollback()) {
-  const lineLimit = Math.max(0, Math.trunc(maxLines))
-  if (!content || lineLimit === 0) {
+  const lineLimit = monitorLogTailLines(Math.max(0, Math.trunc(maxLines)))
+  if (!content) {
     return ''
   }
 
@@ -665,7 +665,7 @@ export function requestConfirmation(options: ConfirmationOptions) {
 }
 
 function currentMonitorScrollback() {
-  return resolveMonitorScrollback(useWorkspaceStore.getState().workspace?.settings)
+  return monitorLogTailLines(resolveMonitorScrollback(useWorkspaceStore.getState().workspace?.settings))
 }
 
 interface TaskState {

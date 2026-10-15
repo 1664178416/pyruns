@@ -71,6 +71,15 @@ def log_stream_idle(monkeypatch):
     return idle
 
 
+def _receive_stream_data(websocket):
+    """Existing assertions consume log data; health frames are checked separately."""
+    while True:
+        message = websocket.receive_json()
+        if message.get("task_name") and message.get("type") in {"ready", "heartbeat"}:
+            continue
+        return message
+
+
 def _watch_log_stream_initialization(runtime: PyrunsRuntime) -> threading.Event:
     """Signal when this runtime finishes the stream's initial metadata read."""
     initialized = threading.Event()
@@ -835,12 +844,12 @@ def test_parallel_ui_instances_keep_independent_websocket_sessions():
         "/api/tasks/events",
         headers={"Cookie": shared_cookie},
     ) as websocket:
-        assert websocket.receive_json() == {"type": "ready", "revision": 0}
+        assert _receive_stream_data(websocket) == {"type": "ready", "revision": 0}
     with second_client.websocket_connect(
         "/api/tasks/events",
         headers={"Cookie": shared_cookie},
     ) as websocket:
-        assert websocket.receive_json() == {"type": "ready", "revision": 0}
+        assert _receive_stream_data(websocket) == {"type": "ready", "revision": 0}
 
 
 def test_unicode_ui_token_is_rejected_without_server_error():
@@ -993,12 +1002,12 @@ def test_task_event_websocket_pushes_invalidations_and_releases_watch(tmp_path):
 
     try:
         with client.websocket_connect("/api/tasks/events") as websocket:
-            ready = websocket.receive_json()
+            ready = _receive_stream_data(websocket)
             assert ready == {"type": "ready", "revision": 0}
             assert runtime.task_manager.has_reactive_watchers() is True
 
             runtime.task_manager.trigger_update()
-            changed = websocket.receive_json()
+            changed = _receive_stream_data(websocket)
             assert changed == {"type": "changed", "revision": 1}
 
         assert runtime.task_manager.has_reactive_watchers() is False
@@ -1030,7 +1039,7 @@ def test_task_event_websocket_coalesces_changes_before_loop_dispatch(tmp_path):
     try:
         with patch.object(WebSocket, "send_json", send_json):
             with client.websocket_connect("/api/tasks/events") as websocket:
-                assert websocket.receive_json() == {"type": "ready", "revision": 0}
+                assert _receive_stream_data(websocket) == {"type": "ready", "revision": 0}
                 loop = loops[0]
                 with patch.object(loop, "call_soon_threadsafe", side_effect=RuntimeError("loop unavailable")):
                     runtime.task_manager.trigger_update()
@@ -1047,9 +1056,9 @@ def test_task_event_websocket_coalesces_changes_before_loop_dispatch(tmp_path):
                         assert dispatch.call_count == 1
                 finally:
                     release.set()
-                assert websocket.receive_json() == {"type": "changed", "revision": 1}
+                assert _receive_stream_data(websocket) == {"type": "changed", "revision": 1}
                 runtime.task_manager.trigger_update()
-                assert websocket.receive_json() == {"type": "changed", "revision": 2}
+                assert _receive_stream_data(websocket) == {"type": "changed", "revision": 2}
         assert runtime.task_manager.has_reactive_watchers() is False
     finally:
         release.set()
@@ -1064,7 +1073,7 @@ def test_task_event_websocket_ignores_close_after_client_disconnect(tmp_path):
     try:
         with patch.object(WebSocket, "close", side_effect=WebSocketDisconnect(1006)):
             with client.websocket_connect("/api/tasks/events") as websocket:
-                assert websocket.receive_json()["type"] == "ready"
+                assert _receive_stream_data(websocket)["type"] == "ready"
         assert runtime.task_manager.has_reactive_watchers() is False
     finally:
         runtime.shutdown()
@@ -1106,10 +1115,10 @@ def test_task_event_websocket_slow_context_does_not_block_http(tmp_path, monkeyp
             with client.websocket_connect("/api/tasks/events") as websocket:
                 if operation == "abandon_acquire":
                     return  # Disconnect before the background lookup returns.
-                assert websocket.receive_json()["type"] == "ready"
+                assert _receive_stream_data(websocket)["type"] == "ready"
                 if operation == "check":
                     runtime.task_manager.trigger_update()
-                    assert websocket.receive_json()["type"] == "changed"
+                    assert _receive_stream_data(websocket)["type"] == "changed"
                 if operation != "release":
                     assert close.wait(10)
 
@@ -1248,7 +1257,7 @@ def test_task_event_websocket_closes_when_workspace_changes(tmp_path, monkeypatc
             with ThreadPoolExecutor(max_workers=1) as worker:
                 with client.websocket_connect("/api/tasks/events") as websocket:
                     if not before_subscription:
-                        assert websocket.receive_json()["type"] == "ready"
+                        assert _receive_stream_data(websocket)["type"] == "ready"
                         runtime.change_run_root(str(target))
                     closed = worker.submit(websocket.receive_json)
                     try:
@@ -2369,7 +2378,7 @@ def test_log_reads_and_queue_stream_skip_curve_history(tmp_path, monkeypatch):
             ) as websocket:
                 assert queue_checked.wait(2)
                 update_task_metadata(str(task_dir), lambda info: info.update(status="completed"))
-                payload = websocket.receive_json()
+                payload = _receive_stream_data(websocket)
                 assert payload["log_file_name"] == "run1.log"
                 assert payload["content"].replace("\r\n", "\n") == "run output\n"
             read.assert_not_called()
@@ -6674,7 +6683,7 @@ def test_logs_websocket_streams_live_chunks(tmp_path):
             offset=log_file.stat().st_size,
             task_dir=str(workspace / TASKS_DIR / "alpha"),
         )
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -6695,7 +6704,7 @@ def test_logs_websocket_closes_when_active_workspace_changes(tmp_path):
         assert initialized.wait(2)
         runtime.change_run_root(str(workspace_b))
         with pytest.raises(WebSocketDisconnect):
-            websocket.receive_json()
+            _receive_stream_data(websocket)
 
 
 def test_logs_websocket_stream_catches_up_from_client_offset(tmp_path):
@@ -6713,7 +6722,7 @@ def test_logs_websocket_stream_catches_up_from_client_offset(tmp_path):
         handle.write("gap-before-ws\n")
 
     with client.websocket_connect(f"/api/tasks/alpha/logs/stream?log_file_name=run1.log&offset={offset}") as websocket:
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -6754,7 +6763,7 @@ def test_logs_websocket_replays_backlog_without_poll_delay(tmp_path):
             "/api/tasks/alpha/logs/stream?log_file_name=run1.log&offset=0"
         ) as websocket:
             assert reads_complete.wait(1.5)
-            chunks = [websocket.receive_json() for _ in range(5)]
+            chunks = [_receive_stream_data(websocket) for _ in range(5)]
 
     assert "".join(chunk["content"] for chunk in chunks) == "A" * (5 * 1024)
     assert all(chunk["type"] == "chunk" for chunk in chunks)
@@ -6807,9 +6816,9 @@ def test_logs_websocket_replay_waits_for_full_send_queue(tmp_path):
                 assert reads_complete.wait(2)
             finally:
                 release_send.set()
-            first_three = [websocket.receive_json() for _ in range(3)]
+            first_three = [_receive_stream_data(websocket) for _ in range(3)]
             assert [item["content"] for item in first_three] == [char * 1024 for char in "ABC"]
-            fourth = websocket.receive_json()
+            fourth = _receive_stream_data(websocket)
 
     assert fourth["content"] == "D" * 1024
     assert fourth["offset"] == log_file.stat().st_size
@@ -6863,9 +6872,9 @@ def test_logs_websocket_replays_live_chunks_when_send_queue_fills(tmp_path, log_
                 assert delivered.wait(2)
             finally:
                 release_send.set()
-            first_three = [websocket.receive_json() for _ in range(3)]
+            first_three = [_receive_stream_data(websocket) for _ in range(3)]
             assert [item["content"] for item in first_three] == ["A", "B", "C"]
-            fourth = websocket.receive_json()
+            fourth = _receive_stream_data(websocket)
 
     assert fourth["content"] == "D"
     assert fourth["offset"] == 4
@@ -6942,7 +6951,8 @@ def test_logs_websocket_recovers_dispatch_overflow(tmp_path, during_initial_read
                 assert delivered.wait(3)
                 release_initial.set()
                 assert sent_all.wait(3)
-                messages = [websocket.receive_json() for _ in sent_messages]
+                messages = [_receive_stream_data(websocket) for message in sent_messages
+                            if message.get("type") not in {"ready", "heartbeat"}]
             finally:
                 release_loop.set()
                 release_initial.set()
@@ -6992,7 +7002,7 @@ def test_logs_websocket_replay_preserves_order_when_emitter_fires(tmp_path):
                 assert delivered.wait(2)
             finally:
                 release_read.set()
-            chunks = [websocket.receive_json() for _ in range(3)]
+            chunks = [_receive_stream_data(websocket) for _ in range(3)]
 
     assert "".join(chunk["content"] for chunk in chunks) == "A" * 2048 + "B" * 1024
     assert [chunk["offset"] for chunk in chunks] == [1024, 2048, 3072]
@@ -7025,12 +7035,12 @@ def test_logs_websocket_keeps_emitter_chunk_during_initial_selection(tmp_path):
             stale_read.set()
         return payload
 
-    def track_identity(path):
+    def track_identity(path, **kwargs):
         nonlocal poll_count
         poll_count += 1
         if poll_count >= 3:
             polled.set()
-        return log_file_identity(path)
+        return log_file_identity(path, **kwargs)
 
     with (
         patch.object(runtime, "get_task_logs", side_effect=pause_initial_read),
@@ -7054,7 +7064,7 @@ def test_logs_websocket_keeps_emitter_chunk_during_initial_selection(tmp_path):
                 assert delivered.wait(2)
             finally:
                 release_read.set()
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
             assert polled.wait(2)
 
     assert payload["content"] == "live\r\n"
@@ -7099,7 +7109,7 @@ def test_logs_websocket_replays_gap_during_initial_selection(tmp_path):
                 assert delivered.wait(2)
             finally:
                 release_read.set()
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["content"].replace("\r", "") == "silent\nlive\n"
@@ -7134,7 +7144,7 @@ def test_logs_websocket_replays_file_gap_before_emitter_chunk(tmp_path, file_suf
                 "alpha", emitter_text, offset=log_file.stat().st_size,
                 log_file_name="run1.log", task_dir=str(task_dir),
             )
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["content"].replace("\r", "") == file_suffix
@@ -7166,7 +7176,7 @@ def test_logs_websocket_uses_written_byte_length_for_crlf_emitter(tmp_path, log_
                 "alpha", "raw\r\n", offset=log_file.stat().st_size,
                 byte_length=len(b"raw\r\n"), log_file_name="run1.log", task_dir=str(task_dir),
             )
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
             assert get_logs.call_count == 1
 
     assert payload["content"] == "raw\r\n"
@@ -7196,7 +7206,7 @@ def test_logs_websocket_ignores_emitter_for_another_run_log(tmp_path, log_stream
             )
             with run_log.open("a", encoding="utf-8") as handle:
                 handle.write("current run\n")
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["log_file_name"] == "run1.log"
@@ -7225,7 +7235,7 @@ def test_logs_websocket_initial_lookup_does_not_block_http(tmp_path, monkeypatch
             with client.websocket_connect(
                 "/api/tasks/alpha/logs/stream?log_file_name=run1.log&offset=0"
             ) as websocket:
-                return websocket.receive_json()
+                return _receive_stream_data(websocket)
 
         with ThreadPoolExecutor(max_workers=2) as workers:
             stream = workers.submit(receive_log)
@@ -7292,7 +7302,7 @@ def test_logs_websocket_slow_poll_does_not_block_http(tmp_path, monkeypatch, log
                 f"/api/tasks/alpha/logs/stream?log_file_name={filename}{resume}"
             ) as websocket:
                 sessions.append(websocket)
-                message = websocket.receive_json()
+                message = _receive_stream_data(websocket)
                 assert close.wait(10)
                 return message
 
@@ -7366,7 +7376,7 @@ def test_logs_websocket_discards_poll_size_older_than_a_live_chunk(tmp_path, mon
                     handle.write("live\n")
                 log_emitter.emit("alpha", "live\r\n", offset=log.stat().st_size,
                                  log_file_name="run1.log", task_dir=str(task_dir))
-                first = workers.submit(websocket.receive_json).result(timeout=2)
+                first = workers.submit(_receive_stream_data, websocket).result(timeout=2)
                 assert first["type"] == "chunk" and first["content"] == "live\r\n"
                 received = True
             finally:
@@ -7440,7 +7450,7 @@ def test_logs_websocket_buffers_run_switch_with_bounded_disk_fallback(
             def receive_all():
                 messages = []
                 while True:
-                    message = websocket.receive_json()
+                    message = _receive_stream_data(websocket)
                     messages.append(message)
                     if message.get("log_file_name") == "run1.log" and message.get("offset") == len(expected.encode()):
                         return messages
@@ -7472,7 +7482,7 @@ def test_logs_websocket_rejects_invalid_log_file_name(tmp_path):
         "/api/tasks/alpha/logs/stream?log_file_name=..%2Fsecret.log&offset=0"
     ) as websocket:
         with pytest.raises(WebSocketDisconnect):
-            websocket.receive_json()
+            _receive_stream_data(websocket)
 
 
 def test_logs_websocket_resets_after_live_log_is_truncated(tmp_path):
@@ -7507,7 +7517,7 @@ def test_logs_websocket_resets_after_live_log_is_truncated(tmp_path):
     with client.websocket_connect(stream_url) as websocket:
         assert initialized.wait(2)
         log_file.write_text("new\n", encoding="utf-8")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "reset"
     assert payload["task_name"] == "alpha"
@@ -7530,7 +7540,7 @@ def test_logs_websocket_stream_tails_run_log_file_without_emitter(tmp_path):
         assert initialized.wait(2)
         with log_file.open("a", encoding="utf-8") as handle:
             handle.write("file fallback chunk\n")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7550,12 +7560,12 @@ def test_logs_websocket_idle_tail_skips_log_listing_but_catches_up(tmp_path):
     polled = threading.Event()
     identity_calls = 0
 
-    def track_identity(path):
+    def track_identity(path, **kwargs):
         nonlocal identity_calls
         identity_calls += 1
         if identity_calls >= 3:
             polled.set()
-        return log_file_identity(path)
+        return log_file_identity(path, **kwargs)
 
     with (
         patch.object(runtime, "get_task_logs", wraps=runtime.get_task_logs) as get_logs,
@@ -7570,7 +7580,7 @@ def test_logs_websocket_idle_tail_skips_log_listing_but_catches_up(tmp_path):
             assert get_logs.call_count == 1
             with log_file.open("a", encoding="utf-8") as handle:
                 handle.write("after idle\n")
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["content"].replace("\r", "") == "after idle\n"
@@ -7609,7 +7619,7 @@ def test_logs_websocket_stream_tails_queued_gpu_log_from_client_offset(tmp_path)
         assert initialized.wait(2)
         with queue_log.open("a", encoding="utf-8", newline="") as handle:
             handle.write("\rstill waiting")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7632,12 +7642,12 @@ def test_logs_websocket_idle_queue_skips_log_listing_until_run_starts(tmp_path):
     polled = threading.Event()
     identity_calls = 0
 
-    def track_identity(path):
+    def track_identity(path, **kwargs):
         nonlocal identity_calls
         identity_calls += 1
         if identity_calls >= 3:
             polled.set()
-        return log_file_identity(path)
+        return log_file_identity(path, **kwargs)
 
     with (
         patch.object(runtime, "get_task_logs", wraps=runtime.get_task_logs) as get_logs,
@@ -7656,7 +7666,7 @@ def test_logs_websocket_idle_queue_skips_log_listing_until_run_starts(tmp_path):
                 current["run_index"] = 1
             run_log = task_dir / "run_logs" / "run1.log"
             run_log.write_text("running after queue\n", encoding="utf-8")
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["log_file_name"] == "run1.log"
@@ -7692,10 +7702,10 @@ def test_logs_websocket_drains_queue_log_before_run_emitter(tmp_path, log_stream
                 byte_length=run_log.stat().st_size,
                 log_file_name="run1.log", task_dir=str(task_dir),
             )
-            queue_chunk = websocket.receive_json()
+            queue_chunk = _receive_stream_data(websocket)
             assert queue_chunk["log_file_name"] == "queue.log"
             assert queue_chunk["content"].replace("\r", "") == "assigned\n"
-            run_chunk = websocket.receive_json()
+            run_chunk = _receive_stream_data(websocket)
 
     assert run_chunk["log_file_name"] == "run1.log"
     assert run_chunk["content"].replace("\r", "") == "run start\n"
@@ -7713,7 +7723,7 @@ def test_logs_websocket_stream_tails_active_run_log_created_after_connect(tmp_pa
     with client.websocket_connect("/api/tasks/alpha/logs/stream") as websocket:
         assert initialized.wait(2)
         log_file.write_text("created after connect\n", encoding="utf-8")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7744,7 +7754,7 @@ def test_logs_websocket_stream_finds_queue_log_created_after_connect(tmp_path):
             assert initialized.wait(2)
             queue_log.write_text("queued after connect\n", encoding="utf-8")
             assert discovered.wait(2)
-            payload = websocket.receive_json()
+            payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["log_file_name"] == "queue.log"
@@ -7769,7 +7779,7 @@ def test_logs_websocket_stream_switches_from_queue_log_to_active_run_log(tmp_pat
             current["status"] = "running"
             current["run_index"] = 1
         run_log.write_text("running after queue\n", encoding="utf-8")
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
@@ -7802,7 +7812,7 @@ def test_logs_websocket_stream_accepts_run_log_emitter_chunk_after_queue_offset(
             log_file_name="run1.log",
             task_dir=str(task_dir),
         )
-        payload = websocket.receive_json()
+        payload = _receive_stream_data(websocket)
 
     assert payload["type"] == "chunk"
     assert payload["task_name"] == "alpha"
