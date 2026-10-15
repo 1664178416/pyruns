@@ -1757,6 +1757,36 @@ def test_main_explicit_browser_overrides_tmux_default(monkeypatch):
     assert captured["browser_url"] == "http://127.0.0.1:8099/?token=test-token"
 
 
+def test_run_input_endpoints_read_only_selected_history_and_validate_runs(tmp_path):
+    from pyruns.core.run_inputs import save_run_input
+    from pyruns.utils.info_io import ensure_run_slot
+
+    workspace = _make_workspace(tmp_path, "main")
+    _add_task(workspace, "saved", status="completed")
+    task_dir = workspace / TASKS_DIR / "saved"
+    update_task_info(str(task_dir), lambda info: ensure_run_slot(info, 3))
+    for run in (2, 3):
+        save_run_input(str(task_dir), run, {
+            "task_kind": "config", "payload_text": f"historical-value: {run}\n", "environment": {},
+        })
+    client = TestClient(create_app(_build_runtime(workspace)))
+    ordinary = client.get("/api/tasks/saved?include_tracks=false")
+    assert ordinary.status_code == 200
+    assert "historical-value" not in ordinary.text
+    saved = client.get("/api/tasks/saved/runs/2/input")
+    assert saved.status_code == 200
+    assert saved.json()["input"]["payload_text"] == "historical-value: 2\n"
+    old = client.get("/api/tasks/saved/runs/1/input")
+    assert old.status_code == 200 and old.json()["input"] is None
+    diff = client.get("/api/tasks/saved/runs/3/diff?other_run=2")
+    assert diff.status_code == 200
+    assert "+historical-value: 3" in diff.json()["diff"]
+    assert not client.get("/api/tasks/saved/runs/3/diff?other_run=1").json()["available"]
+    assert client.get("/api/tasks/saved/runs/4/input").status_code == 404
+    assert client.get("/api/tasks/saved/runs/0/input").status_code == 422
+    assert client.get("/api/tasks/missing/runs/1/input").status_code == 404
+
+
 def test_workspace_endpoint_returns_metadata(tmp_path):
     workspace = _make_workspace(tmp_path, "main")
     runtime = _build_runtime(workspace)

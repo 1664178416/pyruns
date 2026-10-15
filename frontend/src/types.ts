@@ -406,3 +406,28 @@ export interface PathValidationResult {
   path_type: 'file' | 'directory' | ''
   message: string
 }
+
+export interface RunInput {
+  schema_version: 1
+  run_index: number
+  captured_at: string
+  task_kind: string
+  payload_file: string
+  payload_text: string
+  script: string | null
+  command: string[] | string | null
+  workdir: string
+  shell_executable: string | null
+  environment: Record<string, string>
+  launch_argv: string[]
+}
+
+export interface RunInputDiff {
+  schema_version: 1
+  left: { reference: string; available: boolean }
+  right: { reference: string; available: boolean }
+  available: boolean
+  equal: boolean | null
+  changed_fields: string[]
+  diff: string
+}

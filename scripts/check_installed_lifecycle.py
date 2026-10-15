@@ -282,7 +282,10 @@ def _verify(project, report, identities):
     for program in ("pyr", "pyruns"):
         assert cli("--version", program=program).strip() == f"{program} {report['version']}"
     cli("help")
+    diagnostics = json.loads(cli("doctor", "--json"))
+    assert diagnostics["schema_version"] == 1 and diagnostics["ok"], diagnostics
     report["checks"].append("installed imports, app, and both entry points")
+    report["checks"].append("workspace-free installation diagnostics")
 
     # Saved stdin scripts must survive spaces, Unicode, and literal shell syntax.
     # -I ignores PYTHONUTF8, so select UTF-8 explicitly for Windows pipe output.
@@ -314,6 +317,9 @@ def _verify(project, report, identities):
     cli("-w", "shell", "run", "wheel-shell")
     shell = show("shell", "wheel-shell")
     assert shell["exit_codes"] == [0, 0]
+    shell_input = show("shell", "wheel-shell@1")["selected_run"]["input"]
+    assert shell_input["payload_text"] == script_text
+    assert json.loads(cli("-w", "shell", "diff", "wheel-shell@1", "wheel-shell@2", "--json"))["equal"]
     report["checks"].append("detached stdin script, saved parameters, logs, and rerun")
 
     report["phase"] = "config snapshot and failed run"
@@ -331,6 +337,9 @@ def _verify(project, report, identities):
     cli("-w", "train", "wait", "recovery", "--timeout", "60", expected=1)
     first = show("train", "recovery@1")
     assert first["status"] == "failed" and first["exit_codes"] == [42]
+    import yaml
+
+    assert yaml.safe_load(first["selected_run"]["input"]["payload_text"]) == config
     assert (Path(first["directory"]) / "tracks.sqlite3").is_file(), "external metric storage was not exercised"
     report["checks"].append("immutable config snapshot, detached failure, and external metric storage")
 
@@ -339,6 +348,7 @@ def _verify(project, report, identities):
     second = show("train", "recovery@2")
     assert second["status"] == "completed" and second["run_index"] == 2
     assert second["exit_codes"] == [42, 0] and second["config"] == config
+    assert json.loads(cli("-w", "train", "diff", "recovery@1", "recovery@2", "--json"))["equal"]
     expected_records = [
         {"attempt": run, "steps": 600, "label": config["label"], "enabled": True,
          "values": [1, 2, 3], "package_sha256": report["package_sha256"],

@@ -415,9 +415,9 @@ def build_parser(
     command_overview = (
         "All command groups:\n"
         "  task setup       init  exec  add  run\n"
-        "  inspect          ls  status  show  log\n"
+        "  inspect          ls  status  show  diff  log\n"
         "  wait/control     wait  stop  rm  restore  mv  pin\n"
-        "  output/settings  export  config  metrics\n"
+        "  output/settings  export  config  metrics  doctor\n"
         "  optional Web UI  ui  dev\n\n"
         if show_all_commands
         else ""
@@ -777,7 +777,7 @@ def build_parser(
         help_text="show one task's metadata, command, and paths",
         description=(
             "Show one exact task's status, pin, payload, command, working directory, environment, runtime\n"
-            "history, and log paths. Use --run RUN or append @RUN to select one historical run."
+            "history, and log paths. Use --run RUN or append @RUN for a historical run's saved input."
         ),
         epilog=_example_block(
             program,
@@ -791,12 +791,29 @@ def build_parser(
                 "TASK@RUN cannot be combined with --run.",
                 "With --json and a run selector, selected_run contains that run's status, index, exit_code, and log.",
                 "Top-level JSON fields still describe the current task.",
+                "selected_run.input preserves launch-time script/config and task environment overrides; older runs may have null input.",
                 "Use 'log TASK[@RUN]' to print the corresponding log content.",
             ),
         ),
     )
     show.add_argument("task", metavar="TASK[@RUN]", help="exact task name, optionally at one run number")
     show.add_argument("--run", type=_run_index, help="select a historical run number")
+
+    diff = command(
+        "diff",
+        help_text="compare the saved inputs of two runs",
+        description="Compare launch-time script/config, task environment overrides, interpreter, and working directory.",
+        epilog=_example_block(
+            program, "diff train@1 train@2", "diff baseline@1 candidate@1 --json",
+            notes=(
+                "Both references require @RUN and belong to the selected workspace.",
+                "Returns 0 for a successful comparison (including differences), 1 if an input is unavailable.",
+                "Snapshots contain task inputs, not external files or all inherited environment variables.",
+            ),
+        ),
+    )
+    diff.add_argument("left", metavar="TASK@RUN", help="first run")
+    diff.add_argument("right", metavar="TASK@RUN", help="second run")
 
     logs = command(
         "log",
@@ -1107,6 +1124,20 @@ def build_parser(
         ),
     )
 
+    command(
+        "doctor",
+        help_text="check installation, runtimes, and optional workspace storage",
+        description="Check Python/dependency imports, shell, ripgrep, optional NVIDIA GPUs, and existing workspace storage.",
+        epilog=_example_block(
+            program, "doctor", "doctor --json", "-w shell doctor",
+            notes=(
+                "Works without an initialized project. Does not install packages or change task/settings files.",
+                "An existing workspace is checked with disposable read/write, atomic-replace, and lock probes.",
+                "Missing optional NVIDIA GPUs do not fail the check. Exit 1 means a required check failed.",
+            ),
+        ),
+    )
+
     ui = command(
         "ui",
         help_text="start the optional Web UI",
@@ -1269,6 +1300,11 @@ def _main(argv: Sequence[str] | None = None, *, prog: str | None = None) -> int:
             debug=bool(args.debug),
             program=parser.prog,
         )
+
+        if args.handler == "doctor":
+            from pyruns.cli.doctor import cmd_doctor
+
+            return cmd_doctor(context)
 
         from pyruns.cli.commands import dispatch
 

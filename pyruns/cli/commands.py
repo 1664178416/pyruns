@@ -47,6 +47,7 @@ from pyruns.cli.runner import (
     submit_cli_tasks,
 )
 from pyruns.core.report import build_export_csv, build_export_json
+from pyruns.core.run_inputs import compare_run_inputs, load_run_input
 from pyruns.core.system_metrics import SystemMonitor
 from pyruns.core.task_generator import TaskGenerator
 from pyruns.core.task_manager import TaskManager
@@ -499,6 +500,7 @@ def _selected_run_record(
         "exit_code": value_at("exit_codes"),
         "source_state": value_at("source_states") or None,
         "environment": value_at("run_environments") or None,
+        "input": load_run_input(task_dir, run_index),
         "gpu_wait": (current_info.get("gpu_wait_runs", {}) or {}).get(str(run_index)),
         "record": value_at("records") or {},
         "track": value_at("tracks") or {},
@@ -1896,17 +1898,29 @@ def cmd_show(context: Any, args: Any, manager: TaskManager) -> int:
         print(f"Exit code:  {exit_code}" if exit_code is not None else "Exit code:  -")
         print(f"Source:     {run['source_state'] or '-'}")
         print(f"Run log:    {run['log'] or '-'}")
+        saved_input = run["input"]
+        if saved_input is None:
+            print("Saved input: unavailable (not captured for this run)")
+        else:
+            print("Saved input:")
+            print(saved_input["payload_text"].rstrip())
+            print(f"Saved cwd:  {saved_input.get('workdir') or '-'}")
+            if saved_input.get("shell_executable"):
+                print(f"Saved shell: {saved_input['shell_executable']}")
+            print("Saved overrides: " + json.dumps(saved_input["environment"], ensure_ascii=False, sort_keys=True))
     if record["command"]:
-        print(f"Command:    {record['command']}")
+        label = "Current command" if selected_run is not None else "Command"
+        print(f"{label}:    {record['command']}")
     if record["workdir"]:
-        print(f"Workdir:    {_normalized_path(record['workdir'])}")
+        label = "Current workdir" if selected_run is not None else "Workdir"
+        print(f"{label}:    {_normalized_path(record['workdir'])}")
     if record["shell_kind"]:
         print(f"Shell:      {record['shell_kind']}")
     if record["config"]:
-        print("Config:")
+        print("Current config:" if selected_run is not None else "Config:")
         print(OmegaConf.to_yaml(OmegaConf.create(record["config"]), resolve=False).rstrip())
     if record["env"]:
-        print("Environment:")
+        print("Current environment:" if selected_run is not None else "Environment:")
         for key, value in sorted(record["env"].items()):
             print(f"  {key}={value}")
     if record["notes"]:
@@ -1914,6 +1928,27 @@ def cmd_show(context: Any, args: Any, manager: TaskManager) -> int:
     if record["load_error"]:
         print(f"Load error: {record['load_error']}")
     return 0
+
+
+def cmd_diff(context: Any, args: Any, manager: TaskManager) -> int:
+    inputs = []
+    for reference in (args.left, args.right):
+        task, run_index = _resolve_task_run_reference(manager, reference)
+        if run_index is None:
+            raise CliUsageError("diff requires two TASK@RUN references")
+        inputs.append(_selected_run_record(task, run_index, info=load_task_metadata(task["dir"], raise_error=True))["input"])
+    result = compare_run_inputs(inputs[0], inputs[1], left_label=args.left, right_label=args.right)
+    if context.json_output:
+        _json_dump(result)
+    elif not result["available"]:
+        print("Saved input unavailable for: " + ", ".join(
+            side["reference"] for side in (result["left"], result["right"]) if not side["available"]
+        ))
+    elif result["equal"]:
+        print("Run inputs are identical.")
+    else:
+        print(result["diff"], end="")
+    return 0 if result["available"] else 1
 
 
 def cmd_log(context: Any, args: Any, manager: TaskManager) -> int:
@@ -2678,6 +2713,8 @@ def dispatch(context: Any, args: Any) -> int:
             return cmd_status(context, manager, workspace)
         if handler == "show":
             return cmd_show(context, args, manager)
+        if handler == "diff":
+            return cmd_diff(context, args, manager)
         if handler == "log":
             return cmd_log(context, args, manager)
         if handler == "wait":

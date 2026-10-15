@@ -152,6 +152,7 @@ Manager 和 Monitor 均支持 `Ctrl/Cmd+Shift+F` 聚焦并选中查询。在首�
 其中：
 
 - `Info` 显示任务模式、目录和完整 Run History
+- 展开一条运行记录后，点击 `Saved input` 查看启动前保存的脚本或配置；`Compare with previous run` 比较与上一次的输入变化。正文仅在点击时读取，旧记录会注明未保存输入。
 - `python` 任务显示 `config.yaml`
 - `shell` 任务显示当前 runtime 对应的 `config.ps1` / `config.cmd` / `config.sh`
 

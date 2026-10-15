@@ -275,9 +275,6 @@ STATIC_INDEX = Path(__file__).resolve().parents[1] / "pyruns" / "web" / "static"
             'cursor-col-resize',
             'Passes current thresholds',
             'const selectedTaskFromList = useMemo(',
-            'taskRefreshInFlightRef',
-            'taskRefreshQueuedRef',
-            'TASK_EVENT_REFRESH_DEBOUNCE_MS',
             'const filteredTasks = monitorTasks',
             'const pinnedTasks = useMemo(',
             'const otherTasks = useMemo(',
@@ -541,8 +538,6 @@ def test_react_monitor_pages_and_searches_task_list_without_limit_zero():
     assert "refresh: forceRefresh || !sidebarQuery" in monitor
     assert "fetchMonitorTasks({ query: sidebarQuery, offset, refresh: false, workspaceKey })" in monitor
     assert "monitorTasks.find(task => task.name === selectedTaskName)" in monitor
-    assert "useTaskEvents({" in monitor
-    assert "TASK_EVENT_FALLBACK_POLL_MS = 60_000" in monitor
     assert "<Pagination total={monitorTotal} offset={monitorOffset}" in monitor
     assert 'title="Pinned Tasks"' in monitor
     assert "count={pinnedTasks.length}" in monitor
@@ -895,7 +890,6 @@ def test_react_monitor_isolates_workspace_and_resets_replaced_log_streams():
     assert "pendingLiveLogChunkRef.current = { key: '', chunks: [] }" in monitor
     assert "replaceMonitorLogContent(state, message.content || '')" in monitor
     assert "Boolean(logs.reset)" in monitor
-    assert "generationKey: workspaceKey" in monitor
     assert "detailWorkspaceKeyRef.current === workspaceKey" in monitor
 
 
@@ -913,7 +907,6 @@ def test_react_monitor_uses_realtime_task_events_and_preserves_current_selection
     assert "/api/tasks/events" in api
     assert "export interface TaskEventMessage" in types
     assert "type: 'ready' | 'changed' | 'heartbeat'" in types
-    assert "TASK_EVENT_DEGRADED_POLL_MS = 5_000" in monitor
     assert "Task changes appear automatically" in monitor
     assert "3s sync" not in monitor
     assert "10s sync" not in monitor

@@ -380,6 +380,7 @@ pyr -w train status
 pyr -w train show baseline
 pyr -w train show baseline@2
 pyr -w train show baseline --run 2
+pyr -w train diff baseline@1 baseline@2
 pyr -w train log baseline -f
 pyr -w train log baseline@2
 pyr -w train wait baseline --timeout 600
@@ -410,6 +411,7 @@ pyr -w shell log smoke --path --json
 pyr -w shell log smoke@2 --path --json
 pyr config list --json
 pyr metrics --json
+pyr doctor --json
 ```
 
 日志默认原样写 stdout；需要结构化引用时使用 `log --path`。导出默认写 stdout：

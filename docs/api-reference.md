@@ -252,11 +252,19 @@ shell 工作区：
 
 分页获取任务列表。
 
-首次加载后，`refresh=true` 复用工作区共享的刷新结果，完整校验最短间隔为 4 秒；`refresh=false` 使用当前任务快照。实时订阅会约每秒发现目录和任务状态变化，配置、脚本内容约每 4 秒校验一次。并发刷新合并，间隔从扫描完成后计算；手动刷新可传 `force_refresh=true` 立即完整校验。
+首次加载后，`refresh=true` 复用工作区共享的刷新结果，完整校验最短间隔为 4 秒；`refresh=false` 使用当前任务快照。实时订阅约每秒校对活动任务，每 4 秒发现任务目录，每 30 秒校对历史任务内容；已知变更按任务失效并及时校对。并发刷新合并，间隔从扫描完成后计算；手动刷新可传 `force_refresh=true` 立即完整校验。
 
 #### `GET /api/tasks/{task_name}`
 
 获取单个任务详情。`summary=true` 仅获取任务摘要，不加载历史曲线；适用于只需状态的轮询。默认返回完整详情，`refresh=false` 可复用当前任务快照。
+
+#### `GET /api/tasks/{task_name}/runs/{run_index}/input`
+
+按需读取一次运行在启动前保存的输入。返回 `schema_version: 1`、任务名、运行编号和 `input`；旧运行没有快照时 `input` 为 `null`，不存在的任务或运行返回 404。普通任务列表不附带历史正文。
+
+#### `GET /api/tasks/{task_name}/runs/{run_index}/diff?other_run=RUN`
+
+比较同一任务的两次历史输入，返回 `schema_version: 1`、`available`、`equal`、`changed_fields` 和 unified diff。缺少快照时 `available=false`、`equal=null`；不读取曲线数据。
 
 #### `POST /api/tasks/{task_name}/run`
 

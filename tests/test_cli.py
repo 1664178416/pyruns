@@ -405,6 +405,7 @@ def test_help_explains_config_ui_metrics_and_help_workflows(tmp_path):
         "ls",
         "status",
         "show",
+        "diff",
         "log",
         "wait",
         "stop",
@@ -415,6 +416,7 @@ def test_help_explains_config_ui_metrics_and_help_workflows(tmp_path):
         "export",
         "config",
         "metrics",
+        "doctor",
         "ui",
         "dev",
         "help",
@@ -2917,9 +2919,17 @@ def test_show_and_log_accept_task_run_references(tmp_path):
         "versioned",
         "-c", _command_string([sys.executable, "-c", "import os; print(os.environ['PYRUNS_RUN_INDEX'])"]),
     )
+    task_dir = tmp_path / "_pyruns_" / "_shell_" / "tasks" / "versioned"
+    from pyruns.utils.task_files import resolve_task_config_file
+
+    payload_path = task_dir / resolve_task_config_file(load_task_info(str(task_dir)), task_dir=str(task_dir))
+    first_input = payload_path.read_text(encoding="utf-8")
+    payload_path.write_text(first_input + "\necho second-input\n", encoding="utf-8")
+    update_task_info(str(task_dir), lambda info: info.update(env={"SAVED_OVERRIDE": "second"}))
     rerun = _run_cli(tmp_path, "-w", "shell", "run", "versioned")
     assert created.returncode == 0, created.stdout + created.stderr
     assert rerun.returncode == 0, rerun.stdout + rerun.stderr
+    payload_path.write_text("echo edited-after-both-runs\n", encoding="utf-8")
 
     first_log = _run_cli(tmp_path, "-w", "shell", "log", "versioned@1")
     second_log = _run_cli(tmp_path, "-w", "shell", "log", "versioned@2")
@@ -2956,6 +2966,17 @@ def test_show_and_log_accept_task_run_references(tmp_path):
     assert isinstance(detail["selected_run"]["record"], dict)
     assert isinstance(detail["selected_run"]["track"], dict)
     assert detail["selected_run"]["log"].endswith("run1.log")
+    assert detail["selected_run"]["input"]["payload_text"] == first_input
+    assert detail["selected_run"]["input"]["environment"] == {}
+    compared = _run_cli(tmp_path, "-w", "shell", "diff", "versioned@1", "versioned@2", "--json")
+    assert compared.returncode == 0, compared.stderr
+    difference = json.loads(compared.stdout)
+    assert difference["schema_version"] == 1 and not difference["equal"]
+    assert difference["changed_fields"] == ["payload_text", "environment"]
+    assert "+echo second-input" in difference["diff"]
+    assert "edited-after-both-runs" not in difference["diff"]
+    same = _run_cli(tmp_path, "-w", "shell", "diff", "versioned@1", "versioned@1")
+    assert same.returncode == 0 and "identical" in same.stdout
 
     shown_with_option = _run_cli(
         tmp_path,

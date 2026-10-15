@@ -17,7 +17,7 @@ import time
 import traceback
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
 
-from omegaconf import ListConfig
+from omegaconf import DictConfig, ListConfig
 
 from pyruns._config import (
     CONFIG_FILENAME,
@@ -41,6 +41,7 @@ from pyruns._config import (
 )
 from pyruns.core.gpu_scheduler import CUDA_VISIBLE_DEVICES, PYRUNS_ASSIGNED_GPUS
 from pyruns.core.run_environment import collect_run_environment
+from pyruns.core.run_inputs import materialize_run_payload, save_run_input
 from pyruns.utils import get_logger, get_now_str
 from pyruns.utils.events import log_emitter
 from pyruns.utils.info_io import (
@@ -1518,7 +1519,7 @@ def run_task_worker(
     task_dir: str,
     name: str,
     created_at: str,
-    config: Dict[str, Any],
+    config: Dict[str, Any] | DictConfig,
     env_vars: Optional[Dict[str, str]] = None,
     run_index: int = 1,
     runner_id: str = "",
@@ -1819,20 +1820,36 @@ def run_task_worker(
                 process_terminated=False,
             )
 
+        payload_text, frozen_payload = materialize_run_payload(
+            task_dir, task_kind, config_file, config,
+            argv_task=task_kind == TASK_KIND_SHELL and isinstance(meta_cmd, list) and bool(meta_cmd),
+        )
+        if task_kind == TASK_KIND_CONFIG:
+            from pyruns.utils.config_utils import load_config_text
+
+            captured_config = load_config_text(payload_text)
+            if not isinstance(captured_config, DictConfig):
+                raise RuntimeError("Task configuration must be a mapping")
+            config = captured_config
+        execution_config_file = config_file
+        if frozen_payload:
+            cleanup_paths.append(frozen_payload)
+            execution_config_file = os.path.relpath(frozen_payload, task_dir)
         python_runtime = _resolve_python_runtime(task_dir, env_vars)
-        command, workdir, cleanup_paths = _build_command(
+        command, workdir, command_cleanup_paths = _build_command(
             meta_cmd,
             script_path,
             meta_workdir,
             config,
             task_kind=task_kind,
             task_dir=task_dir,
-            config_file=config_file or (
+            config_file=execution_config_file or (
                 SHELL_CONFIG_FILENAME if task_kind == TASK_KIND_SHELL else CONFIG_FILENAME
             ),
             python_runtime=python_runtime,
             shell_executable=shell_executable,
         )
+        cleanup_paths.extend(command_cleanup_paths)
         logger.debug("Built command: %s  workdir=%s  python_runtime=%s", command, workdir, python_runtime)
 
         if not command:
@@ -1843,7 +1860,7 @@ def run_task_worker(
             env_vars,
             task_dir=task_dir,
             task_kind=task_kind,
-            config_file=config_file or CONFIG_FILENAME,
+            config_file=execution_config_file or CONFIG_FILENAME,
             python_runtime=python_runtime,
             wsl_env_keys=wsl_env_keys,
         )
@@ -1885,6 +1902,22 @@ def run_task_worker(
                 "error": "task ownership changed before process launch",
             }
 
+        save_run_input(
+            task_dir, run_index,
+            {
+                "captured_at": get_now_str(),
+                "task_kind": task_kind,
+                "payload_file": config_file,
+                "payload_text": payload_text,
+                "script": script_path if task_kind == TASK_KIND_CONFIG else None,
+                "command": meta_cmd if meta_cmd else None,
+                "workdir": os.path.abspath(workdir or os.getcwd()),
+                "shell_executable": shell_executable if task_kind == TASK_KIND_SHELL else None,
+                "environment": normalize_environment(env_vars or {}),
+                "launch_argv": command,
+            },
+            runner_id=runner_id,
+        )
         try:
             proc = _spawn_captured_process(
                 command,
@@ -1899,7 +1932,7 @@ def run_task_worker(
                 raise
             command, _shell_workdir, shell_cleanup_paths = _build_shell_command(
                 task_dir,
-                config_file or SHELL_CONFIG_FILENAME,
+                execution_config_file or SHELL_CONFIG_FILENAME,
                 shell_executable=shell_executable,
             )
             command = _apply_python_runtime_to_shell_command(command, python_runtime)

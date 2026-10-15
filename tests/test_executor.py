@@ -1767,6 +1767,7 @@ def test_executor_runtime_source_and_summary_helpers_cover_edge_paths(tmp_path, 
 @pytest.mark.parametrize("chunk_size", [1, 7, 4096])
 def test_shell_pipe_fallback_filters_controls_before_logging_and_emitting(tmp_path, monkeypatch, chunk_size):
     task_dir = _write_worker_task_info(tmp_path, "pipe-colors")
+    Path(task_dir, SHELL_CONFIG_FILENAME).write_text("echo red-text\n", encoding="utf-8")
     update_task_info(task_dir, lambda info: info.update({"task_kind": TASK_KIND_SHELL, "command_mode": "shell"}))
     raw = b"\x1b[2J\x1b[38;5;9mred-text\x1b[0m\x1b]0;title\x07\r\n"
     process = MagicMock(pid=99999, returncode=0)
@@ -2519,7 +2520,14 @@ def test_run_task_worker_internal_spawn_error_persists_failure_and_keeps_cleanup
         lambda *args, **kwargs: (["missing-command"], str(bad_workdir), [str(cleanup_path)]),
     )
     monkeypatch.setattr(executor.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("spawn failed")))
-    monkeypatch.setattr(executor.os, "remove", lambda path: (_ for _ in ()).throw(OSError("cleanup locked")))
+    original_remove = os.remove
+
+    def remove_with_locked_wrapper(path):
+        if Path(path) == cleanup_path:
+            raise OSError("cleanup locked")
+        return original_remove(path)
+
+    monkeypatch.setattr(executor.os, "remove", remove_with_locked_wrapper)
 
     result = executor.run_task_worker(
         task_dir=str(task_dir),

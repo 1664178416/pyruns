@@ -18,6 +18,7 @@ import StatusBadge from '@/components/shared/StatusBadge'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
 import CopyButton from '@/components/shared/CopyButton'
 import ActionButton from '@/components/shared/ActionButton'
+import RunInputView from './RunInputView'
 import { useTaskDetailDraftStore, useToastStore } from '@/store'
 import type { RunEnvironment, Task } from '@/types'
 import type { TaskStatus } from '@/theme/tokens'
@@ -1353,6 +1354,7 @@ function InfoTab({ task }: { task: Task }) {
                     </div>
                   )}
                   {run.recordText !== '(empty)' && <InfoValueRow label="Record" value={run.recordText} mono copyLabel={`Copy record for run ${run.index}`} />}
+                  {openRunIndexes.has(run.index) && <RunInputView key={`${task.dir}:${run.index}`} name={task.name} run={run.index} />}
                 </div>
               </details>
             ))}

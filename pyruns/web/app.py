@@ -22,6 +22,7 @@ from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 import uvicorn
 from anyio import CancelScope
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from omegaconf.errors import OmegaConfBaseException
@@ -36,7 +37,7 @@ from pyruns._config import (
     QUEUE_LOG_FILENAME,
 )
 from pyruns.utils.events import log_emitter
-from pyruns.utils.info_io import validate_task_log_path
+from pyruns.utils.info_io import MAX_RUN_HISTORY_SLOTS, validate_task_log_path
 from pyruns.utils.log_io import log_file_identity
 from pyruns.utils.shell_runtime import get_follow_shell_runtime
 from pyruns.utils.search_query import DEFAULT_MAX_SEARCH_RESULTS, SearchQueryError
@@ -1067,6 +1068,28 @@ def create_app(
         if task is None:
             raise HTTPException(status_code=404, detail=f"Task '{task_name}' not found")
         return task
+
+    @app.get("/api/tasks/{task_name}/runs/{run_index}/input")
+    def get_run_input(task_name: str, run_index: Annotated[int, PathParam(ge=1, le=MAX_RUN_HISTORY_SLOTS)]) -> dict[str, Any]:
+        try:
+            return get_runtime().get_run_input(task_name, run_index)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Run '{exc.args[0]}' not found") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/tasks/{task_name}/runs/{run_index}/diff")
+    def get_run_input_diff(
+        task_name: str,
+        run_index: Annotated[int, PathParam(ge=1, le=MAX_RUN_HISTORY_SLOTS)],
+        other_run: Annotated[int, Query(ge=1, le=MAX_RUN_HISTORY_SLOTS)],
+    ) -> dict[str, Any]:
+        try:
+            return get_runtime().compare_run_inputs(task_name, run_index, other_run)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Run '{exc.args[0]}' not found") from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/tasks/batch/run")
     def run_tasks_batch(payload: TaskBatchActionRequest, include_tracks: bool = True) -> dict[str, Any]:

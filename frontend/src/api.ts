@@ -23,6 +23,8 @@ import type {
   SystemInfo,
   UiUpdateResponse,
   UiVersionCheck,
+  RunInput,
+  RunInputDiff,
 } from './types'
 
 const BASE = ''
@@ -269,6 +271,14 @@ async function streamTaskSearch(url: string, onProgress: (page: TaskPage) => voi
 
 export const getTask = (name: string, refresh = true, summary = false) =>
   request<Task>(`/api/tasks/${encodeURIComponent(name)}?refresh=${refresh}&include_tracks=false${summary ? '&summary=true' : ''}`)
+
+export const getRunInput = (name: string, run: number, signal?: AbortSignal) =>
+  request<{ schema_version: 1; task_name: string; run_index: number; input: RunInput | null }>(
+    `/api/tasks/${encodeURIComponent(name)}/runs/${run}/input`, { signal },
+  )
+
+export const getRunInputDiff = (name: string, run: number, previous: number, signal?: AbortSignal) =>
+  request<RunInputDiff>(`/api/tasks/${encodeURIComponent(name)}/runs/${run}/diff?other_run=${previous}`, { signal })
 
 function createWorkspaceStream(path: string, params = new URLSearchParams()): WebSocket {
   const context = workspaceContext
