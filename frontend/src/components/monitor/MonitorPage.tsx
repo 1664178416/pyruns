@@ -32,14 +32,14 @@ import {
   X,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { useShallow } from 'zustand/react/shallow'
 import { appendMonitorLogContent, monitorLogAppendDelta, replaceMonitorLogContent, MONITOR_TASK_PAGE_SIZE, useMonitorStore, useSearchSettingsStore, useTaskStore, useToastStore, useWorkspaceStore } from '@/store'
 import {
   useLogStream,
-  useTaskEvents,
   type LogStreamStatus,
-  type TaskEventStreamStatus,
 } from '@/hooks/useWebSocket'
 import { usePolling } from '@/hooks/usePolling'
+import { useTaskRefresh } from '@/hooks/useTaskRefresh'
 import { usePageVisible } from '@/hooks/usePageVisible'
 import TaskSearchInput from '@/components/shared/TaskSearchInput'
 import TaskSearchMatches, { SearchMatchContext } from '@/components/shared/TaskSearchMatches'
@@ -85,9 +85,6 @@ const RUN_LOG_PATTERN = /^run\d+\.log$/
 // Coalesce tiny stdout chunks so carriage-return progress bars paint as one frame.
 const LOG_STREAM_FLUSH_MS = 50
 const LIVE_LOG_REQUEST_TIMEOUT_MS = 10_000
-const TASK_EVENT_REFRESH_DEBOUNCE_MS = 120
-const TASK_EVENT_FALLBACK_POLL_MS = 60_000
-const TASK_EVENT_DEGRADED_POLL_MS = 5_000
 // Cancel any incomplete escape sequence, then reset in xterm's write queue.
 // A synchronous reset can be overtaken by pending writes from the previous log.
 const TERMINAL_RESET_SEQUENCE = '\x18\x1bc'
@@ -166,10 +163,6 @@ function readCompactMonitorLayout() {
   return window.matchMedia(COMPACT_MONITOR_QUERY).matches
 }
 
-function isMonitorPageHidden() {
-  return document.visibilityState === 'hidden'
-}
-
 function mergeMonitorTaskSummary(current: Task, refreshed: Task): Task {
   const summary = Object.fromEntries(
     Object.entries(refreshed).filter(([key]) => !COMPACT_MONITOR_DETAIL_FIELDS.has(key)),
@@ -191,7 +184,14 @@ export default function MonitorPage() {
     setMonitorSearchOptions,
     fetchMonitorTasks,
     updateMonitorTask,
-  } = useTaskStore()
+  } = useTaskStore(useShallow(state => ({
+    monitorTasks: state.monitorTasks, monitorTotal: state.monitorTotal,
+    monitorOffset: state.monitorOffset, monitorLoading: state.monitorLoading,
+    monitorError: state.monitorError, monitorSearchLimitHit: state.monitorSearchLimitHit,
+    monitorSearchField: state.monitorSearchField, setMonitorSearchField: state.setMonitorSearchField,
+    monitorSearchOptions: state.monitorSearchOptions, setMonitorSearchOptions: state.setMonitorSearchOptions,
+    fetchMonitorTasks: state.fetchMonitorTasks, updateMonitorTask: state.updateMonitorTask,
+  })))
   const maxResults = useSearchSettingsStore(state => state.maxResults)
   const workspace = useWorkspaceStore(state => state.workspace)
   const pageVisible = usePageVisible()
@@ -208,7 +208,6 @@ export default function MonitorPage() {
   const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<Task | null>(null)
   const [streamStatus, setStreamStatus] = useState<LogStreamStatus>('idle')
   const [logStreamRevision, setLogStreamRevision] = useState(0)
-  const [taskEventStatus, setTaskEventStatus] = useState<TaskEventStreamStatus>('idle')
   const [taskActionPending, setTaskActionPending] = useState<'run' | 'cancel' | null>(null)
   const [stopConfirmTask, setStopConfirmTask] = useState('')
   const monitorShellRef = useRef<HTMLDivElement>(null)
@@ -252,10 +251,6 @@ export default function MonitorPage() {
   const followedLiveTaskRef = useRef('')
   const pendingLiveLogChunkRef = useRef({ key: '', chunks: [] as PendingLiveLogChunk[] })
   const liveLogFlushTimerRef = useRef<number | null>(null)
-  const taskRefreshTimerRef = useRef<number | null>(null)
-  const taskRefreshInFlightRef = useRef(false)
-  const taskRefreshQueuedRef = useRef(false)
-  const taskRefreshNeedsDiskRef = useRef(false)
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false)
   const [terminalSearchStatus, setTerminalSearchStatus] = useState('')
   const selectedTaskFromList = useMemo(
@@ -366,73 +361,7 @@ export default function MonitorPage() {
       refreshDetachedSelectedTask(),
     ])
   }, [fetchMonitorTasks, refreshDetachedSelectedTask, sidebarQuery, workspaceKey])
-  const refreshMonitorSnapshotRef = useRef(refreshMonitorSnapshot)
-  refreshMonitorSnapshotRef.current = refreshMonitorSnapshot
-  const runTaskSnapshotRefresh = useCallback(async () => {
-    if (isMonitorPageHidden()) {
-      taskRefreshQueuedRef.current = true
-      return
-    }
-    if (taskRefreshInFlightRef.current) {
-      taskRefreshQueuedRef.current = true
-      return
-    }
-
-    taskRefreshInFlightRef.current = true
-    try {
-      do {
-        taskRefreshQueuedRef.current = false
-        const refresh = taskRefreshNeedsDiskRef.current
-        taskRefreshNeedsDiskRef.current = false
-        try {
-          await refreshMonitorSnapshotRef.current(refresh)
-        } catch {
-          // The store exposes the degraded state; the fallback poll will retry.
-        }
-      } while (taskRefreshQueuedRef.current && !isMonitorPageHidden())
-    } finally {
-      taskRefreshInFlightRef.current = false
-    }
-  }, [])
-  const scheduleTaskSnapshotRefresh = useCallback((refresh = false) => {
-    // Events already follow a server snapshot update; only fallback/return polls
-    // need disk reconciliation. Preserve that need when triggers are coalesced.
-    taskRefreshNeedsDiskRef.current ||= refresh
-    if (isMonitorPageHidden()) {
-      taskRefreshQueuedRef.current = true
-      return
-    }
-    if (taskRefreshTimerRef.current !== null) {
-      return
-    }
-    taskRefreshTimerRef.current = window.setTimeout(() => {
-      taskRefreshTimerRef.current = null
-      void runTaskSnapshotRefresh()
-    }, TASK_EVENT_REFRESH_DEBOUNCE_MS)
-  }, [runTaskSnapshotRefresh])
-
-  useTaskEvents({
-    onInvalidate: scheduleTaskSnapshotRefresh,
-    onStatusChange: setTaskEventStatus,
-    enabled: Boolean(workspaceKey),
-    generationKey: workspaceKey,
-  })
-  usePolling(
-    () => scheduleTaskSnapshotRefresh(true),
-    sidebarQuery ? 30000
-      : taskEventStatus === 'live' ? TASK_EVENT_FALLBACK_POLL_MS : TASK_EVENT_DEGRADED_POLL_MS,
-    Boolean(workspaceKey),
-    false,
-  )
-
-  useEffect(() => () => {
-    if (taskRefreshTimerRef.current !== null) {
-      window.clearTimeout(taskRefreshTimerRef.current)
-      taskRefreshTimerRef.current = null
-    }
-    taskRefreshQueuedRef.current = false
-    taskRefreshNeedsDiskRef.current = false
-  }, [workspaceKey])
+  const taskEventStatus = useTaskRefresh(refreshMonitorSnapshot, workspaceKey, Boolean(sidebarQuery))
   useEffect(() => {
     setStopConfirmTask('')
     setTaskActionPending(null)

@@ -707,7 +707,7 @@ interface TaskState {
   setSortMode: (mode: TaskSortMode) => void
   setOffset: (o: number) => void
   setColumns: (n: number) => void
-  fetchTasks: (options?: { forceRefresh?: boolean; background?: boolean }) => Promise<void>
+  fetchTasks: (options?: { refresh?: boolean; forceRefresh?: boolean; background?: boolean }) => Promise<void>
   fetchMonitorTasks: (options?: {
     query?: string
     searchField?: TaskSearchScope
@@ -858,7 +858,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     } : undefined
     set(options.background ? { error: null } : { loading: true, error: null, searchLimitHit: false })
     try {
-      const page = await api.getTasks({ query, searchField, searchOptions, status: statusFilter, sort: sortMode, offset, limit, summary: true, includeLogs: true, forceRefresh: options.forceRefresh, maxResults, onProgress }, controller.signal)
+      const page = await api.getTasks({ query, searchField, searchOptions, status: statusFilter, sort: sortMode, offset, limit, summary: true, includeLogs: true, refresh: options.refresh, forceRefresh: options.forceRefresh, maxResults, onProgress }, controller.signal)
       if (!isCurrentRequest()) {
         return
       }
@@ -879,6 +879,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             limit,
             summary: true,
             includeLogs: true,
+            refresh: options.refresh,
             forceRefresh: options.forceRefresh,
             maxResults,
             onProgress,
