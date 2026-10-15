@@ -9,6 +9,7 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
+from pyruns.core.report import build_export_json
 from pyruns.core.run_inputs import save_run_input
 from pyruns.core.task_manager import TaskManager
 from pyruns.utils.info_io import save_task_info
@@ -94,6 +95,29 @@ def test_compare_runs_validates_reserved_slots_names_and_corrupt_inputs(tmp_path
     (task / "run_logs" / "run2.input.json").write_text('{"schema_version": 2}', encoding="utf-8")
     corrupt = client.get("/api/tasks/candidate/runs/2/compare?other_run=1")
     assert corrupt.status_code == 400 and "Invalid run input" in corrupt.text
+
+
+@pytest.mark.parametrize("status,recorded,codes,expected", [
+    ("completed", ["", ""], [0, 0], ["completed", "completed"]),
+    ("completed", ["", ""], [7, 0], ["failed", "completed"]),
+    ("completed", ["", ""], [130, 0], ["cancelled", "completed"]),
+    ("failed", ["cancelled", ""], [7, 1], ["cancelled", "failed"]),
+    ("running", ["", "running"], [None, None], [None, "running"]),
+    ("queued", ["", ""], [None, None], [None, None]),
+    ("completed", ["", ""], [None, None], [None, "completed"]),
+])
+def test_legacy_run_status_matches_export_without_claiming_unknown_history(
+    tmp_path, monkeypatch, status, recorded, codes, expected,
+):
+    workspace = _workspace(tmp_path, "workspace")
+    task = _task(workspace, "legacy", status=status, run_statuses=recorded, exit_codes=codes)
+    client = _client(_runtime(workspace, monkeypatch))
+    response = client.get("/api/tasks/legacy/runs/2/compare?other_run=1")
+    assert response.status_code == 200, response.text
+    compared = response.json()
+    assert [compared[side]["status"] for side in ("left", "right")] == expected
+    exported = json.loads(build_export_json([{"name": "legacy", "dir": str(task)}]))
+    assert [row["status"] for row in exported] == [value or "unknown" for value in expected]
 
 
 def test_compare_runs_keeps_both_reads_in_one_workspace_and_rejects_stale_requests(tmp_path, monkeypatch):

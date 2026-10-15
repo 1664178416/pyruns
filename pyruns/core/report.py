@@ -10,7 +10,7 @@ import json
 from typing import Dict, Any, List
 
 # Imported for internal use
-from pyruns.utils.info_io import load_task_metadata, run_slot_count
+from pyruns.utils.info_io import load_task_metadata, run_history_status, run_slot_count
 from pyruns.utils import get_now_str
 
 
@@ -24,31 +24,6 @@ _LIFECYCLE_COLUMNS = {
     "exit_code",
     "pid",
 }
-
-
-def _run_status(
-    task_status: str,
-    run_number: int,
-    run_count: int,
-    exit_code: Any,
-    recorded_status: Any,
-) -> str:
-    normalized_recorded = str(recorded_status or "").strip().lower()
-    if normalized_recorded in {"completed", "failed", "cancelled"}:
-        return normalized_recorded
-    if exit_code is not None and exit_code != "":
-        try:
-            code = int(exit_code)
-        except (TypeError, ValueError, OverflowError):
-            return "failed"
-        if code == 0:
-            return "completed"
-        if code == 130:
-            return "cancelled"
-        return "failed"
-    if run_number == run_count and task_status:
-        return task_status
-    return "unknown"
 
 
 def _spreadsheet_safe(value: Any) -> Any:
@@ -77,13 +52,11 @@ def _build_export_rows(
             raise ValueError(f"Cannot export task '{name}': could not read task metadata ({exc})") from exc
 
         # A rerun may have started since selection; keep lifecycle and records together.
-        status = str(info.get("status", "") or "").lower()
         starts = info.get("start_times") or []
         finishes = info.get("finish_times") or []
         pids = info.get("pids") or []
         durations = info.get("durations") or []
         exit_codes = info.get("exit_codes") or []
-        run_statuses = info.get("run_statuses") or []
         data = info.get("records", [])
         n_runs = run_slot_count(info)
 
@@ -91,13 +64,7 @@ def _build_export_rows(
             exit_code = exit_codes[i] if i < len(exit_codes) else ""
             row: Dict[str, Any] = {
                 "name": name,
-                "status": _run_status(
-                    status,
-                    i + 1,
-                    n_runs,
-                    exit_code,
-                    run_statuses[i] if i < len(run_statuses) else "",
-                ),
+                "status": run_history_status(info, i + 1) or "unknown",
                 "run": i + 1,
                 "start_time": starts[i] if i < len(starts) else "",
                 "finish_time": finishes[i] if i < len(finishes) else "",

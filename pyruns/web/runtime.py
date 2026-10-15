@@ -69,6 +69,7 @@ from pyruns.utils.info_io import (
     load_script_info,
     load_task_metadata,
     resolve_log_path,
+    run_history_status,
     validate_task_log_path,
     validate_task_name,
     validate_tasks_root,
@@ -1476,9 +1477,7 @@ class PyrunsRuntime:
                 values = info.get(key, []) or []
                 return values[index - 1] if index <= len(values) else None
 
-            status = str(at("run_statuses") or "").lower() or None
-            if status is None and index == info.get("run_index") and info.get("status") != "queued":
-                status = str(info.get("status") or "").lower() or None
+            status = run_history_status(info, index)
             saved = load_run_input(task_dir, index)
             return {
                 "task_name": name, "run_index": index, "reference": f"{name}@{index}",

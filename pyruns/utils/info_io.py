@@ -1146,6 +1146,29 @@ def normalize_run_history(meta: Dict[str, Any]) -> int:
     return total
 
 
+def run_history_status(meta: Dict[str, Any], run_index: int) -> str | None:
+    """Resolve one run's state without assigning a new queue state to old history."""
+    total = run_slot_count(meta)
+    if not 1 <= run_index <= total:
+        return None
+    statuses = meta.get("run_statuses", []) or []
+    recorded = str(statuses[run_index - 1] or "").strip().lower() if run_index <= len(statuses) else ""
+    if recorded in {"completed", "failed", "cancelled"}:
+        return recorded
+    codes = meta.get("exit_codes", []) or []
+    code = codes[run_index - 1] if run_index <= len(codes) else None
+    if code is not None and code != "":
+        try:
+            value = int(code)
+        except (TypeError, ValueError, OverflowError):
+            return "failed"
+        return "completed" if value == 0 else "cancelled" if value == 130 else "failed"
+    status = str(meta.get("status", "") or "").strip().lower()
+    if run_index == total and status in {"pending", "running", "completed", "failed", "cancelled"}:
+        return status
+    return None
+
+
 def _serialize_task_info(info_path: str, payload: Dict[str, Any]) -> str:
     serialized = json.dumps(payload, indent=2, ensure_ascii=False, allow_nan=False)
     if len(serialized.encode("utf-8")) > MAX_TASK_INFO_BYTES:
