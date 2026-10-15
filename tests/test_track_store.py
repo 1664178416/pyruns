@@ -13,7 +13,7 @@ from contextlib import contextmanager
 import pytest
 
 import pyruns
-from pyruns._config import ENV_KEY_CONFIG, ENV_KEY_RUN_INDEX
+from pyruns._config import ENV_KEY_CONFIG, ENV_KEY_RUN_ATTEMPT_ID, ENV_KEY_RUN_INDEX
 from pyruns.utils import info_io, lock_queue, track_store
 from pyruns.utils.info_io import (
     append_task_track, load_task_info, load_task_metadata, save_task_info,
@@ -29,6 +29,7 @@ def task(tmp_path, monkeypatch):
     monkeypatch.setattr(track_store, "INLINE_TRACK_POINTS", 4)
     monkeypatch.setenv(ENV_KEY_CONFIG, str(directory / "config.yaml"))
     monkeypatch.setenv(ENV_KEY_RUN_INDEX, "1")
+    monkeypatch.delenv(ENV_KEY_RUN_ATTEMPT_ID, raising=False)
     save_task_info(str(directory), {"name": "metrics", "run_index": 1, "status": "running"})
     return directory
 
@@ -133,6 +134,60 @@ def test_record_and_lifecycle_updates_do_not_read_external_history(task, monkeyp
     assert info["records"] == [{"accuracy": 0.9}]
     assert info["tracks"] == [{"loss": [0, 1, 2, 3]}]
     assert info["status"] == "completed"
+
+
+@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize("identity", ["replaced", "missing", "missing-run"])
+def test_sdk_attempt_mismatch_rejects_writes_before_slots_or_storage(task, monkeypatch, capsys, external, identity):
+    if external:
+        externalize(task)
+    update_task_metadata(str(task), lambda info: info.update(
+        status="completed", run_attempt_ids=["new-attempt"] if identity != "missing" else [],
+    ))
+    monkeypatch.setenv(ENV_KEY_RUN_ATTEMPT_ID, "old-attempt")
+    if identity == "missing-run":
+        monkeypatch.delenv(ENV_KEY_RUN_INDEX)
+    monkeypatch.setattr(pyruns, "_metric_warning_keys", set())
+    before = (task / "task_info.json").read_bytes()
+    expected = load_task_info(str(task), raise_error=True)
+    with monkeypatch.context() as patch:
+        patch.setattr(track_store, "append_point", lambda *a: pytest.fail("stale attempt opened SQLite"))
+        patch.setattr(track_store, "append_points", lambda *a: pytest.fail("stale attempt opened SQLite"))
+        pyruns.record(score=0.5)
+        pyruns.track(loss=4)
+        pyruns.track_many([{"loss": 5}, {"loss": 6}])
+    with pytest.raises(RuntimeError, match="task run identity changed"):
+        pyruns.artifact_dir()
+    assert not (task / "artifacts").exists()
+    assert (task / "task_info.json").read_bytes() == before
+    assert load_task_info(str(task), raise_error=True) == expected
+    warnings = capsys.readouterr().err
+    assert warnings.count("task run identity changed") == 3
+
+
+@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_sdk_completed_run_keeps_its_metrics_identity_during_later_run(task, monkeypatch, capsys, external, legacy):
+    if external:
+        externalize(task)
+    update_task_metadata(str(task), lambda info: info.update(
+        status="running", run_index=2, _attempt_id="new-attempt",
+        run_statuses=["completed", "running"], exit_codes=[0, None],
+        run_attempt_ids=[] if legacy else ["old-attempt", "new-attempt"],
+    ))
+    if not legacy:
+        monkeypatch.setenv(ENV_KEY_RUN_ATTEMPT_ID, "old-attempt")
+    pyruns.record(score=0.5)
+    pyruns.track(loss=4)
+    pyruns.track_many([{"loss": 5}, {"loss": 6}])
+    artifact = pyruns.artifact_dir()
+    assert artifact == str(task / "artifacts" / "run1")
+    actual = load_task_info(str(task), raise_error=True)
+    assert actual["records"] == [{"score": 0.5}, {}]
+    assert actual["tracks"] == [{"loss": ([0, 1, 2, 3] if external else []) + [4, 5, 6]}, {}]
+    assert actual["status"] == "running" and actual["run_index"] == 2
+    assert actual["run_statuses"] == ["completed", "running"]
+    assert not capsys.readouterr().err
 
 
 @pytest.mark.parametrize("external", [False, True])

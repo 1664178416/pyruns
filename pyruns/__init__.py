@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import time
+from contextlib import nullcontext
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from threading import Lock
@@ -15,6 +16,7 @@ from ._config import (
     ARTIFACTS_DIR,
     CONFIG_DEFAULT_FILENAME,
     ENV_KEY_CONFIG,
+    ENV_KEY_RUN_ATTEMPT_ID,
     ENV_KEY_RUN_INDEX,
     RECORDS_KEY,
     ROOT_DIR,
@@ -134,24 +136,27 @@ def _write_metrics(
     for attempt in range(1, max_attempts + 1):
         try:
             run_index = _get_env_run_index()
+            attempt_id = str(os.environ.get(ENV_KEY_RUN_ATTEMPT_ID, "") or "").strip()
             if track_data is not None:
                 from .utils.info_io import append_task_track
 
-                append_task_track(task_dir, track_data, run_index=run_index)
+                append_task_track(task_dir, track_data, run_index=run_index, expected_attempt_id=attempt_id)
                 return
 
             if track_payloads is not None:
                 from .utils.info_io import append_task_track_payloads
 
-                append_task_track_payloads(task_dir, track_payloads, run_index=run_index)
+                append_task_track_payloads(task_dir, track_payloads, run_index=run_index, expected_attempt_id=attempt_id)
                 return
 
             assert apply_update is not None, "record updates require a callback"
 
-            def _apply(info: Dict[str, Any], run_index: int | None = run_index) -> None:
+            def _apply(
+                info: Dict[str, Any], run_index: int | None = run_index, attempt_id: str = attempt_id,
+            ) -> None:
                 from .utils.info_io import guard_task_metric_write
 
-                guard_task_metric_write(info)
+                guard_task_metric_write(info, run_index=run_index, expected_attempt_id=attempt_id)
                 target = run_index if run_index is not None else max(1, _lazy_export("run_slot_count")(info))
                 slot = _lazy_export("ensure_run_slot")(info, target)
                 apply_update(info, slot)
@@ -406,21 +411,31 @@ def get_artifact_dir() -> str:
     task_dir = get_task_dir()
     base_dir = task_dir if task_dir else os.getcwd()
 
-    run_index = get_run_index() or _get_env_run_index() or 1
-    artifacts_root = os.path.join(base_dir, ARTIFACTS_DIR)
-    artifact_dir = os.path.join(artifacts_root, f"run{run_index}")
-    if task_dir:
-        from .utils.info_io import validate_task_directory, validate_workspace_directory
+    attempt_id = str(os.environ.get(ENV_KEY_RUN_ATTEMPT_ID, "") or "").strip() if task_dir else ""
+    from .utils.info_io import (
+        guard_task_metric_write, load_task_metadata, task_info_lock,
+        validate_task_directory, validate_workspace_directory,
+    )
 
-        validate_task_directory(task_dir)
-        validate_workspace_directory(artifacts_root)
-        validate_workspace_directory(artifact_dir)
-    os.makedirs(artifact_dir, exist_ok=True)
-    if task_dir:
-        validate_task_directory(task_dir)
-        validate_workspace_directory(artifacts_root)
-        validate_workspace_directory(artifact_dir)
-    return artifact_dir
+    with task_info_lock(task_dir, create_dir=False) if task_dir and attempt_id else nullcontext():
+        if task_dir and attempt_id:
+            guard_task_metric_write(
+                load_task_metadata(task_dir, raise_error=True),
+                run_index=_get_env_run_index(), expected_attempt_id=attempt_id,
+            )
+        run_index = get_run_index() or _get_env_run_index() or 1
+        artifacts_root = os.path.join(base_dir, ARTIFACTS_DIR)
+        artifact_dir = os.path.join(artifacts_root, f"run{run_index}")
+        if task_dir:
+            validate_task_directory(task_dir)
+            validate_workspace_directory(artifacts_root)
+            validate_workspace_directory(artifact_dir)
+        os.makedirs(artifact_dir, exist_ok=True)
+        if task_dir:
+            validate_task_directory(task_dir)
+            validate_workspace_directory(artifacts_root)
+            validate_workspace_directory(artifact_dir)
+        return artifact_dir
 
 
 def artifact_dir() -> str:

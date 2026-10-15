@@ -3259,7 +3259,6 @@ def test_run_task_worker_stale_completion_does_not_overwrite_new_runner(
     mock_emit,
     mock_detect,
     tmp_path,
-    monkeypatch,
 ):
     mock_detect.return_value = ("pyruns_load", None)
     task_dir = str(tmp_path)
@@ -3281,9 +3280,10 @@ def test_run_task_worker_stale_completion_does_not_overwrite_new_runner(
         },
     )
 
-    original_append = executor._append_run_log_text
+    def recover_after_finish(_name, text, **_kwargs):
+        if "[PYRUNS] Exit code:" not in text:
+            return
 
-    def append_after_recovery(*args, **kwargs):
         def replace_owner(info):
             first_slot = ensure_run_slot(info, 1)
             second_slot = ensure_run_slot(info, 2)
@@ -3297,9 +3297,9 @@ def test_run_task_worker_stale_completion_does_not_overwrite_new_runner(
             info["runner_host"] = "host-new"
 
         update_task_info(task_dir, replace_owner)
-        return original_append(*args, **kwargs)
 
-    monkeypatch.setattr(executor, "_append_run_log_text", append_after_recovery)
+    # Lifecycle notifications run after the log transaction releases its lock.
+    mock_emit.side_effect = recover_after_finish
     mock_proc = MagicMock()
     mock_proc.pid = 7778
     mock_proc.wait.return_value = 0
@@ -3334,7 +3334,6 @@ def test_run_task_worker_late_stop_summary_is_not_overwritten_by_completed(
     mock_emit,
     mock_detect,
     tmp_path,
-    monkeypatch,
 ):
     mock_detect.return_value = ("pyruns_load", None)
     task_dir = str(tmp_path)
@@ -3352,9 +3351,9 @@ def test_run_task_worker_late_stop_summary_is_not_overwritten_by_completed(
         },
     )
 
-    original_append = executor._append_run_log_text
-
-    def append_and_cancel(*args, **kwargs):
+    def cancel_after_finish(_name, text, **_kwargs):
+        if "[PYRUNS] Exit code:" not in text:
+            return
         update_task_info(
             task_dir,
             lambda info: info.update({
@@ -3367,9 +3366,8 @@ def test_run_task_worker_late_stop_summary_is_not_overwritten_by_completed(
                 },
             }),
         )
-        return original_append(*args, **kwargs)
 
-    monkeypatch.setattr(executor, "_append_run_log_text", append_and_cancel)
+    mock_emit.side_effect = cancel_after_finish
     mock_proc = MagicMock()
     mock_proc.pid = 7777
     mock_proc.wait.return_value = 0

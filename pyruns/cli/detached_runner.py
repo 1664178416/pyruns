@@ -19,7 +19,7 @@ from pyruns.cli.submission_protocol import (
     write_submission_receipt,
 )
 from pyruns.core.task_manager import TaskManager, active_task_run_index
-from pyruns.utils.info_io import load_task_metadata
+from pyruns.utils.info_io import load_task_metadata, read_run_attempt_id, task_attempt_matches
 from pyruns.utils.settings import ensure_settings_file, load_settings
 from pyruns.update_coordination import EnvironmentActivityLease
 
@@ -40,8 +40,13 @@ def _parse_args() -> argparse.Namespace:
 
 def _submitted_run_status(
     info: dict[str, Any], run_index: int, *, expected_runner_id: str | None = None,
+    expected_attempt_id: str | None = None,
 ) -> str | None:
     """Return only the lifecycle state belonging to the submitted run."""
+
+    observed_attempt = read_run_attempt_id(info, run_index) or str(info.get("_attempt_id", "") or "")
+    if expected_attempt_id is not None and observed_attempt != expected_attempt_id:
+        return None
 
     run_statuses = info.get("run_statuses", [])
     if isinstance(run_statuses, (list, tuple)) and run_index <= len(run_statuses):
@@ -58,7 +63,10 @@ def _submitted_run_status(
         current_run_index = int(info.get("run_index", 0) or 0)
     except (TypeError, ValueError, OverflowError):
         return None
-    if current in _FINAL_STATUSES and current_run_index == run_index:
+    if current in _FINAL_STATUSES and (
+        current_run_index == run_index
+        or (expected_attempt_id is not None and current_run_index < run_index)
+    ):
         return current
     return None
 
@@ -98,6 +106,7 @@ def _claimed_tasks_stopped(
     expected_runner_id = str(getattr(tm, "runner_id", "") or "")
     if not expected_runner_id:
         return False
+    attempt_id = getattr(tm, "_submission_attempt_id", None)
     requested: set[str] = set()
     deadline = time.monotonic() + max(0.05, _CLEANUP_TIMEOUT_SEC)
     while True:
@@ -107,6 +116,8 @@ def _claimed_tasks_stopped(
             task_dir = str(task.get("dir", "") or "")
             info = load_task_metadata(task_dir) if task_dir else None
             if not info:
+                return False
+            if not task_attempt_matches(info, attempt_id):
                 return False
             status = str(info.get("status", "") or "").lower()
             if status in _FINAL_STATUSES:
@@ -128,6 +139,7 @@ def _claimed_tasks_stopped(
                         name,
                         expected_runner_id=expected_runner_id,
                         expected_run_index=expected_run_index,
+                        expected_attempt_id=attempt_id,
                     ):
                         requested.add(name)
                 except Exception:
@@ -354,7 +366,9 @@ def main() -> int:
                 if name in settled:
                     continue
                 info = load_task_metadata(str(selected[name]["dir"])) or {}
-                status = _submitted_run_status(info, run_index, expected_runner_id=expected_runner_id)
+                status = _submitted_run_status(
+                    info, run_index, expected_runner_id=expected_runner_id, expected_attempt_id=token,
+                )
                 if status not in _ACTIVE_STATUSES:
                     # An unstarted queue cancellation has no realized run slot.
                     # Lost identities also fail this task, while the remaining

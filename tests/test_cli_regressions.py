@@ -198,7 +198,9 @@ def test_foreground_interrupt_cancels_only_the_tasks_just_submitted(tmp_path, mo
             *,
             expected_runner_id: str | None = None,
             expected_run_index: int | None = None,
+            expected_attempt_id: str | None = None,
         ) -> bool:
+            assert expected_attempt_id == "foreground-attempt"
             cancel_requests.append((name, expected_runner_id, expected_run_index))
             return True
 
@@ -210,6 +212,7 @@ def test_foreground_interrupt_cancels_only_the_tasks_just_submitted(tmp_path, mo
             ("foreground",),
             (),
             runner_id=runner_id,
+            attempt_id="foreground-attempt",
         ),
     )
     monkeypatch.setattr(
@@ -225,6 +228,7 @@ def test_foreground_interrupt_cancels_only_the_tasks_just_submitted(tmp_path, mo
                 run_index=1,
                 runner_id=runner_id,
                 started_queued=True,
+                attempt_id="foreground-attempt",
             )
         }
         waits.append(([str(item["name"]) for item in tasks], float(timeout)))
@@ -430,6 +434,7 @@ def test_stop_rejects_a_run_identity_change_before_cancellation(monkeypatch):
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
             assert name == "race"
             assert expected_runner_id == identity.runner_id
@@ -483,6 +488,7 @@ def test_stop_reports_partial_cancellation_when_one_run_identity_changes(
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
             requests.append((name, expected_runner_id, expected_run_index))
             return name == "first"
@@ -1069,6 +1075,7 @@ def test_detached_runner_observes_submitted_run_after_new_rerun_starts(
             "status": "running",
             "run_index": 2,
             "run_statuses": ["completed", "running"],
+            "_attempt_id": "newer-attempt", "run_attempt_ids": [token, "newer-attempt"],
         },
     )
     monkeypatch.setattr(
@@ -1107,10 +1114,10 @@ def test_detached_runner_settled_task_does_not_abort_or_follow_other_attempts(
     token = "4" * 32
     _write_test_submission(tmp_path, token, names, [1, 1])
     first_states = {
-        "queued-cancelled": {"status": "cancelled", "run_index": 0, "run_statuses": []},
+        "queued-cancelled": {"status": "cancelled", "run_index": 0, "run_statuses": [], "_attempt_id": token},
         "missing": {},
         "foreign": {"status": "running", "run_index": 1, "runner_id": "foreign"},
-        "completed": {"status": "completed", "run_index": 1, "run_statuses": ["completed"]},
+        "completed": {"status": "completed", "run_index": 1, "run_statuses": ["completed"], "run_attempt_ids": [token]},
     }
     reads = {name: 0 for name in names}
     events = []
@@ -1139,6 +1146,7 @@ def test_detached_runner_settled_task_does_not_abort_or_follow_other_attempts(
         return {
             "status": "completed" if events else "running", "run_index": 1,
             "runner_id": "submitted-owner", "run_statuses": ["completed"] if events else [],
+            "_attempt_id": token,
         }
 
     def finish_remaining(_seconds):
@@ -1988,7 +1996,9 @@ def test_unresolved_interrupt_cancels_only_exact_submission_owner(
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
+            assert expected_attempt_id == token
             cancel_requests.append((name, expected_runner_id, expected_run_index))
             return True
 
@@ -2006,6 +2016,7 @@ def test_unresolved_interrupt_cancels_only_exact_submission_owner(
             "name": name,
             "status": "queued",
             "runner_id": f"host:{owner}:{token}",
+            "_attempt_id": token,
         }
 
     def wait_for_cancelled(tasks, identities, **_kwargs):
@@ -2117,6 +2128,7 @@ def test_detached_runner_cancels_claimed_tasks_before_reporting_partial(tmp_path
             *,
             expected_runner_id=None,
             expected_run_index=None,
+            expected_attempt_id=None,
         ):
             assert expected_runner_id == self.runner_id
             assert expected_run_index == 1

@@ -48,6 +48,7 @@ class SubmissionResult:
     claimed: tuple[str, ...]
     unclaimed: tuple[str, ...]
     runner_id: str | None = None
+    attempt_id: str | None = None
 
 
 class SubmissionInterrupted(KeyboardInterrupt):
@@ -88,12 +89,14 @@ def _result_from_receipt(
     receipt: SubmissionReceipt,
     *,
     runner_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> SubmissionResult:
     return SubmissionResult(
         status=cast(SubmissionStatus, receipt.status),
         claimed=receipt.claimed,
         unclaimed=receipt.unclaimed,
         runner_id=runner_id,
+        attempt_id=attempt_id,
     )
 
 
@@ -107,7 +110,7 @@ def _terminal_result_from_receipt(
     runner_id = None
     if receipt.status == "accepted":
         runner_id = f"{socket.gethostname().lower()}:{receipt.runner_pid}:{token}"
-    return _result_from_receipt(receipt, runner_id=runner_id)
+    return _result_from_receipt(receipt, runner_id=runner_id, attempt_id=token if runner_id else None)
 
 
 def _detached_popen(command: list[str], env: dict[str, str]) -> subprocess.Popen:

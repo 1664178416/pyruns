@@ -67,10 +67,12 @@ from pyruns.utils.info_io import (
     load_script_info,
     load_task_info,
     load_task_metadata,
+    read_run_attempt_id,
     resolve_log_path,
     run_history_status,
     run_slot_count,
     task_info_lock,
+    task_attempt_matches,
     validate_task_directory,
     validate_task_log_path,
     validate_task_name,
@@ -137,6 +139,7 @@ class _TaskRunIdentity:
     run_index: int
     runner_id: str | None
     started_queued: bool = False
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -856,10 +859,18 @@ def _capture_task_run_identity(task: dict[str, Any]) -> _TaskRunIdentity:
         else _latest_run_index(task, info)
     )
     runner_id = str(info.get("runner_id", "") or "")
+    attempt_id = str(info.get("_attempt_id", "") or "") or None
+    unstarted_terminal = (
+        status in _FINAL_STATUSES and attempt_id is not None
+        and read_run_attempt_id(info, run_index) != attempt_id
+    )
+    if unstarted_terminal:
+        run_index += 1
     return _TaskRunIdentity(
         run_index=run_index,
         runner_id=runner_id if status in _ACTIVE_STATUSES else None,
-        started_queued=status == "queued",
+        started_queued=status == "queued" or unstarted_terminal,
+        attempt_id=attempt_id,
     )
 
 
@@ -874,6 +885,10 @@ def _bound_task_record(
     name = str(task.get("name", "") or "")
     if not info:
         raise CliError(f"cannot read task state: {name}")
+
+    observed_attempt = read_run_attempt_id(info, identity.run_index) or str(info.get("_attempt_id", "") or "")
+    if identity.attempt_id is not None and observed_attempt != identity.attempt_id:
+        raise CliError(f"task run identity changed while observing '{name}'")
 
     current_status = str(info.get("status", "pending") or "pending").lower()
     latest_run = _latest_run_index(task, info)
@@ -941,6 +956,8 @@ def _has_persisted_cancel_request(
     if not info or str(info.get("status", "") or "").lower() not in _ACTIVE_STATUSES:
         return False
     if _active_run_index(info) != identity.run_index:
+        return False
+    if not task_attempt_matches(info, identity.attempt_id):
         return False
     if str(info.get("runner_id", "") or "") != str(identity.runner_id or ""):
         return False
@@ -1149,8 +1166,11 @@ def _follow_task_logs(
                 run_index=identity.run_index,
             )
             next_path = reference.path
-            if current_path and not os.path.isfile(next_path):
-                next_path = current_path
+            if not os.path.isfile(next_path):
+                if current_path:
+                    next_path = current_path
+                elif identity.started_queued and latest_record["status"] in _FINAL_STATUSES:
+                    next_path = latest_record.get("latest_log") or next_path
             next_offset = 0
         else:
             next_path = _resolve_log_reference(task).path
@@ -1196,6 +1216,7 @@ def _cancel_submitted_tasks_after_interrupt(
             requested = manager.request_task_cancel(
                 name,
                 expected_runner_id=identity.runner_id,
+                expected_attempt_id=identity.attempt_id,
                 expected_run_index=identity.run_index,
             )
         except Exception:
@@ -1257,6 +1278,7 @@ def _tasks_owned_by_submission(
             len(parts) != 3
             or parts[1] != str(runner_pid)
             or parts[2] != submission_token
+            or not task_attempt_matches(info, submission_token)
         ):
             continue
         name = str(task.get("name", "") or "")
@@ -1267,6 +1289,7 @@ def _tasks_owned_by_submission(
         identities[name] = _TaskRunIdentity(
             run_index=expected_run,
             runner_id=str(info.get("runner_id", "") or ""),
+            attempt_id=submission_token,
             started_queued=str(info.get("status", "") or "").lower() == "queued",
         )
     return owned, identities
@@ -1381,6 +1404,7 @@ def _submit_and_wait(
             name: _TaskRunIdentity(
                 run_index=expected_runs[name],
                 runner_id=submission.runner_id,
+                attempt_id=submission.attempt_id,
                 started_queued=True,
             )
             for name in names
@@ -1426,6 +1450,7 @@ def _submit_and_wait(
                     name: _TaskRunIdentity(
                         run_index=expected_runs[name],
                         runner_id=submission.runner_id,
+                        attempt_id=submission.attempt_id,
                         started_queued=True,
                     )
                     for name in names
@@ -2117,6 +2142,7 @@ def cmd_stop(context: Any, args: Any, manager: TaskManager) -> int:
         if not manager.request_task_cancel(
             name,
             expected_runner_id=identity.runner_id,
+            expected_attempt_id=identity.attempt_id,
             expected_run_index=identity.run_index,
         ):
             if not _has_persisted_cancel_request(task, identity):

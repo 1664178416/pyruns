@@ -70,7 +70,10 @@ def _filename(run_index: int) -> str:
     return f"run{run_index}.input.json"
 
 
-def save_run_input(task_dir: str, run_index: int, data: dict[str, Any], *, runner_id: str = "") -> None:
+def save_run_input(
+    task_dir: str, run_index: int, data: dict[str, Any], *, runner_id: str = "",
+    expected_attempt_id: str | None = None,
+) -> None:
     """Publish one complete input atomically, refusing to replace an earlier run."""
     filename = _filename(run_index)
     payload = {**data, "schema_version": 1, "run_index": run_index}
@@ -78,11 +81,14 @@ def save_run_input(task_dir: str, run_index: int, data: dict[str, Any], *, runne
     if len(raw) > MAX_RUN_INPUT_BYTES:
         raise ValueError(f"Run input is too large (max {MAX_RUN_INPUT_BYTES} bytes)")
     with task_info_lock(task_dir, create_dir=False):
-        if runner_id:
-            from pyruns.utils.info_io import load_task_metadata
+        if runner_id or expected_attempt_id is not None:
+            from pyruns.utils.info_io import load_task_metadata, task_attempt_matches
 
             info = load_task_metadata(task_dir, raise_error=True)
-            if info.get("runner_id") != runner_id or info.get("run_index") != run_index:
+            if (
+                (runner_id and (info.get("runner_id") != runner_id or info.get("run_index") != run_index))
+                or not task_attempt_matches(info, expected_attempt_id)
+            ):
                 raise RuntimeError("Task ownership changed before saving run input")
         path = prepare_task_log_path(task_dir, filename)
         if os.path.lexists(path):

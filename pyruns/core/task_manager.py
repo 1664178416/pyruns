@@ -50,6 +50,7 @@ from pyruns.utils.info_io import (
     namespace_operation_is_live,
     prepare_task_log_path,
     run_slot_count,
+    task_attempt_matches,
     task_info_lock,
     update_task_metadata,
     validate_task_directory,
@@ -185,6 +186,7 @@ class TaskManager:
         self._executor_workers = 0
         self.runner_host = socket.gethostname().lower()
         token = str(runner_token or uuid.uuid4().hex[:8])
+        self._submission_attempt_id = str(runner_token or "") or None
         self.runner_id = f"{self.runner_host}:{os.getpid()}:{token}"
         self.lease_seconds = DEFAULT_RUNNER_LEASE_SECONDS
         self._last_queued_lease_heartbeat = 0.0
@@ -1380,6 +1382,8 @@ class TaskManager:
             "pids": info.get("pids", []),
             "pid_create_times": info.get("pid_create_times", []),
             "run_statuses": info.get("run_statuses", []),
+            "run_attempt_ids": info.get("run_attempt_ids", []),
+            "_attempt_id": info.get("_attempt_id"),
             "durations": info.get("durations", []),
             "exit_codes": info.get("exit_codes", []),
             "source_states": info.get("source_states", []),
@@ -1909,6 +1913,7 @@ class TaskManager:
             "pids",
             "pid_create_times",
             "run_statuses",
+            "run_attempt_ids",
             "durations",
             "exit_codes",
             "source_states",
@@ -2057,6 +2062,7 @@ class TaskManager:
                 counts_for_batch=bool(item.get("counts_for_batch", True)),
                 gpu_wait=item.get("gpu_wait"),
                 gpu_wait_rule=gpu_wait_rule,
+                attempt_id=self._submission_attempt_id if expected_run_indices is not None else None,
             )
             if not synced:
                 continue
@@ -2541,6 +2547,7 @@ class TaskManager:
         *,
         expected_runner_id: str | None = None,
         expected_run_index: int | None = None,
+        expected_attempt_id: str | None = None,
     ) -> bool:
         """Request cancellation or safely reconcile work whose runner disappeared."""
         with self._lock:
@@ -2562,6 +2569,8 @@ class TaskManager:
         }
 
         def _request(info: Dict[str, Any]) -> None:
+            if not task_attempt_matches(info, expected_attempt_id):
+                raise TaskStateConflict("task attempt changed before cancellation")
             if expected_runner_id is not None and (
                 str(info.get("runner_id", "") or "") != expected_runner_id
             ):
@@ -2579,6 +2588,7 @@ class TaskManager:
             request_context["original_status"] = status
             request_context["run_index"] = current_run_index
             request_context["runner_id"] = str(info.get("runner_id", "") or "")
+            request_context["attempt_id"] = str(info.get("_attempt_id", "") or "") or None
             if self._is_current_runner(info):
                 request_context["action"] = "cancel_local"
                 return
@@ -2624,6 +2634,7 @@ class TaskManager:
                 task_name,
                 expected_runner_id=str(request_context["runner_id"] or ""),
                 expected_run_index=int(request_context["run_index"] or 0),
+                expected_attempt_id=request_context.get("attempt_id"),
             )
             if cancelled:
                 return True
@@ -2682,6 +2693,7 @@ class TaskManager:
     ) -> bool:
         """Stop an identified local orphan before publishing its terminal state."""
         runner_id = str(requested.get("runner_id", "") or "")
+        attempt_id = requested.get("_attempt_id")
         run_index = active_task_run_index(requested)
         pid, created_at = self._current_process_identity(requested)
         try:
@@ -2690,6 +2702,7 @@ class TaskManager:
                 latest.get("status") != "running"
                 or str(latest.get("runner_id", "") or "") != runner_id
                 or active_task_run_index(latest) != run_index
+                or not task_attempt_matches(latest, attempt_id)
                 or self._current_process_identity(latest) != (pid, created_at)
                 or str(latest.get("runner_host", "") or "").strip().lower() != self.runner_host
             ):
@@ -2708,6 +2721,7 @@ class TaskManager:
                 expected_statuses={"running"},
                 expected_runner_id=runner_id,
                 expected_run_index=run_index,
+                expected_attempt_id=attempt_id,
                 final_status="cancelled",
             )
         except (TaskClaimConflict, TaskStateConflict):
@@ -2753,6 +2767,7 @@ class TaskManager:
         *,
         expected_runner_id: str | None = None,
         expected_run_index: int | None = None,
+        expected_attempt_id: str | None = None,
     ) -> bool:
         """Cancel a queued or running task."""
         target_name = ""
@@ -2778,6 +2793,9 @@ class TaskManager:
             return False
         disk_runner_id = str(disk_info.get("runner_id", "") or "")
         disk_run_index = active_task_run_index(disk_info)
+        if not task_attempt_matches(disk_info, expected_attempt_id):
+            return False
+        disk_attempt_id = str(disk_info.get("_attempt_id", "") or "") or None
         if (
             expected_runner_id is not None
             and disk_runner_id != expected_runner_id
@@ -2815,6 +2833,7 @@ class TaskManager:
                     require_current_runner=True,
                     expected_runner_id=disk_runner_id,
                     expected_run_index=disk_run_index,
+                    expected_attempt_id=disk_attempt_id,
                 )
             except TimeoutError as exc:
                 logger.warning("Could not lock task state to cancel %s: %s", target_name, exc)
@@ -2835,12 +2854,14 @@ class TaskManager:
                     self._clear_pending_stop_request(
                         target_ref["dir"],
                         run_index=action_task["run_index"],
+                        expected_attempt_id=disk_attempt_id,
                     )
                     return False
                 if not self._should_kill_task_process(disk_info or {}):
                     self._clear_pending_stop_request(
                         target_ref["dir"],
                         run_index=action_task["run_index"],
+                        expected_attempt_id=disk_attempt_id,
                     )
                     return False
                 if not kill_process(int(pid), expected_create_time=created_at):
@@ -2864,6 +2885,7 @@ class TaskManager:
                         self._clear_pending_stop_request(
                             target_ref["dir"],
                             run_index=action_task["run_index"],
+                            expected_attempt_id=disk_attempt_id,
                         )
                     else:
                         logger.info(
@@ -2890,6 +2912,7 @@ class TaskManager:
                     expected_statuses={"queued"},
                     expected_runner_id=disk_runner_id,
                     expected_run_index=disk_run_index,
+                    expected_attempt_id=disk_attempt_id,
                     final_status="cancelled",
                 )
             except TimeoutError as exc:
@@ -3014,6 +3037,7 @@ class TaskManager:
                             self._clear_pending_stop_request(
                                 candidate["dir"],
                                 run_index=action_task["run_index"],
+                                expected_attempt_id=(disk_info or {}).get("_attempt_id"),
                             )
                             logger.warning(
                                 "Delete skipped for %s because process termination was not verified",
@@ -3586,9 +3610,11 @@ class TaskManager:
     ) -> None:
         """Submit one task while the lifecycle lock is held."""
 
-        if self._claim_task_for_run(target, run_index, counts_for_batch=not independent) is None:
+        claimed = self._claim_task_for_run(target, run_index, counts_for_batch=not independent)
+        if claimed is None:
             self._restore_unsubmitted_task(target, run_index, independent=independent)
             return
+        attempt_id = str(claimed.get("_attempt_id", "") or "") or None
 
         submission_ready = threading.Event()
         submission_accepted = False
@@ -3628,13 +3654,15 @@ class TaskManager:
                 self.runner_id,
                 self.runner_host,
                 self.lease_seconds,
+                attempt_id,
             )
             future.add_done_callback(
-                lambda fut, tid=target["name"], rid=self.runner_id, run=run_index: self._on_task_done(
+                lambda fut, tid=target["name"], rid=self.runner_id, run=run_index, aid=attempt_id: self._on_task_done(
                     fut,
                     tid,
                     expected_runner_id=rid,
                     expected_run_index=run,
+                    expected_attempt_id=aid,
                 )
             )
             logger.debug(
@@ -3653,6 +3681,7 @@ class TaskManager:
                 expected_run_index=run_index,
                 error=exc,
                 reason="submission_error",
+                expected_attempt_id=attempt_id,
                 detail_lines=[f"independent={independent}"],
             )
             logger.error("Failed to submit task %s: %s", target["name"], exc)
@@ -3681,14 +3710,14 @@ class TaskManager:
             if current and self._same_task_dir(current.get("dir"), task_dir):
                 if (
                     current.get("status") == "running" and self._is_current_runner(current)
-                    and active_task_run_index(current) != run_index
+                    and (active_task_run_index(current) != run_index or not task_attempt_matches(current, target.get("_attempt_id")))
                 ):
                     return
                 if info and current is observed and current.get("_registry_revision", 0) == revision:
                     self._apply_info_to_task(current, info)
                 if (
                     current.get("status") == "running" and self._is_current_runner(current)
-                    and active_task_run_index(current) != run_index
+                    and (active_task_run_index(current) != run_index or not task_attempt_matches(current, target.get("_attempt_id")))
                 ):
                     return
                 if current.get("status") == "queued":
@@ -3711,6 +3740,7 @@ class TaskManager:
         *,
         expected_runner_id: str,
         expected_run_index: int,
+        expected_attempt_id: str | None = None,
     ) -> None:
         """Handle worker completion and pull final state from disk."""
         worker_error = None
@@ -3728,6 +3758,7 @@ class TaskManager:
             task_id,
             expected_runner_id=expected_runner_id,
             expected_run_index=expected_run_index,
+            expected_attempt_id=expected_attempt_id,
             error=worker_error,
         )
 
@@ -3737,6 +3768,7 @@ class TaskManager:
         *,
         expected_runner_id: str,
         expected_run_index: int,
+        expected_attempt_id: str | None = None,
         error: BaseException | None = None,
         reason: str = "worker_exception",
         detail_lines: List[str] | None = None,
@@ -3765,7 +3797,7 @@ class TaskManager:
                 disk_status not in {"queued", "running"}
                 or str(info.get("runner_id", "") or "") == expected_runner_id
             )
-            same_generation = same_run and same_active_owner
+            same_generation = same_run and same_active_owner and task_attempt_matches(info, expected_attempt_id)
         else:
             disk_status = ""
             same_generation = False
@@ -3785,6 +3817,7 @@ class TaskManager:
                     expected_statuses={disk_status},
                     expected_runner_id=expected_runner_id,
                     expected_run_index=expected_run_index,
+                    expected_attempt_id=expected_attempt_id,
                 )
             except (TaskClaimConflict, TaskStateConflict):
                 pass
@@ -3809,6 +3842,7 @@ class TaskManager:
                     (not info or persistence_error is not None)
                     and active_task_run_index(current) == expected_run_index
                     and current.get("runner_id") == expected_runner_id
+                    and task_attempt_matches(current, expected_attempt_id)
                     and current.get("status") in {"queued", "running"}
                 ):
                     # Finished workers and rejected submissions must not leave
@@ -3824,6 +3858,7 @@ class TaskManager:
                 current_status = str(current.get("status", "") or "").lower()
                 if (
                     active_task_run_index(current) == expected_run_index
+                    and task_attempt_matches(current, expected_attempt_id)
                     and current_status not in {"queued", "running"}
                 ):
                     self._clear_running_locked(task_id)
@@ -4119,12 +4154,13 @@ class TaskManager:
                     self._next_run_index(task),
                     self._queue_started_at_value(task),
                     copy.deepcopy(task.get("gpu_wait")) if isinstance(task.get("gpu_wait"), dict) else None,
+                    task.get("_attempt_id"),
                 )
                 for task in self.tasks
                 if task and task.get("status") == "queued" and not self._is_foreign_live_runner(task)
             ]
 
-        for task, revision, task_name, task_dir, run_index, queued_at, gpu_wait in queued:
+        for task, revision, task_name, task_dir, run_index, queued_at, gpu_wait, attempt_id in queued:
             if not task_name or not task_dir:
                 continue
 
@@ -4133,7 +4169,10 @@ class TaskManager:
                 run_index: int = run_index,
                 queued_at: float = queued_at,
                 gpu_wait: Dict[str, Any] | None = gpu_wait,
+                attempt_id: str | None = attempt_id,
             ) -> None:
+                if not task_attempt_matches(info, attempt_id):
+                    raise TaskStateConflict("task attempt changed before lease renewal")
                 if str(info.get("status", "") or "").lower() != "queued":
                     raise TaskStateConflict("task is no longer queued")
                 if self._next_run_index(info) != run_index or self._queue_started_at_value(info) != queued_at:
@@ -4164,18 +4203,19 @@ class TaskManager:
         """Bridge executor admission and worker preparation until a PID is saved."""
         with self._lock:
             starting = [
-                (task, task.get("_registry_revision", 0), name, str(task["dir"]), active_task_run_index(task))
+                (task, task.get("_registry_revision", 0), name, str(task["dir"]), active_task_run_index(task), task.get("_attempt_id"))
                 for name in self._running_ids
                 if (task := self._tasks_by_name.get(name))
                 and task.get("status") == "running" and self._is_current_runner(task)
                 and self._current_process_identity(task)[0] is None
             ]
-        for task, revision, task_name, task_dir, run_index in starting:
-            def _renew(info: Dict[str, Any], run_index: int = run_index) -> None:
+        for task, revision, task_name, task_dir, run_index, attempt_id in starting:
+            def _renew(info: Dict[str, Any], run_index: int = run_index, attempt_id: str | None = attempt_id) -> None:
                 if (
                     info.get("status") != "running" or not self._is_current_runner(info)
                     or active_task_run_index(info) != run_index
                     or self._current_process_identity(info)[0] is not None
+                    or not task_attempt_matches(info, attempt_id)
                 ):
                     raise TaskStateConflict("task already left its starting state")
                 self._set_runner_lease_fields(info)
@@ -4227,6 +4267,8 @@ class TaskManager:
                 raise TaskStateConflict("task is being rolled back after failed creation")
             self._guard_namespace_operation(info)
             status = str(info.get("status", "pending") or "pending").lower()
+            if not task_attempt_matches(info, dispatch.get("_attempt_id")):
+                raise TaskStateConflict("task attempt changed before claim")
             if status == "running":
                 if not self._is_current_runner(info):
                     raise TaskClaimConflict("task already owned by another runner")
@@ -4241,6 +4283,8 @@ class TaskManager:
                 raise TaskStateConflict(f"task is no longer claimable: {status}")
             info["status"] = "running"
             info["run_index"] = run_index
+            slot = ensure_run_slot(info, run_index)
+            info["run_attempt_ids"][slot] = str(info.get("_attempt_id", "") or "")
             policy = self._task_gpu_scheduler_config(info, self._gpu_scheduler_config())
             history = dict(info.get("gpu_wait_runs", {}) or {})
             history[str(run_index)] = dataclasses.asdict(policy)
@@ -4275,6 +4319,7 @@ class TaskManager:
                     task_name,
                     expected_runner_id=self.runner_id,
                     expected_run_index=run_index,
+                    expected_attempt_id=dispatch.get("_attempt_id"),
                     error=exc,
                     reason="claim_error",
                 )
@@ -4303,6 +4348,7 @@ class TaskManager:
         counts_for_batch: bool = True,
         gpu_wait: Dict[str, Any] | None = None,
         gpu_wait_rule: str | None = None,
+        attempt_id: str | None = None,
     ) -> bool:
         """Persist transient queue/running status changes."""
         with self._lock:
@@ -4343,11 +4389,14 @@ class TaskManager:
                 # current request when dispatching an already queued run.
                 task_info.pop("cancel_requested_at", None)
                 task_info.pop("_pending_stop_summary", None)
+                task_info["_attempt_id"] = attempt_id or uuid.uuid4().hex
             task_info["status"] = next_status
             if gpu_wait_rule is not None:
                 task_info["gpu_wait_rule"] = gpu_wait_rule
             if next_status == "running":
                 task_info["run_index"] = run_index
+                slot = ensure_run_slot(task_info, run_index)
+                task_info["run_attempt_ids"][slot] = str(task_info.get("_attempt_id", "") or "")
             task_info.pop("_queued_run_index", None)
             if next_status == "queued":
                 self._trim_run_slots(task_info, self._realized_run_slot_count(task_info))
@@ -5016,10 +5065,13 @@ class TaskManager:
         task_dir: str,
         *,
         run_index: int,
+        expected_attempt_id: str | None = None,
     ) -> bool:
         """Roll back a stop marker after identity verification or termination fails."""
 
         def _apply(info: Dict[str, Any]) -> None:
+            if not task_attempt_matches(info, expected_attempt_id):
+                return
             if str(info.get("status", "") or "").lower() != "running":
                 return
             if not self._is_current_runner(info):
@@ -5080,8 +5132,12 @@ class TaskManager:
         require_current_runner: bool = False,
         expected_runner_id: str | None = None,
         expected_run_index: int | None = None,
+        expected_attempt_id: str | None = None,
     ) -> None:
         """Store a stop request without publishing a terminal state prematurely."""
+
+        if expected_attempt_id is None:
+            expected_attempt_id = task.get("_attempt_id")
 
         finish_now = get_now_str()
         with self._lock:
@@ -5094,6 +5150,8 @@ class TaskManager:
 
         def _apply(task_info: Dict[str, Any]) -> None:
             original_status = str(task_info.get("status", "") or "").lower()
+            if not task_attempt_matches(task_info, expected_attempt_id):
+                raise TaskStateConflict("task attempt changed before stop request")
             if expected_statuses is not None and original_status not in expected_statuses:
                 raise TaskStateConflict(f"expected {sorted(expected_statuses)}, found {original_status!r}")
             if require_current_runner and not self._is_current_runner(task_info):
@@ -5204,9 +5262,12 @@ class TaskManager:
         require_no_live_owner: bool = False,
         expected_runner_id: str | None = None,
         expected_run_index: int | None = None,
+        expected_attempt_id: str | None = None,
         final_status: str = "failed",
     ) -> None:
         """Persist a failed state and finalize the active run slot if needed."""
+        if expected_attempt_id is None:
+            expected_attempt_id = task.get("_attempt_id")
         finish_now = get_now_str()
         failure_context = {"finalized_run_slot": False, "original_status": ""}
         with self._lock:
@@ -5219,6 +5280,8 @@ class TaskManager:
 
         def _apply(task_info: Dict[str, Any]) -> None:
             original_status = str(task_info.get("status", "") or "").lower()
+            if not task_attempt_matches(task_info, expected_attempt_id):
+                raise TaskStateConflict("task attempt changed before terminal update")
             if expected_statuses is not None and original_status not in expected_statuses:
                 raise TaskStateConflict(f"expected {sorted(expected_statuses)}, found {original_status!r}")
             if require_current_runner and not self._is_current_runner(task_info):
@@ -5390,6 +5453,8 @@ class TaskManager:
                 "pids": info.get("pids", []),
                 "pid_create_times": info.get("pid_create_times", []),
                 "run_statuses": info.get("run_statuses", []),
+                "run_attempt_ids": info.get("run_attempt_ids", []),
+                "_attempt_id": info.get("_attempt_id"),
                 "durations": info.get("durations", []),
                 "exit_codes": info.get("exit_codes", []),
                 "source_states": info.get("source_states", []),

@@ -34,6 +34,7 @@ from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_ope
 
 WORKLOAD = '''import faulthandler
 import hashlib
+import os
 import sys
 from pathlib import Path
 import pyruns
@@ -56,6 +57,7 @@ for step in range(cfg.steps):
         print(f"wheel-step-{run}:{step}", flush=True)
 pyruns.record(attempt=run, steps=cfg.steps, label=cfg.label,
               enabled=cfg.nested.enabled, values=list(cfg.nested["values"]),
+              run_attempt_id=os.environ.get("PYRUNS_RUN_ATTEMPT_ID"),
               package_sha256=digest.hexdigest(), package_version=pyruns.__version__,
               python=sys.executable)
 print(f"wheel-import:{package}", flush=True)
@@ -403,9 +405,14 @@ def _verify(project, report, identities):
     assert second["status"] == "completed" and second["run_index"] == 2
     assert second["exit_codes"] == [42, 0] and second["config"] == config
     assert json.loads(cli("-w", "train", "diff", "recovery@1", "recovery@2", "--json"))["equal"]
+    metadata = json.loads((Path(second["directory"]) / "task_info.json").read_text(encoding="utf-8"))
+    attempt_ids = metadata["run_attempt_ids"]
+    assert len(attempt_ids) == 2 and len(set(attempt_ids)) == 2, attempt_ids
+    assert all(isinstance(token, str) and re.fullmatch(r"[0-9a-f]{32}", token) for token in attempt_ids)
     expected_records = [
         {"attempt": run, "steps": 600, "label": config["label"], "enabled": True,
          "values": [1, 2, 3], "package_sha256": report["package_sha256"],
+         "run_attempt_id": attempt_ids[run - 1],
          "package_version": report["version"], "python": sys.executable}
         for run in (1, 2)
     ]
@@ -415,6 +422,7 @@ def _verify(project, report, identities):
     ]
     assert first["records"] == expected_records[:1] and first["tracks"] == expected_tracks[:1]
     assert second["records"] == expected_records and second["tracks"] == expected_tracks
+    report["checks"].append("distinct run identities reach SDK processes and match persistent history")
     logs = []
     for run, status, code in ((1, "failed", 42), (2, "completed", 0)):
         historical = show("train", f"recovery@{run}")["selected_run"]
