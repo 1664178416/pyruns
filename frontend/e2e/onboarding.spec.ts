@@ -75,7 +75,9 @@ test('a delayed guide stays cancellable and cannot start after dismissal', async
     await (await loaded).finished()
     await expect(page).toHaveURL(/\/manager$/)
     await expect(popover(page)).toHaveCount(0)
-    await page.getByRole('button', { name: '新手指南', exact: true }).click()
+    await page.getByRole('button', { name: '偏好设置', exact: true }).click()
+    await page.getByRole('dialog', { name: '偏好设置', exact: true })
+      .getByRole('button', { name: '新手指南', exact: true }).click()
     await welcome.getByRole('button', { name: '开始引导', exact: true }).click()
     await expectStep(page, 'home')
   } finally {
