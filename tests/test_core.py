@@ -5677,6 +5677,25 @@ def test_task_manager_gpu_reservations_keep_starting_or_live_local_run(tmp_path,
     assert manager.gpu_scheduler._reservations == {"alpha": [0]}
 
 
+def test_task_manager_gpu_reservations_reuse_local_assignment_without_metadata_read(tmp_path, monkeypatch):
+    """A local runner already has the assignment needed for admission checks."""
+
+    tasks_dir = tmp_path / "tasks"
+    TaskGenerator(root_dir=str(tasks_dir)).create_task("alpha", {"value": 1})
+    manager = _make_task_manager(tasks_dir, owns_task_lifecycle=False)
+    assert manager._sync_status_to_disk("alpha", "running", run_index=1)
+    with manager._lock:
+        manager._tasks_by_name["alpha"]["_gpu_assignment"] = {"gpu_ids": [0, 2]}
+
+    def fail_metadata_read(*_args, **_kwargs):
+        raise AssertionError("local GPU assignment should not reread task_info.json")
+
+    monkeypatch.setattr(task_manager_module, "load_task_metadata", fail_metadata_read)
+    manager._sync_gpu_reservations_from_running_tasks()
+
+    assert manager.gpu_scheduler._reservations == {"alpha": [0, 2]}
+
+
 @pytest.mark.parametrize("metadata_state", ["missing", "corrupt"])
 @pytest.mark.parametrize("current_run_index", [1, 2])
 def test_task_manager_worker_done_releases_slot_when_metadata_unreadable(

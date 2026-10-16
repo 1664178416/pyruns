@@ -21,9 +21,17 @@ interface UseLogStreamOptions {
 
 const LOG_STREAM_RECONNECT_BASE_MS = 750
 const LOG_STREAM_RECONNECT_MAX_MS = 10_000
+// A browser can leave a WebSocket in CONNECTING/OPEN while the peer has
+// stopped responding (for example after a laptop resumes from sleep).  The
+// existing log health timer only starts after `open`, so bound the handshake
+// as well and let the normal reconnect/backoff path recover it.
+const LOG_STREAM_CONNECT_TIMEOUT_MS = 15_000
 const LOG_STREAM_HEALTH_TIMEOUT_MS = 35_000
 const TASK_EVENT_RECONNECT_BASE_MS = 750
 const TASK_EVENT_RECONNECT_MAX_MS = 15_000
+// The server emits task-event heartbeats every 15 seconds.  Treat a silent
+// socket as stale after three heartbeats so fallback polling resumes quickly.
+const TASK_EVENT_HEALTH_TIMEOUT_MS = 45_000
 
 interface UseTaskEventsOptions {
   onInvalidate: () => void
@@ -55,8 +63,16 @@ export function useTaskEvents({
 
     let disposed = false
     let retryTimer: number | null = null
+    let healthTimer: number | null = null
     let reconnectAttempt = 0
     const connectedGenerationKey = generationKey
+
+    const clearHealthTimer = () => {
+      if (healthTimer !== null) {
+        window.clearTimeout(healthTimer)
+        healthTimer = null
+      }
+    }
 
     const connect = () => {
       if (disposed || generationKeyRef.current !== connectedGenerationKey) {
@@ -66,6 +82,13 @@ export function useTaskEvents({
       onStatusChangeRef.current?.(reconnectAttempt > 0 ? 'reconnecting' : 'connecting')
       const ws = createTaskEventStream()
       wsRef.current = ws
+      const markStale = () => {
+        clearHealthTimer()
+        if (disposed || wsRef.current !== ws) return
+        onStatusChangeRef.current?.('reconnecting')
+        ws.close()
+      }
+      healthTimer = window.setTimeout(markStale, TASK_EVENT_HEALTH_TIMEOUT_MS)
 
       ws.onmessage = (event) => {
         if (
@@ -78,11 +101,18 @@ export function useTaskEvents({
         try {
           const message = JSON.parse(event.data) as TaskEventMessage
           if (message.type === 'ready') {
+            clearHealthTimer()
+            healthTimer = window.setTimeout(markStale, TASK_EVENT_HEALTH_TIMEOUT_MS)
             reconnectAttempt = 0
             onStatusChangeRef.current?.('live')
             onInvalidateRef.current()
           } else if (message.type === 'changed') {
+            clearHealthTimer()
+            healthTimer = window.setTimeout(markStale, TASK_EVENT_HEALTH_TIMEOUT_MS)
             onInvalidateRef.current()
+          } else if (message.type === 'heartbeat') {
+            clearHealthTimer()
+            healthTimer = window.setTimeout(markStale, TASK_EVENT_HEALTH_TIMEOUT_MS)
           }
         } catch { /* Ignore malformed task event messages. */ }
       }
@@ -96,6 +126,7 @@ export function useTaskEvents({
         ) {
           return
         }
+        clearHealthTimer()
         wsRef.current = null
         if (event?.code === 4409) {
           onStatusChangeRef.current?.('idle')
@@ -118,6 +149,7 @@ export function useTaskEvents({
       if (retryTimer !== null) {
         window.clearTimeout(retryTimer)
       }
+      clearHealthTimer()
       const ws = wsRef.current
       if (ws) {
         ws.onopen = null
@@ -184,6 +216,7 @@ export function useLogStream({
     let disposed = false
     let retryTimer: number | null = null
     let healthTimer: number | null = null
+    let connectTimer: number | null = null
     let reconnectAttempt = 0
     const connectedGenerationKey = generationKey
 
@@ -203,12 +236,20 @@ export function useLogStream({
       const failRead = (message: string) => {
         if (disposed || wsRef.current !== ws || unhealthy) return
         unhealthy = true
+        if (connectTimer !== null) {
+          window.clearTimeout(connectTimer)
+          connectTimer = null
+        }
         if (healthTimer !== null) window.clearTimeout(healthTimer)
         onErrorRef.current?.(message)
         onStatusChangeRef.current?.('reconnecting')
         onDisconnectRef.current?.()
         ws.close()
       }
+
+      connectTimer = window.setTimeout(() => {
+        failRead('Live log connection timed out. Retrying with incremental polling.')
+      }, LOG_STREAM_CONNECT_TIMEOUT_MS)
 
       ws.onopen = () => {
         if (
@@ -217,6 +258,10 @@ export function useLogStream({
           || generationKeyRef.current !== connectedGenerationKey
         ) {
           return
+        }
+        if (connectTimer !== null) {
+          window.clearTimeout(connectTimer)
+          connectTimer = null
         }
         healthTimer = window.setTimeout(() => {
           failRead('Live log reads timed out. Retrying with incremental polling.')
@@ -262,6 +307,10 @@ export function useLogStream({
           return
         }
         wsRef.current = null
+        if (connectTimer !== null) {
+          window.clearTimeout(connectTimer)
+          connectTimer = null
+        }
         if (healthTimer !== null) window.clearTimeout(healthTimer)
         if (!unhealthy) onDisconnectRef.current?.()
         if (event?.code === 4409) {
@@ -286,6 +335,7 @@ export function useLogStream({
         window.clearTimeout(retryTimer)
       }
       if (healthTimer !== null) window.clearTimeout(healthTimer)
+      if (connectTimer !== null) window.clearTimeout(connectTimer)
       const ws = wsRef.current
       if (ws) {
         ws.onopen = null

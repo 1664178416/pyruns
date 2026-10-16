@@ -14,6 +14,7 @@
 /.tmppytest-*/
 /.pytest-tmp-*/
 /.pytest-of-*/
+/.debug-*/
 /_pytest_focus_tmp/
 /pytest-cli-temp/
 /.tmp-dist/

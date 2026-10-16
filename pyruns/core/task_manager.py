@@ -4833,17 +4833,29 @@ class TaskManager:
                     "info_signature": task.get("_info_signature"),
                     "foreign_live": self._is_foreign_live_runner(task),
                     "local_live": self._is_current_runner(task) and self._lease_active(task),
+                    # A local runner has already published its assignment into
+                    # the in-memory task.  Keep a copy so the scheduler does
+                    # not reread task_info.json on every 100 ms queue pass.
+                    "gpu_assignment": copy.deepcopy(task.get("_gpu_assignment")),
                 }
                 for task in self.tasks
                 if task and str(task.get("name", "") or "")
             }
 
         scan_ok, disk_names = self._scan_task_dir_names()
+        reservations: Dict[str, List[int]] = {}
         if scan_ok:
             task_refs: List[tuple[str, str]] = []
             for task_name in disk_names:
                 task_dir = os.path.join(self.tasks_dir, task_name)
                 known = known_tasks.get(task_name)
+                if known is not None and known["status"] == "running" and known["local_live"]:
+                    local_gpu_ids = self._gpu_ids_from_assignment(known["gpu_assignment"])
+                    if local_gpu_ids:
+                        reservations[task_name] = local_gpu_ids
+                        continue
+                    # An assignment can be persisted just after this snapshot;
+                    # retain the read fallback until the in-memory value exists.
                 if known is None or known["status"] == "running" or bool(known["foreign_live"]):
                     task_refs.append((task_name, task_dir))
                     continue
@@ -4861,13 +4873,16 @@ class TaskManager:
                 if self._stat_signature(disk_stat) != known["info_signature"]:
                     task_refs.append((task_name, task_dir))
         else:
-            task_refs = [
-                (task_name, str(task.get("dir", "") or ""))
-                for task_name, task in known_tasks.items()
-                if task["status"] == "running"
-            ]
-
-        reservations: Dict[str, List[int]] = {}
+            task_refs = []
+            for task_name, task in known_tasks.items():
+                if task["status"] != "running":
+                    continue
+                if task["local_live"]:
+                    local_gpu_ids = self._gpu_ids_from_assignment(task["gpu_assignment"])
+                    if local_gpu_ids:
+                        reservations[task_name] = local_gpu_ids
+                        continue
+                task_refs.append((task_name, str(task["dir"] or "")))
         for task_name, task_dir in task_refs:
             if not task_name or not task_dir:
                 continue

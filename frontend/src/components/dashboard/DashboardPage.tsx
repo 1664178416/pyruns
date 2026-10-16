@@ -325,7 +325,7 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <section className="flex shrink-0 flex-col overflow-hidden rounded-md border border-border-default bg-surface-raised">
+          <section className="panel-surface flex shrink-0 flex-col overflow-hidden">
             <div className="shrink-0 flex flex-wrap items-start justify-between gap-2 border-b border-border-subtle px-4 py-3">
               <div>
                 <h2 className="text-sm font-medium text-txt-primary">{t('GPU & System')}</h2>
@@ -402,7 +402,7 @@ export default function DashboardPage() {
 
           <div className="grid shrink-0 grid-cols-2 gap-2 lg:grid-cols-4">
             {STAT_CARDS.map(({ key, label, icon: Icon, color }) => (
-              <div key={key} className="rounded-md border border-border-default bg-surface-raised px-3 py-2.5">
+              <div key={key} className="panel-surface px-3 py-2.5">
                 <div className="flex items-center gap-3">
                   <div className={clsx('rounded-md bg-surface-overlay p-2', color)}>
                     <Icon className="h-4 w-4" />
@@ -429,7 +429,7 @@ export default function DashboardPage() {
             ))}
           </div>
 
-          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border-default bg-surface-raised">
+          <section className="panel-surface flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
               <div>
                 <h2 className="text-sm font-medium text-txt-primary">{t('Recent Tasks')}</h2>
