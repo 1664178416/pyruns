@@ -93,16 +93,29 @@ export function isWorkspaceChangedError(error: unknown) {
   return error instanceof ApiError && isWorkspaceChanged(error.status, error.body)
 }
 
+async function withConnectionTimeout<T>(connect: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort(new Error('The connection timed out. Please try again.'))
+  }, 30_000)
+  try {
+    return await connect(controller.signal)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export function recoverSession(): Promise<boolean> {
   if (sessionRecoveryPromise) {
     return sessionRecoveryPromise
   }
-  const pending = fetch('/session/recover', {
+  const pending = withConnectionTimeout(signal => fetch('/session/recover', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
     body: '{}',
-  })
+    signal,
+  }))
     .then(response => response.ok)
     .catch(() => false)
   sessionRecoveryPromise = pending
@@ -157,7 +170,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json()
 }
 
-export const getWorkspace = () => request<WorkspaceInfo>('/api/workspace')
+export const getWorkspace = () => withConnectionTimeout(signal => request<WorkspaceInfo>('/api/workspace', { signal }))
 export const setRunRoot = (path: string) =>
   request<WorkspaceInfo>('/api/workspace/run-root', { method: 'POST', body: JSON.stringify({ path }) })
 export const openShellWorkspace = () =>

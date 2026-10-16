@@ -2063,6 +2063,26 @@ test('mobile navigation and runtime controls stay touch friendly without overflo
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
+test('a stalled workspace connection times out and can be retried', async ({ page }) => {
+  await page.clock.install()
+  let stalled = true
+  let requests = 0
+  await page.route('**/api/workspace', route => {
+    requests++
+    if (!stalled) return route.continue()
+  })
+  await page.goto('/?token=pyruns-e2e-access-token')
+  await expect.poll(() => requests).toBe(1)
+  await expect(page.getByText('Connecting to the Pyruns server...', { exact: true })).toBeVisible()
+  await page.clock.fastForward(30_001)
+  await expect(page.getByRole('heading', { name: 'Unable to connect', exact: true })).toBeVisible()
+  await expect(page.getByText('The connection timed out. Please try again.', { exact: true })).toBeVisible()
+  stalled = false
+  await page.getByRole('button', { name: 'Retry connection', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  expect(requests).toBe(2)
+})
+
 test('authentication failures show a recoverable session screen', async ({ page }) => {
   let rejectWorkspace = true
   await page.route('**/api/workspace', route => {

@@ -22,6 +22,7 @@ import {
 
 afterEach(() => {
   setWorkspaceContext('')
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -114,6 +115,41 @@ describe('workspace request context', () => {
 })
 
 describe('API errors', () => {
+  it('aborts a stalled workspace connection and permits a fresh retry', async () => {
+    vi.useFakeTimers()
+    let signal: AbortSignal | null | undefined
+    const fetchMock = vi.fn().mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      signal = init.signal
+      signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+    })).mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = getWorkspace().catch(error => error)
+    await vi.advanceTimersByTimeAsync(30_001)
+    expect(signal?.aborted).toBe(true)
+    expect(await result).toMatchObject({ message: 'The connection timed out. Please try again.' })
+    await expect(getWorkspace()).resolves.toEqual({})
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('releases a stalled shared session recovery so the next attempt can succeed', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+    })).mockResolvedValue(new Response('{}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const first = recoverSession()
+    expect(recoverSession()).toBe(first)
+    let settled = false
+    void first.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(30_001)
+    expect(settled).toBe(true)
+    expect(await first).toBe(false)
+    await expect(recoverSession()).resolves.toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('delivers search progress across byte chunks before completion', async () => {
     let stream!: ReadableStreamDefaultController<Uint8Array>
     const body = new ReadableStream<Uint8Array>({ start(controller) { stream = controller } })
