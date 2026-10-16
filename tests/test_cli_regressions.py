@@ -1520,6 +1520,7 @@ def test_submission_waits_for_delayed_terminal_receipt_after_fast_runner_exit(
     task = TaskGenerator(root_dir=str(tasks_dir)).create_task("fast-exit", {"value": 1})
     original_read_receipt = runner._read_receipt
     read_count = 0
+    sleep_values = []
 
     def fake_popen(command, _env):
         _write_test_receipt(command, "accepted", ["fast-exit"])
@@ -1535,6 +1536,7 @@ def test_submission_waits_for_delayed_terminal_receipt_after_fast_runner_exit(
     monkeypatch.setattr(runner, "_detached_popen", fake_popen)
     monkeypatch.setattr(runner, "_read_receipt", delayed_receipt)
     monkeypatch.setattr(runner, "get_follow_shell_runtime", lambda: {})
+    monkeypatch.setattr(runner.time, "sleep", sleep_values.append)
 
     result = runner.submit_cli_tasks(
         _submission_manager(tasks_dir, [task]),
@@ -1543,6 +1545,8 @@ def test_submission_waits_for_delayed_terminal_receipt_after_fast_runner_exit(
     )
 
     assert read_count == 6
+    assert sleep_values[:3] == pytest.approx([0.05, 0.05, 0.075])
+    assert max(sleep_values) > runner._POLL_INTERVAL_SEC
     assert result.status == "accepted"
     assert result.claimed == ("fast-exit",)
     assert result.unclaimed == ()

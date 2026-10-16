@@ -8,6 +8,10 @@ Use the smallest test that protects a distinct behavior:
 - Browser tests in `frontend/e2e` cover rendered controls, keyboard interaction,
   focus, scrolling, and responsive layout.
 
+Responsive spacing and overflow belong to the compact-layout browser spec;
+Python UI tests should keep only data-flow or accessibility contracts that do
+not need a rendered browser.
+
 Extend an existing regression when it exercises the same contract. Parameterize
 shared setup with distinct inputs; keep different failure boundaries explicit.
 For a bug fix, check that the regression fails against the unfixed behavior.

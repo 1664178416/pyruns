@@ -2160,7 +2160,7 @@ def test_runtime_update_gpu_scheduler_sanitizes_limits_with_scheduler_defaults(t
     assert payload["selection_mode"] == "auto"
     assert payload["device_ids"] == [0, 2]
     assert payload["min_idle_pct"] == 100.0
-    assert payload["min_free_memory_gb"] == 40.0
+    assert payload["min_free_memory_gb"] == 8.0
     assert payload["stable_seconds"] == 15.0
     assert payload["max_wait_seconds"] == 172800.0
     assert not {"memory_used_pct", "compute_used_pct", "max_tasks_per_gpu"}.intersection(payload)
@@ -2211,7 +2211,7 @@ def test_runtime_update_gpu_scheduler_rejects_non_finite_numeric_values(tmp_path
     assert response.status_code == 200
     payload = response.json()["gpu_scheduler"]
     assert payload["gpus_per_task"] == 1
-    assert payload["min_free_memory_gb"] == 40.0
+    assert payload["min_free_memory_gb"] == 8.0
     assert payload["min_idle_pct"] == 70.0
     assert payload["stable_seconds"] == 15.0
     assert payload["max_wait_seconds"] == 172800.0

@@ -383,7 +383,7 @@ pyr ui shell                       # GPU 设置和任务监控面板
 
 UI 使用 `GPUs required`、`Minimum free memory (GiB)`、`Minimum GPU idle (%)`、
 `Stable for (sec)`、`Maximum wait (hr)`。旧配置的最大利用率会迁移为最低空闲率；
-显存占用百分比和每卡任务数已停用。
+显存占用百分比和每卡任务数已停用。UI 的最小空闲显存默认值为 `8 GiB`，可在 Runtime 中按任务需要调整。
 
 等待输出会逐项对照当前值与要求，显示 `ready` / `blocked` 状态及具体阻塞原因：
 

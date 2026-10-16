@@ -37,6 +37,8 @@ SubmissionStatus = Literal[
 DEFAULT_STARTUP_TIMEOUT_SEC = 15.0
 DEFAULT_ABORT_TIMEOUT_SEC = SUBMITTER_ABORT_TIMEOUT_SEC
 _POLL_INTERVAL_SEC = 0.05
+_MAX_POLL_INTERVAL_SEC = 1.0
+_MAX_STARTUP_POLL_INTERVAL_SEC = 0.25
 _EXITED_LAUNCHER_GRACE_SEC = 1.0
 
 
@@ -226,6 +228,9 @@ def _abort_submission(
             break
 
     deadline = time.monotonic() + max(0.05, DEFAULT_ABORT_TIMEOUT_SEC)
+    poll_interval = _POLL_INTERVAL_SEC
+    previous_receipt: SubmissionReceipt | None = None
+    previous_process_exited = False
     while abort_written and time.monotonic() < deadline:
         try:
             receipt = _read_receipt(
@@ -238,7 +243,8 @@ def _abort_submission(
             if terminal_result is not None:
                 return _AbortOutcome(terminal_result, interrupted, runner_pid)
 
-            if process.poll() is not None:
+            process_exited = process.poll() is not None
+            if process_exited:
                 if runner_pid == process.pid:
                     break
                 if runner_pid is None:
@@ -248,7 +254,18 @@ def _abort_submission(
                         )
                     elif time.monotonic() >= launcher_exit_deadline:
                         break
-            time.sleep(_POLL_INTERVAL_SEC)
+            progressed = (
+                receipt != previous_receipt
+                or process_exited != previous_process_exited
+            )
+            previous_receipt = receipt
+            previous_process_exited = process_exited
+            time.sleep(poll_interval)
+            poll_interval = (
+                _POLL_INTERVAL_SEC
+                if progressed
+                else min(_MAX_POLL_INTERVAL_SEC, poll_interval * 1.5)
+            )
         except KeyboardInterrupt:
             interrupted = True
 
@@ -402,6 +419,9 @@ def submit_cli_tasks(
         deadline = time.monotonic() + max(0.05, timeout_seconds)
         observed_runner_pid: int | None = None
         process_exit_deadline: float | None = None
+        poll_interval = _POLL_INTERVAL_SEC
+        previous_receipt: SubmissionReceipt | None = None
+        previous_process_exited = False
         while True:
             receipt = _read_receipt(
                 receipt_file,
@@ -481,7 +501,18 @@ def submit_cli_tasks(
                 outcome_runner_pid = aborted.runner_pid or process.pid
                 interrupted = aborted.interrupted
                 break
-            time.sleep(_POLL_INTERVAL_SEC)
+            progressed = (
+                receipt != previous_receipt
+                or process_exited != previous_process_exited
+            )
+            previous_receipt = receipt
+            previous_process_exited = process_exited
+            time.sleep(poll_interval)
+            poll_interval = (
+                _POLL_INTERVAL_SEC
+                if progressed
+                else min(_MAX_STARTUP_POLL_INTERVAL_SEC, poll_interval * 1.5)
+            )
 
         if outcome is None:
             outcome = _submission_result(names, status="unresolved")

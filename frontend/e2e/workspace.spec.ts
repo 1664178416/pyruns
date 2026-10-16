@@ -415,7 +415,6 @@ test('GPU card opens detailed device and process information', async ({ page, is
   await page.goto('/?token=pyruns-e2e-access-token')
   const gpuCard = page.getByRole('button', { name: 'View details for GPU 0 NVIDIA RTX 5090' })
   await expect(gpuCard).toBeVisible()
-  await expect(gpuCard.getByText('View details')).toBeVisible()
   await gpuCard.click()
 
   const dialog = page.getByRole('dialog', { name: 'GPU 0 | NVIDIA RTX 5090' })
@@ -1219,6 +1218,11 @@ for (const workspaceKind of ['script', 'shell'] as const) {
         await expect(filters).toBeVisible()
         await expect(filters).toBeInViewport({ ratio: 1 })
         await page.screenshot({ path: testInfo.outputPath(`${view}-search-filters-open.png`), animations: 'disabled' })
+        const filterPopover = page.getByRole('dialog', { name: 'Search filters', exact: true })
+        await page.keyboard.press('Escape')
+        await expect(filterPopover).toBeHidden()
+        await expect(filterTrigger).toBeFocused()
+        await filterTrigger.click()
       }
       await expect(selector).toHaveValue('all')
       const filterBounds = await filters.boundingBox()

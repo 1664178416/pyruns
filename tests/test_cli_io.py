@@ -91,6 +91,33 @@ def test_wait_backoff_respects_timeout_deadline(monkeypatch):
     assert sleeps == pytest.approx([0.1, 0.15, 0.1])
 
 
+def test_follow_logs_backs_off_when_a_running_task_is_quiet(monkeypatch):
+    statuses = iter(["queued", "queued", "queued", "running", "running", "completed"])
+    sleeps = []
+    identity = commands._TaskRunIdentity(run_index=1, runner_id="host:1:token")
+
+    monkeypatch.setattr(
+        commands,
+        "_bound_task_record",
+        lambda *_args: {"status": next(statuses)},
+    )
+    monkeypatch.setattr(
+        commands,
+        "_resolve_log_reference",
+        lambda _task, **_kwargs: commands._LogReference("run1.log", 1, "run"),
+    )
+    monkeypatch.setattr(commands, "_write_available_log", lambda _path, offset: offset)
+    monkeypatch.setattr(commands.time, "sleep", sleeps.append)
+
+    result = commands._follow_task_logs({}, identity, 0, lambda _path, offset: offset)
+
+    assert result["status"] == "completed"
+    # A status change resets the next poll to the fast interval; only quiet
+    # consecutive reads grow the backoff.
+    assert sleeps[:4] == pytest.approx([0.1, 0.1, 0.15, 0.225])
+    assert max(sleeps) > 0.1
+
+
 @pytest.mark.parametrize(("data", "lines", "expected"), [
     (b"", 1, ""),
     (b"one\ntwo\n", 0, ""),

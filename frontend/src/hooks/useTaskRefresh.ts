@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTaskEvents, type TaskEventStreamStatus } from './useWebSocket'
 import { usePolling } from './usePolling'
+import { usePageVisible } from './usePageVisible'
 
 function pageHidden() {
   return document.visibilityState === 'hidden'
@@ -15,12 +16,14 @@ export function useTaskRefresh(
   foregroundLoading = false,
 ) {
   const [status, setStatus] = useState<TaskEventStreamStatus>('idle')
+  const pageVisible = usePageVisible()
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
   const scheduleRef = useRef<(fromDisk?: boolean) => void>(() => {})
   const foregroundLoadingRef = useRef(foregroundLoading)
   foregroundLoadingRef.current = foregroundLoading
   const resumeRef = useRef<() => void>(() => {})
+  const previousPageVisibleRef = useRef(pageVisible)
 
   useEffect(() => {
     let disposed = false
@@ -70,6 +73,17 @@ export function useTaskRefresh(
       clearTimeout(timer)
     }
   }, [generationKey])
+
+  useEffect(() => {
+    const becameVisible = !previousPageVisibleRef.current && pageVisible
+    previousPageVisibleRef.current = pageVisible
+    if (becameVisible) {
+      // Reconcile from disk after a hidden interval. The websocket's ready
+      // event may arrive at the same time; the scheduler coalesces both into
+      // one request while retaining the stronger disk refresh flag.
+      scheduleRef.current(true)
+    }
+  }, [pageVisible])
 
   useEffect(() => {
     if (!foregroundLoading) resumeRef.current()

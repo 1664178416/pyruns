@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
 
 permissions:
   contents: read
@@ -154,7 +157,10 @@ jobs:
       - name: Test browser
         working-directory: frontend
         timeout-minutes: 10
-        run: npm run test:e2e
+        # Ubuntu runs the complete browser suite. Keep the other platforms on
+        # a small layout smoke test so OS-specific browser/runtime failures
+        # remain covered without tripling the slowest E2E job.
+        run: npm run test:e2e -- compact-layout.spec.ts
       - name: Upload browser failure artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -273,6 +279,7 @@ jobs:
 
   scaling:
     name: Scale / ${{ matrix.os }}
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:

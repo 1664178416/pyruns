@@ -1182,7 +1182,11 @@ def _follow_task_logs(
 ) -> dict[str, Any]:
     current_path = ""
     offset = 0
+    poll_interval = 0.1
+    previous_status: str | None = None
     while True:
+        previous_path = current_path
+        previous_offset = offset
         latest_record = _bound_task_record(task, identity)
         if latest_record["status"] != "queued":
             reference = _resolve_log_reference(
@@ -1215,7 +1219,16 @@ def _follow_task_logs(
                     offset = next_offset
                     stable_reads = 0
             return latest_record
-        time.sleep(0.1)
+        # Metadata reads dominate this loop on NFS/SMB.  Poll quickly after a
+        # status/log change, then back off while the task remains quiet.
+        progressed = (
+            current_path != previous_path
+            or offset != previous_offset
+            or latest_record["status"] != previous_status
+        )
+        time.sleep(poll_interval)
+        poll_interval = 0.1 if progressed else min(1.0, poll_interval * 1.5)
+        previous_status = latest_record["status"]
 
 
 def _cancel_submitted_tasks_after_interrupt(

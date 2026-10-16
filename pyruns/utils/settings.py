@@ -36,6 +36,7 @@ from pyruns._config import (
     DEFAULT_MONITOR_LINE_HEIGHT,
     DEFAULT_MONITOR_SCROLLBACK,
     DEFAULT_MONITOR_SIDEBAR_WIDTH_PCT,
+    DEFAULT_GPU_MIN_FREE_MEMORY_GB,
     DEFAULT_SHELL_MODE,
     MAX_CONFIG_FILE_BYTES,
 )
@@ -69,7 +70,7 @@ SETTINGS_DEFAULTS: Dict[str, Any] = {
     "gpu_scheduler_selection_mode": "auto",
     "gpu_scheduler_gpus_per_task": 1,
     "gpu_scheduler_device_ids": [],
-    "gpu_scheduler_min_free_memory_gb": 40,
+    "gpu_scheduler_min_free_memory_gb": DEFAULT_GPU_MIN_FREE_MEMORY_GB,
     "gpu_scheduler_min_idle_pct": 70,
     "gpu_scheduler_stable_seconds": 15,
     "gpu_scheduler_max_wait_seconds": 172800,
@@ -115,7 +116,7 @@ gpu_scheduler_task_mode: {SETTINGS_DEFAULTS.get("gpu_scheduler_task_mode")}     
 gpu_scheduler_selection_mode: {SETTINGS_DEFAULTS.get("gpu_scheduler_selection_mode")} # auto | specified
 gpu_scheduler_gpus_per_task: {SETTINGS_DEFAULTS.get("gpu_scheduler_gpus_per_task")}  # used when task_mode is multi
 gpu_scheduler_device_ids: []             # auto mode: pool; specified mode: exact GPU IDs
-gpu_scheduler_min_free_memory_gb: {SETTINGS_DEFAULTS.get("gpu_scheduler_min_free_memory_gb")} # eligible when free memory is at least this many GiB
+gpu_scheduler_min_free_memory_gb: {SETTINGS_DEFAULTS.get("gpu_scheduler_min_free_memory_gb")} # UI/runtime default; eligible when free memory is at least this many GiB
 gpu_scheduler_min_idle_pct: {SETTINGS_DEFAULTS.get("gpu_scheduler_min_idle_pct")}     # minimum GPU idle percent (100 - utilization)
 gpu_scheduler_stable_seconds: {SETTINGS_DEFAULTS.get("gpu_scheduler_stable_seconds")}         # limits must stay eligible for this long
 gpu_scheduler_max_wait_seconds: {SETTINGS_DEFAULTS.get("gpu_scheduler_max_wait_seconds")}     # default 48h

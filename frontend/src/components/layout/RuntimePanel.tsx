@@ -468,7 +468,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     setGpuSelectionMode(next.gpu_scheduler?.selection_mode === 'specified' ? 'specified' : 'auto')
     setGpuCount(String(next.gpu_scheduler?.gpus_per_task ?? 1))
     setGpuDeviceIds(formatDeviceIds(next.gpu_scheduler?.device_ids))
-    setGpuMinFreeMemoryGb(String(next.gpu_scheduler?.min_free_memory_gb ?? 40))
+    setGpuMinFreeMemoryGb(String(next.gpu_scheduler?.min_free_memory_gb ?? 8))
     setGpuMinIdlePct(String(next.gpu_scheduler?.min_idle_pct ?? 70))
     setGpuStableSeconds(String(next.gpu_scheduler?.stable_seconds ?? 15))
     setGpuMaxWaitHours(String(Math.max(0, (next.gpu_scheduler?.max_wait_seconds ?? 172800) / 3600)))
@@ -500,7 +500,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     setGpuCount(String(cleanSettingText(settings?.gpu_scheduler_task_mode).toLowerCase() === 'multi'
       ? settingNumber(settings?.gpu_scheduler_gpus_per_task, 1, 1) : 1))
     setGpuDeviceIds(formatDeviceIdsSetting(settings?.gpu_scheduler_device_ids))
-    setGpuMinFreeMemoryGb(String(settingNumber(settings?.gpu_scheduler_min_free_memory_gb, 40, 0)))
+    setGpuMinFreeMemoryGb(String(settingNumber(settings?.gpu_scheduler_min_free_memory_gb, 8, 0)))
     setGpuMinIdlePct(String(Object.prototype.hasOwnProperty.call(settings || {}, 'gpu_scheduler_min_idle_pct')
       ? settingNumber(settings?.gpu_scheduler_min_idle_pct, 70, 0, 100)
       : 100 - settingNumber(settings?.gpu_scheduler_compute_used_pct, 30, 0, 100)))
@@ -838,7 +838,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
         selection_mode: gpuSelectionMode,
         gpus_per_task: requestedGpuCount,
         device_ids: gpuSelectionMode === 'specified' ? selectedGpuIds : [],
-        min_free_memory_gb: numberInputValue(gpuMinFreeMemoryGb, 40, 0),
+        min_free_memory_gb: numberInputValue(gpuMinFreeMemoryGb, 8, 0),
         min_idle_pct: boundedNumberInputValue(gpuMinIdlePct, 70, 0, 100),
         stable_seconds: numberInputValue(gpuStableSeconds, 15, 0),
         max_wait_seconds: Number(gpuMaxWaitHours) * 3600,
