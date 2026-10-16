@@ -77,7 +77,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
       style={{ width }}
     >
       <div>
-        <div className={clsx('flex h-16 items-center', compact ? 'justify-center gap-1 px-0' : 'gap-2.5 px-4')}>
+        <div className={clsx('flex h-12 items-center', compact ? 'justify-center gap-1 px-0' : 'gap-2 px-3')}>
           <span className={clsx('inline-flex flex-none items-center justify-center rounded-lg text-accent-ink', compact ? 'h-6 w-5' : 'h-8 w-8 bg-accent/10')}>
             <Rocket aria-hidden="true" className="h-[18px] w-[18px]" />
           </span>
@@ -90,7 +90,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
         </div>
       </div>
 
-      <nav className={clsx('flex flex-1 flex-col gap-1 overflow-y-auto pb-4 pt-1', compact ? 'px-2' : 'px-2.5')}>
+      <nav className={clsx('flex flex-1 flex-col gap-0.5 overflow-y-auto pb-2 pt-1', compact ? 'px-2' : 'px-2.5')}>
         {NAV_ITEMS.map(({ to, icon: Icon, label, end }) => (
           <NavLink
             key={to}
@@ -100,7 +100,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             aria-label={t(label)}
             title={t(label)}
             className={({ isActive }) => clsx(
-              'flex min-h-11 items-center gap-2.5 rounded-lg py-2 text-sm font-medium transition-colors sm:min-h-10',
+              'touch-target flex min-h-11 items-center gap-2.5 rounded-md py-1.5 text-sm font-medium transition-colors sm:min-h-9',
               compact ? 'justify-center px-0' : 'pl-2.5 pr-3',
               isActive
                 ? 'bg-accent/10 text-accent-ink'
@@ -111,25 +111,11 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             {!compact && <span>{t(label)}</span>}
           </NavLink>
         ))}
-        <button
-          type="button"
-          data-tour="guide"
-          aria-label={t('Beginner guide')}
-          title={t('Beginner guide')}
-          onClick={event => useOnboardingStore.getState().open(event.currentTarget)}
-          className={clsx(
-            'touch-target mt-auto flex min-h-11 flex-none items-center gap-2.5 rounded-lg py-2 text-sm font-medium text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:min-h-10',
-            compact ? 'justify-center px-0' : 'pl-2.5 pr-3',
-          )}
-        >
-          <CircleHelp aria-hidden="true" className="h-4 w-4 flex-none" />
-          {!compact && <span>{t('Beginner guide')}</span>}
-        </button>
       </nav>
 
       <div className={clsx('border-t border-border-subtle', compact ? 'p-2' : 'p-2.5')}>
         {!compact && (
-          <div className="mb-2 px-2 text-[11px] font-medium text-txt-tertiary">
+          <div className="mb-1 px-2 text-[11px] font-medium text-txt-tertiary">
             {t('Workspace')}
           </div>
         )}
@@ -140,7 +126,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
           onClick={() => openWorkspaceLauncher(shellWorkspaceActive ? 'shell' : 'python')}
           aria-label={workspaceLabel}
           title={workspacePathHint}
-          className="touch-target min-h-11 w-full rounded-lg border border-border-subtle bg-surface-raised px-2.5 py-2.5 text-left transition-colors hover:border-border-strong focus:outline-none focus:ring-2 focus:ring-accent/25"
+          className="touch-target min-h-11 w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-hover focus:outline-none focus:ring-2 focus:ring-accent/25"
         >
           <div className={clsx('flex items-center gap-2', compact && 'justify-center')}>
             <FileCode className="h-4 w-4 flex-none text-txt-tertiary" />
@@ -176,7 +162,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
           onClick={() => setRuntimeOpen(true)}
           aria-label={t('Runtime')}
           title={t('Runtime')}
-          className="touch-target mt-1 min-h-11 w-full rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-accent/25 sm:min-h-10"
+          className="touch-target mt-0.5 min-h-11 w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-accent/25 sm:min-h-9"
         >
           <div className={clsx('flex items-center gap-2', compact && 'justify-center')}>
             <SlidersHorizontal className="h-4 w-4 flex-none text-txt-tertiary" />
@@ -191,6 +177,21 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
               </>
             )}
           </div>
+        </button>
+
+        <button
+          type="button"
+          data-tour="guide"
+          aria-label={t('Beginner guide')}
+          title={t('Beginner guide')}
+          onClick={event => useOnboardingStore.getState().open(event.currentTarget)}
+          className={clsx(
+            'touch-target mt-0.5 flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:min-h-9',
+            compact && 'justify-center px-0',
+          )}
+        >
+          <CircleHelp aria-hidden="true" className="h-4 w-4 flex-none" />
+          {!compact && <span>{t('Beginner guide')}</span>}
         </button>
 
         <div className={clsx('mt-2 flex gap-1 border-t border-border-subtle pt-2', compact && 'flex-col')}>

@@ -8,9 +8,10 @@ interface Props {
   limit: number
   onOffsetChange: (offset: number) => void
   disabled?: boolean
+  compact?: boolean
 }
 
-export default function Pagination({ total, offset, limit, onOffsetChange, disabled = false }: Props) {
+export default function Pagination({ total, offset, limit, onOffsetChange, disabled = false, compact = false }: Props) {
   const { t } = useTranslation()
   if (total <= limit) return null
 
@@ -18,7 +19,7 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
   const totalPages = Math.ceil(total / limit)
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-txt-tertiary">
+    <div className="flex shrink-0 flex-nowrap items-center gap-1 whitespace-nowrap text-xs text-txt-tertiary">
       <button
         type="button"
         disabled={disabled || offset === 0}
@@ -26,6 +27,7 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
         aria-label={t('Previous page')}
         className={clsx(
           'touch-target inline-flex h-11 w-11 items-center justify-center rounded-md transition-colors hover:bg-surface-overlay sm:h-8 sm:w-8',
+          compact && 'h-7 w-7 sm:h-7 sm:w-7',
           (disabled || offset === 0) && 'opacity-30 cursor-not-allowed'
         )}
       >
@@ -41,12 +43,13 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
         aria-label={t('Next page')}
         className={clsx(
           'touch-target inline-flex h-11 w-11 items-center justify-center rounded-md transition-colors hover:bg-surface-overlay sm:h-8 sm:w-8',
+          compact && 'h-7 w-7 sm:h-7 sm:w-7',
           (disabled || offset + limit >= total) && 'opacity-30 cursor-not-allowed'
         )}
       >
         <ChevronRight className="w-3.5 h-3.5" />
       </button>
-      <span className="ml-1 text-txt-tertiary">{t('{{total}} total', { total })}</span>
+      <span className={compact ? 'text-txt-tertiary' : 'ml-1 text-txt-tertiary'}>{t('{{total}} total', { total })}</span>
     </div>
   )
 }

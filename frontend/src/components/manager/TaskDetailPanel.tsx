@@ -693,7 +693,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
             )}
           />
         </button>
-        <div className="flex flex-wrap items-center gap-2 px-5 pb-2 pt-4">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2">
           <div className="order-2 w-full sm:order-none sm:w-auto">
             <StatusBadge status={task.status as TaskStatus} />
           </div>
@@ -765,7 +765,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           </button>
         </div>
 
-        <div role="tablist" aria-label={t("Task detail sections")} className="grid grid-cols-4 gap-2 border-b border-border-subtle px-5 sm:flex sm:gap-5">
+        <div role="tablist" aria-label={t("Task detail sections")} className="grid grid-cols-4 gap-1 border-b border-border-subtle px-4 sm:flex sm:gap-3">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -807,7 +807,7 @@ export default function TaskDetailPanel({ task, onClose, onTaskUpdated, onRefres
           id={`task-detail-panel-${tab}`}
           role="tabpanel"
           aria-labelledby={`task-detail-tab-${tab}`}
-          className="task-detail-body min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:py-6"
+          className="task-detail-body min-h-0 flex-1 overflow-y-auto p-4"
         >
           {tab === 'info' && <InfoTab key={task.task_identity || `${task.dir}:${task.created_at}`} task={task} />}
           {tab === 'config' && <ConfigTab task={task} />}
@@ -1302,7 +1302,7 @@ function InfoTab({ task }: { task: Task }) {
   ]
 
   return (
-    <div className="task-detail-info space-y-5">
+    <div className="task-detail-info space-y-3">
       {currentMetrics.length > 0 && (
         <section className="space-y-2" aria-labelledby="task-current-run-heading">
           <h3 id="task-current-run-heading" className="text-sm font-semibold text-txt-primary">

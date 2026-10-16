@@ -1583,8 +1583,8 @@ export default function MonitorPage() {
           ? { height: sidebarSearchActive ? '100%' : COMPACT_MONITOR_SIDEBAR_HEIGHT }
           : { width: `max(${monitorSidebarWidthPct}%, ${MIN_MONITOR_SIDEBAR_WIDTH_PX}px)` }}
       >
-        <div data-tour="monitor-controls" className="flex-none border-b border-border-subtle px-3 pb-3 pt-3.5">
-          <div className="mb-3 flex min-h-8 items-center justify-between gap-2">
+        <div data-tour="monitor-controls" className="flex-none border-b border-border-subtle px-3 py-2.5">
+          <div className="mb-2 flex min-h-7 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <h1 className="text-sm font-semibold tracking-tight text-txt-primary">{t("Monitor")}</h1>
               <span className="rounded-md bg-surface-overlay px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-txt-secondary" title={t('{{count}} tasks', { count: monitorTotal.toLocaleString() })}>
@@ -1668,7 +1668,7 @@ export default function MonitorPage() {
           )}
         </div>
 
-        <div ref={sidebarListRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        <div ref={sidebarListRef} className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
           {sidebarSearchActive ? (
             <CompactSection
               title={t("Search Results")}
@@ -1715,7 +1715,7 @@ export default function MonitorPage() {
                   count={pinnedTasks.length}
                   icon={<Pin className="h-3.5 w-3.5 text-accent-ink" />}
                   className="mb-3"
-                  bodyClassName="space-y-1 pt-1"
+                  bodyClassName="space-y-0.5 pt-1"
                 >
                   {pinnedTasks.map(task => (
                     <SidebarItem
@@ -1735,7 +1735,7 @@ export default function MonitorPage() {
                 title={t("Tasks")}
                 count={pinnedTasks.length ? otherTasks.length : undefined}
                 icon={<Rows3 className="h-3.5 w-3.5 text-txt-tertiary" />}
-                bodyClassName="space-y-1 pt-1"
+                bodyClassName="space-y-0.5 pt-1"
               >
                 {otherTasks.length === 0 && pinnedTasks.length === 0 ? (
                   <div className="px-2 py-5 text-center text-2xs text-txt-tertiary">
@@ -1758,14 +1758,14 @@ export default function MonitorPage() {
 
         </div>
 
-        <div className="flex-none border-t border-border-subtle px-2.5 py-2">
+        <div className="flex-none border-t border-border-subtle px-2 py-1">
           {monitorTotal > MONITOR_TASK_PAGE_SIZE && (
-            <div className="mb-2 space-y-1" aria-label={t("Monitor task pagination")}>
-              <div className="text-2xs tabular-nums text-txt-tertiary">
+            <div className="mb-1 flex min-w-0 flex-nowrap items-center justify-between gap-1" aria-label={t("Monitor task pagination")}>
+              <div className="shrink-0 whitespace-nowrap text-2xs tabular-nums text-txt-tertiary">
                 {t('Tasks {{start}}–{{end}}', { start: monitorOffset + 1, end: monitorOffset + monitorTasks.length })}
               </div>
               <Pagination total={monitorTotal} offset={monitorOffset} limit={MONITOR_TASK_PAGE_SIZE}
-                onOffsetChange={handleTaskPageChange} disabled={monitorLoading} />
+                onOffsetChange={handleTaskPageChange} disabled={monitorLoading} compact />
             </div>
           )}
           {!exportMode ? (
@@ -1835,10 +1835,10 @@ export default function MonitorPage() {
       )}
 
       <div className="monitor-terminal-shell flex min-h-0 min-w-0 max-w-full flex-1 flex-col border-l border-border-subtle">
-        <div className="monitor-header flex min-h-16 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle bg-surface-raised px-3 py-3 shadow-sm sm:px-5">
+        <div className="monitor-header flex shrink-0 items-center gap-2 border-b border-border-subtle bg-surface-raised px-3 py-1">
           {selectedTask ? (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <div className="monitor-task-context flex min-w-0 flex-1 basis-[24rem] items-center gap-2.5 border-l-2 border-accent/55 pl-2.5">
+            <div className="monitor-header-content flex min-w-0 flex-1 items-center justify-between gap-3">
+              <div className="monitor-task-context flex min-w-0 flex-1 items-center gap-2">
                 {compactMonitorLayout && compactSearchFocused && selectedTaskName && (
                   <ActionButton
                     aria-label={t("Search results")}
@@ -1855,11 +1855,11 @@ export default function MonitorPage() {
                   </ActionButton>
                 )}
                 <StatusBadge status={selectedTask.status as TaskStatus} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-txt-primary" title={selectedTask.name}>
+                <div className="monitor-task-title min-w-0 flex-1">
+                  <div className="truncate text-xs font-semibold text-txt-primary" title={selectedTask.name}>
                     {selectedTask.name}
                   </div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-txt-tertiary" title={selectedLog || liveLogName || t("latest log")}>
+                  <div className="monitor-log-name truncate font-mono text-[11px] text-txt-tertiary" title={selectedLog || liveLogName || t("latest log")}>
                     {selectedLog || liveLogName || t("latest log")}
                   </div>
                 </div>
@@ -1890,8 +1890,8 @@ export default function MonitorPage() {
 
               <div
                 className={clsx(
-                  'monitor-action-toolbar flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5',
-                  compactMonitorLayout ? 'w-full' : 'ml-auto flex-none',
+                  'monitor-action-toolbar flex min-w-0 max-w-full flex-none items-center justify-end gap-1',
+                  compactMonitorLayout ? 'max-w-full' : 'ml-auto',
                 )}
                 role="toolbar"
                 aria-label={t("Log actions")}
@@ -1904,7 +1904,7 @@ export default function MonitorPage() {
                       title={t("Select log file")}
                       aria-label={t("Select task log file")}
                       disabled={loading}
-                      className="touch-input h-11 max-w-36 appearance-none truncate rounded-md border border-border bg-surface-overlay/55 px-2.5 pr-7 text-xs text-txt-primary transition-colors hover:bg-surface-overlay sm:h-9"
+                      className="touch-input h-8 max-w-28 appearance-none truncate rounded-md border border-border-subtle bg-surface-raised px-2 pr-6 text-xs text-txt-primary transition-colors hover:bg-surface-overlay"
                     >
                       {availableLogs.map(log => (
                         <option key={log} value={log}>{log}</option>
@@ -1919,7 +1919,7 @@ export default function MonitorPage() {
                   variant="ghost"
                   aria-label={t("View Details")}
                   title={t("View task details")}
-                  className="max-[900px]:px-2 max-[900px]:[&>span]:sr-only"
+                  className="monitor-detail-action max-[1100px]:px-2 max-[1100px]:[&>span]:sr-only"
                   onClick={() => openDetailTask(selectedTask)}
                 >
                   {t("View Details")}
@@ -2025,7 +2025,7 @@ export default function MonitorPage() {
           </div>
         )}
 
-        <div className="relative flex-1 overflow-hidden" aria-busy={loading}>
+        <div className="relative min-h-0 flex-1 overflow-hidden" aria-busy={loading}>
           {selectedTaskName ? (
             <>
               <div
@@ -2317,20 +2317,20 @@ const SidebarItem = memo(function SidebarItem({
       aria-pressed={exportMode ? exportSelected : undefined}
       aria-label={t('{{action}} {{name}}, {{status}}', { action: exportMode ? (exportSelected ? t("Deselect") : t("Select")) : t("View"), name: task.name, status: task.status })}
       className={clsx(
-        'flex min-h-11 w-full flex-col justify-center items-stretch rounded-lg border px-2.5 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35',
+        'flex min-h-8 w-full items-center rounded-md border px-2 py-1 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/35',
         exportMode && exportSelected && 'border-accent/25 bg-accent/10',
         !exportMode && active
           ? 'border-accent/25 bg-accent/10'
           : 'border-transparent hover:border-border-subtle hover:bg-surface-overlay'
       )}
       title={task.name}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '44px' }}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '32px' }}
     >
       <span className="flex w-full min-w-0 items-center gap-1.5">
         {exportMode && <SelectionIndicator selected={exportSelected} />}
         <StatusDot status={task.status as TaskStatus} />
         <span className={clsx(
-          'min-w-0 flex-1 break-words text-xs leading-4 truncate-2',
+          'min-w-0 flex-1 truncate whitespace-nowrap text-xs leading-4',
           active && !exportMode ? 'font-medium text-txt-primary' : 'text-txt-secondary'
         )}>
           {task.name}

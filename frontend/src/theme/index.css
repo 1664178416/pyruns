@@ -100,19 +100,119 @@ summary::-webkit-details-marker {
   overscroll-behavior: contain;
 }
 
-/* Keep the main work surfaces easy to scan without turning every nested
-   section into another hard-edged box.  This mirrors the restrained panel
-   hierarchy used by VS Code and experiment dashboards: one quiet outline,
-   one small elevation cue, and no decorative gradients. */
+/* A single quiet surface for each work area; nested data stays flat. */
 .panel-surface {
   border: 1px solid var(--border-subtle);
-  border-radius: 0.75rem;
+  border-radius: 0.375rem;
   background: var(--surface-raised);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 8px 20px -18px rgb(15 23 42 / 0.35);
 }
 
-.dark .panel-surface {
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 8px 20px -18px rgb(0 0 0 / 0.7);
+.dashboard-content {
+  container-type: inline-size;
+}
+
+.dashboard-system,
+.dashboard-recent {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dashboard-resources {
+  background: var(--surface-raised);
+}
+
+.dashboard-resource + .dashboard-resource {
+  border-left: 1px solid var(--border-subtle);
+}
+
+.dashboard-resource:nth-child(3) {
+  border-left: 0;
+}
+
+.dashboard-resource:nth-child(n + 3) {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.dashboard-stats {
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.375rem;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.dashboard-stat + .dashboard-stat {
+  border-left: 1px solid var(--border-subtle);
+}
+
+.dashboard-stat:nth-child(3) {
+  border-left: 0;
+}
+
+.dashboard-stat:nth-child(n + 3) {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.gpu-metric-row {
+  position: relative;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  background: #334155;
+  color: #f2f5fa;
+}
+
+.gpu-metric-row:hover { background: #3f4f66; }
+.gpu-metric-row .text-txt-primary { color: #f8fafc; }
+.gpu-metric-row .text-txt-secondary { color: #d1dae6; }
+.gpu-metric-row .text-txt-tertiary { color: #aebdce; }
+
+.gpu-metric-row > :first-child {
+  grid-column: 1 / -1;
+  padding-right: 1.25rem;
+}
+
+.gpu-memory-value {
+  grid-column: 1 / -1;
+  text-align: left;
+}
+
+.gpu-row-chevron {
+  position: absolute;
+  right: 0.75rem;
+  top: 0.8rem;
+}
+
+@container (min-width: 48rem) {
+  .gpu-metric-row {
+    grid-template-columns: minmax(12rem, 1.4fr) minmax(7rem, 1fr) minmax(7rem, 1fr) minmax(8rem, auto) 0.875rem;
+    column-gap: 1.25rem;
+    min-height: 2.25rem;
+    padding-top: 0.375rem;
+    padding-bottom: 0.375rem;
+  }
+
+  .gpu-metric-row > :first-child,
+  .gpu-memory-value {
+    grid-column: auto;
+    padding-right: 0;
+  }
+
+  .gpu-memory-value {
+    text-align: right;
+  }
+
+  .gpu-row-chevron {
+    position: static;
+  }
+}
+
+@media (min-width: 1024px) {
+  .dashboard-resource:nth-child(3),
+  .dashboard-stat:nth-child(3) {
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .dashboard-resource:nth-child(n + 3),
+  .dashboard-stat:nth-child(n + 3) {
+    border-top: 0;
+  }
 }
 
 .app-navigation {
@@ -125,7 +225,7 @@ summary::-webkit-details-marker {
 
 .task-detail-info > section + section {
   border-top: 1px solid var(--border-subtle);
-  padding-top: 1.25rem;
+  padding-top: 0.875rem;
 }
 
 .task-detail-overview {
@@ -288,22 +388,48 @@ summary::-webkit-details-marker {
 .xterm-viewport::-webkit-scrollbar { width: 6px; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 3px; }
 .monitor-header {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-raised) 96%, var(--accent-ink)), var(--surface-raised));
+  min-height: 2.75rem;
+  background: var(--surface-raised);
 }
-.monitor-action-toolbar {
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 80%, transparent);
-  border-radius: 0.75rem;
-  padding: 0.25rem;
-  background: color-mix(in srgb, var(--surface-overlay) 42%, transparent);
+
+.monitor-task-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
 }
+
+.monitor-task-title > :first-child {
+  min-width: 0;
+}
+
+.monitor-log-name {
+  flex: none;
+  max-width: 8rem;
+}
+
+.monitor-action-toolbar > button {
+  min-height: 2rem;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .monitor-terminal-shell { background: var(--xterm-bg); }
 .monitor-terminal-shell > .xterm { background: var(--xterm-bg); }
 .monitor-loading-overlay { background: color-mix(in srgb, var(--xterm-bg) 70%, transparent); }
 
+@media (max-width: 1100px) {
+  .monitor-log-name {
+    display: none;
+  }
+}
+
 @media (max-width: 700px) {
-  .monitor-action-toolbar {
-    width: 100%;
-    justify-content: flex-start;
+  .monitor-header-content {
+    gap: 0.375rem;
+  }
+
+  .monitor-task-context {
+    gap: 0.375rem;
   }
 }
 

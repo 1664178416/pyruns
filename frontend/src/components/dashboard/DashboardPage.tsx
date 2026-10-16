@@ -275,8 +275,8 @@ export default function DashboardPage() {
   return (
     <>
       <div className="h-full overflow-y-auto bg-surface-base">
-        <div className="flex min-h-full w-full flex-col gap-3 px-4 py-4 2xl:px-6">
-          <header className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-b border-border-default pb-3">
+        <div className="dashboard-content flex min-h-full w-full flex-col gap-3 px-4 py-3">
+          <header className="dashboard-header shrink-0 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border-subtle pb-2.5">
             <div className="min-w-0 flex-1 basis-full sm:basis-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="mr-2 text-lg font-semibold text-txt-primary">{t('Dashboard')}</h1>
@@ -287,16 +287,16 @@ export default function DashboardPage() {
                   {workspaceWorkingPath || t('Choose a workspace to start')}
                 </span>
               </div>
-              <div className="mt-1 truncate font-mono text-2xs text-txt-secondary" title={workspaceName}>
-                {workspaceName}
-              </div>
+              {workspaceReady && !isShellWorkspace && (
+                <div className="mt-0.5 truncate font-mono text-2xs text-txt-secondary" title={workspaceName}>{workspaceName}</div>
+              )}
             </div>
             <div className="grid w-full min-w-0 grid-cols-[44px_minmax(0,1fr)] gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
               <button
                 type="button"
                 onClick={() => void handleManualRefresh()}
                 disabled={manualRefreshing || loading}
-                className="touch-target inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-border-subtle bg-surface-raised px-2 py-2 text-sm font-medium text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10 sm:px-3"
+                className="touch-target inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-md border border-border-subtle bg-surface-raised px-2 py-2 text-sm font-medium text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-8 sm:px-3"
                 aria-label={t('Refresh dashboard')}
                 title={t('Refresh dashboard now')}
               >
@@ -306,7 +306,7 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={() => navigate(workspaceReady ? '/generator' : '/?launcher=1&mode=python')}
-                className="touch-target inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-md bg-accent px-2 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover sm:min-h-10 sm:px-4"
+                className="touch-target inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-md bg-accent px-2 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover sm:min-h-8 sm:px-3"
               >
                 <Wand2 className="h-4 w-4" />
                 <span className="whitespace-nowrap">{workspaceReady ? t('Start New Task') : t('Choose Workspace')}</span>
@@ -325,18 +325,18 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <section className="panel-surface flex shrink-0 flex-col overflow-hidden">
-            <div className="shrink-0 flex flex-wrap items-start justify-between gap-2 border-b border-border-subtle px-4 py-3">
-              <div>
-                <h2 className="text-sm font-medium text-txt-primary">{t('GPU & System')}</h2>
-                <p className="mt-1 text-2xs text-txt-tertiary">{t('Refreshes every {{seconds}}s. Process details load on demand.', { seconds: refreshIntervalSec })}</p>
+          <section className="dashboard-system flex shrink-0 flex-col overflow-hidden" aria-label={t('GPU & System')}>
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h2 className="text-sm font-semibold text-txt-primary">{t('GPU & System')}</h2>
+                <p className="text-2xs text-txt-tertiary">{t('Refreshes every {{seconds}}s. Process details load on demand.', { seconds: refreshIntervalSec })}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-2xs">
                 <SummaryPill>{gpuCount} GPU{gpuCount === 1 ? '' : 's'}</SummaryPill>
               </div>
             </div>
 
-            <div className="shrink-0 border-b border-border-subtle p-3">
+            <div className="shrink-0 border-y border-border-subtle">
               {metrics ? (
                 <>
                   {impossibleGpuRule && (
@@ -353,7 +353,7 @@ export default function DashboardPage() {
                       <span className="min-w-0 break-words">{t('Metrics refresh failed. Showing last values.')}</span>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                  <div className="dashboard-resources grid grid-cols-2 lg:grid-cols-4">
                     <ResourceTile label="CPU" value={`${metrics.cpu_percent.toFixed(0)}%`}>
                       <MetricBar label="CPU" value={metrics.cpu_percent} icon={Cpu} compact />
                     </ResourceTile>
@@ -377,64 +377,53 @@ export default function DashboardPage() {
               )}
             </div>
 
-            <div className="p-3">
+            <div className="dashboard-gpu-list">
               {metrics?.gpus?.length ? (
-                <div className={clsx(
-                  'grid grid-cols-1 gap-3',
-                  gpuCount > 1 && 'md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4',
-                )}>
+                <div className="divide-y divide-border-subtle">
                   {metrics.gpus.map(gpu => (
                     <GpuMetricCard
                       key={gpuKey(gpu)}
                       gpu={gpu}
-                      wide={gpuCount === 1}
                       onClick={trigger => openGpuDetails(gpu, trigger)}
                     />
                   ))}
                 </div>
               ) : (
-                <div className="flex h-full min-h-[10rem] items-center justify-center rounded-md bg-surface-overlay/50 px-3 py-8 text-center text-2xs text-txt-tertiary">
+                <div className="flex items-center justify-center px-3 py-5 text-center text-2xs text-txt-tertiary">
                   {metricsError && !metrics ? t('System metrics unavailable.') : t('No NVIDIA GPU metrics detected.')}
                 </div>
               )}
             </div>
           </section>
 
-          <div className="grid shrink-0 grid-cols-2 gap-2 lg:grid-cols-4">
+          <div className="dashboard-stats grid shrink-0 grid-cols-2 lg:grid-cols-4" aria-label={t('Tasks')}>
             {STAT_CARDS.map(({ key, label, icon: Icon, color }) => (
-              <div key={key} className="panel-surface px-3 py-2.5">
-                <div className="flex items-center gap-3">
-                  <div className={clsx('rounded-md bg-surface-overlay p-2', color)}>
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="text-lg font-semibold tabular-nums text-txt-primary">
+              <div key={key} className="dashboard-stat flex min-w-0 items-center gap-2.5 px-3 py-1.5">
+                <Icon className={clsx('h-4 w-4 flex-none', color)} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-lg font-semibold leading-6 tabular-nums text-txt-primary">
                       {loading && !data ? '--' : (summary as Record<string, number> | undefined)?.[key] ?? 0}
+                    </span>
+                    <span className="truncate text-xs text-txt-secondary">{t(label)}</span>
+                  </div>
+                  {key === 'running' && (
+                    <div className="flex flex-wrap gap-x-2 text-2xs leading-4 text-txt-tertiary">
+                      <span>{t('{{count}} queued', { count: queuedCount })}</span>
+                      <span>{t('{{count}} executing', { count: runningCount })}</span>
                     </div>
-                    <div className="text-2xs text-txt-tertiary">{t(label)}</div>
-                  </div>
+                  )}
+                  {key === 'total' && (
+                    <div className="text-2xs leading-4 text-txt-tertiary">{t('{{count}} pending tasks', { count: pendingCount })}</div>
+                  )}
                 </div>
-                {key === 'running' && (
-                  <div className="mt-3 flex flex-wrap gap-1.5 text-2xs">
-                    <SummaryPill>{t('{{count}} queued', { count: queuedCount })}</SummaryPill>
-                    <SummaryPill>{t('{{count}} executing', { count: runningCount })}</SummaryPill>
-                  </div>
-                )}
-                {key === 'total' && (
-                  <div className="mt-3 text-2xs text-txt-tertiary">
-                    {t('{{count}} pending tasks', { count: pendingCount })}
-                  </div>
-                )}
               </div>
             ))}
           </div>
 
-          <section className="panel-surface flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle px-4 py-3">
-              <div>
-                <h2 className="text-sm font-medium text-txt-primary">{t('Recent Tasks')}</h2>
-                <p className="mt-1 text-2xs text-txt-tertiary">{t('Quick status glance.')}</p>
-              </div>
+          <section className="dashboard-recent flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle pb-2">
+              <h2 className="text-sm font-semibold text-txt-primary">{t('Recent Tasks')}</h2>
               <div className="flex flex-wrap items-center gap-2">
                 <SummaryPill>{t('{{count}} active', { count: activeCount })}</SummaryPill>
                 <SummaryPill>{t('{{count}} pending', { count: pendingCount })}</SummaryPill>
@@ -481,7 +470,7 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-11 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
+      className="flex min-h-11 w-full items-center gap-3 px-2 py-2 text-left transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
     >
       <div className="flex-none">
         <StatusBadge status={task.status as TaskStatus} />
@@ -494,7 +483,7 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
           </span>
           <span className="font-mono text-2xs text-txt-tertiary">{t('Run #{{run}}', { run: runIndex })}</span>
         </div>
-        <div className="mt-1 font-mono text-2xs text-txt-tertiary" title={task.created_at}>
+        <div className="mt-0.5 font-mono text-2xs text-txt-tertiary" title={task.created_at}>
           {task.created_at}
         </div>
       </div>
@@ -515,19 +504,19 @@ function ResourceTile({
   children?: ReactNode
 }) {
   const toneClass = {
-    emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-    sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-300',
-    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
-    slate: 'bg-surface-overlay text-txt-secondary',
+    emerald: 'text-emerald-700 dark:text-emerald-300',
+    sky: 'text-sky-700 dark:text-sky-300',
+    amber: 'text-amber-800 dark:text-amber-300',
+    slate: 'text-txt-secondary',
   }[tone]
 
   return (
-    <div className={clsx('min-w-0 rounded-md px-3 py-2.5', toneClass)}>
+    <div className={clsx('dashboard-resource min-w-0 px-3 py-2', toneClass)}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-2xs uppercase tracking-[0.16em] text-txt-tertiary">{label}</span>
+        <span className="text-2xs font-medium text-txt-tertiary">{label}</span>
         <span className="font-mono text-xs font-semibold tabular-nums">{value}</span>
       </div>
-      {children && <div className="mt-2">{children}</div>}
+      {children && <div className="mt-1.5">{children}</div>}
     </div>
   )
 }
@@ -560,11 +549,9 @@ function MetricBar({
 
 function GpuMetricCard({
   gpu,
-  wide,
   onClick,
 }: {
   gpu: GPUMetric
-  wide: boolean
   onClick: (trigger: HTMLElement) => void
 }) {
   const memoryPct = gpuMemoryUsedPercent(gpu)
@@ -574,41 +561,18 @@ function GpuMetricCard({
       type="button"
       onClick={event => onClick(event.currentTarget)}
       aria-label={t('View details for GPU {{index}} {{name}}', { index: gpu.index, name: gpu.name })}
-      className={clsx(
-        'w-full rounded-md border border-border-subtle bg-surface-raised px-4 py-4 text-left transition-colors hover:border-accent/25 hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
-        wide ? 'min-h-[7.5rem]' : 'h-[10.5rem]',
-      )}
+      className="gpu-metric-row grid w-full min-w-0 items-center gap-x-3 gap-y-0.5 px-3 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
     >
-      <div className={clsx(wide && 'grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(15rem,1.25fr)_auto] sm:items-center sm:gap-6')}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-semibold text-txt-primary">GPU {gpu.index}</div>
-          <div className="truncate text-xs text-txt-secondary" title={gpu.name}>{gpu.name}</div>
-        </div>
-        <div className="flex items-center gap-1 rounded-md bg-accent/10 px-2 py-1 text-2xs text-accent">
-          <span className="font-medium tabular-nums">{formatPercent(gpu.util)}</span>
-          <span>{t('util')}</span>
-        </div>
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="whitespace-nowrap font-mono text-xs font-semibold text-txt-primary">GPU {gpu.index}</span>
+        <span className="truncate text-xs text-txt-secondary" title={gpu.name}>{gpu.name}</span>
       </div>
-
-      <div className={clsx('space-y-2', wide ? 'mt-3 sm:mt-0' : 'mt-3')}>
-        <UsageTrack label={t('Compute')} value={gpu.util} tone="util" />
-        <UsageTrack label="VRAM" value={memoryPct} tone="memory" />
-      </div>
-
-      <div className={clsx(
-        'mt-3 flex items-center justify-between gap-3 text-2xs text-txt-secondary',
-        wide && 'sm:mt-0 sm:flex-col sm:items-end sm:justify-center',
-      )}>
-        <span className="tabular-nums">
-          {formatMemory(gpu.mem_used)} / {formatMemory(gpu.mem_total)}
-        </span>
-        <span className="inline-flex min-h-7 items-center gap-1 whitespace-nowrap rounded-md bg-accent/10 px-2 font-medium text-accent">
-          {t('View details')}
-          <ChevronRight className="h-3 w-3" />
-        </span>
-      </div>
-      </div>
+      <UsageTrack label={t('Compute')} value={gpu.util} tone="util" />
+      <UsageTrack label="VRAM" value={memoryPct} tone="memory" />
+      <span className="gpu-memory-value whitespace-nowrap text-right font-mono text-2xs tabular-nums text-txt-secondary">
+        {formatMemory(gpu.mem_used)} / {formatMemory(gpu.mem_total)}
+      </span>
+      <ChevronRight aria-hidden="true" className="gpu-row-chevron h-3.5 w-3.5 justify-self-end text-txt-tertiary" />
     </button>
   )
 }
@@ -622,7 +586,7 @@ function UsageTrack({ label, value, tone }: { label: string; value: number | nul
   return (
     <div className="flex items-center gap-2">
       <span className="w-12 flex-none text-2xs text-txt-secondary">{label}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-overlay/80">
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/15">
         <div className={clsx('h-full rounded-full transition-all duration-500', barColor)} style={{ width: `${pct}%` }} />
       </div>
       <span className="w-14 text-right text-2xs tabular-nums text-txt-secondary">{formatPercent(value)}</span>
