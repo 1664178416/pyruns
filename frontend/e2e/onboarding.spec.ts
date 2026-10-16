@@ -104,6 +104,7 @@ test('the interactive tour visits real pages, previews panels, and never mutates
   await expect(page.locator('html')).toHaveClass('dark')
   await page.screenshot({ path: testInfo.outputPath('theme-dark.png') })
   await next(page, 'guide')
+  await expect(popover(page)).toContainText('Replay the guide from Preferences')
   await next(page, 'preferences')
   await page.locator('[data-tour="preferences"]').click()
   await expect(popover(page)).toHaveCount(0)

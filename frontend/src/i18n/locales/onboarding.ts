@@ -48,8 +48,8 @@ export default {
   'Try this button to switch between Chinese and English. Your tasks, commands, and logs keep their original text.': '试着点击这个按钮，在中文和英文之间切换。任务名称、命令和日志仍保留原文。',
   'Make it comfortable': '选择舒适的明暗主题',
   'Try this button to switch between light and dark mode. Your choice is remembered in this browser.': '试着点击这个按钮切换日间与夜间模式。浏览器会记住你的选择。',
-  'Come back anytime': '随时重新查看',
-  'This guide stays in the sidebar. Replay it whenever you want to review the workflow.': '新手指南会一直保留在侧栏中，需要复习操作流程时，随时可以重新打开。',
+  'Replay the guide from Preferences': '从偏好设置重新打开引导',
+  'Open Preferences to replay this guide whenever you want to review the workflow.': '打开偏好设置即可随时重新查看引导，复习操作流程。',
   'You are ready': '准备就绪',
   'Preferences contains language, appearance, and search options. Click it to explore, or finish the tour and choose a workspace to create your first task.': '偏好设置包含语言、外观和搜索选项。可以点击它继续探索，或完成引导后选择工作区，创建你的第一个任务。',
 } as const
