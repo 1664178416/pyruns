@@ -580,13 +580,13 @@ function GpuMetricCard({
 function UsageTrack({ label, value, tone }: { label: string; value: number | null; tone: 'util' | 'memory' }) {
   const pct = Math.min(100, Math.max(0, value ?? 0))
   const barColor = tone === 'memory'
-    ? pct > 92 ? 'bg-rose-400' : pct > 75 ? 'bg-amber-400' : 'bg-cyan-400'
-    : pct > 92 ? 'bg-rose-400' : pct > 75 ? 'bg-amber-400' : 'bg-emerald-400'
+    ? pct > 92 ? 'bg-rose-500' : pct > 75 ? 'bg-amber-500' : 'bg-cyan-500'
+    : pct > 92 ? 'bg-rose-500' : pct > 75 ? 'bg-amber-500' : 'bg-emerald-500'
 
   return (
     <div className="gpu-usage-track flex min-w-0 items-center gap-2">
       <span className="w-12 flex-none text-2xs text-txt-secondary">{label}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/15">
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/15">
         <div className={clsx('h-full rounded-full transition-all duration-500', barColor)} style={{ width: `${pct}%` }} />
       </div>
       <span className="w-14 text-right text-2xs tabular-nums text-txt-secondary">{formatPercent(value)}</span>

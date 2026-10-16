@@ -774,7 +774,7 @@ def test_gpu_scheduler_config_normalizes_setting_variants():
         gpus_per_task=1,
         device_ids=[],
         memory_used_pct=100.0,
-        min_free_memory_gb=40.0,
+        min_free_memory_gb=8.0,
         compute_used_pct=30.0,
         stable_seconds=15.0,
         max_wait_seconds=172800.0,
@@ -818,7 +818,7 @@ def test_gpu_scheduler_config_normalizes_setting_variants():
         require_same_gpu_model=True,
     )
     check({"gpu_scheduler_selection_mode": "random"}, selection_mode="auto")
-    check({"gpu_scheduler_min_free_memory_gb": "bad"}, min_free_memory_gb=40.0)
+    check({"gpu_scheduler_min_free_memory_gb": "bad"}, min_free_memory_gb=8.0)
     check({"gpu_scheduler_device_ids": "auto"}, device_ids=[])
     check({"gpu_scheduler_device_ids": {"0": True}}, device_ids=[])
     check(
@@ -833,7 +833,7 @@ def test_gpu_scheduler_config_normalizes_setting_variants():
         },
         gpus_per_task=1,
         memory_used_pct=100.0,
-        min_free_memory_gb=40.0,
+        min_free_memory_gb=8.0,
         compute_used_pct=30.0,
         stable_seconds=15.0,
         max_wait_seconds=172800.0,

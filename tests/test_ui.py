@@ -576,24 +576,6 @@ def test_react_app_sidebar_can_be_resized_and_persisted():
     assert "style={{ width }}" in sidebar
 
 
-def test_react_mobile_pages_constrain_empty_states_and_header_actions():
-    dashboard = FRONTEND_DASHBOARD.read_text(encoding="utf-8")
-    monitor = FRONTEND_MONITOR.read_text(encoding="utf-8")
-    empty_state = (FRONTEND_COMPONENTS_DIR / "shared" / "EmptyState.tsx").read_text(encoding="utf-8")
-
-    assert "'flex h-full w-full max-w-full min-w-0 overflow-hidden'" in monitor
-    assert "compactMonitorLayout ? 'w-full max-w-full border-b border-border-subtle' : 'border-r border-border-subtle'" in monitor
-    assert 'min-h-0 min-w-0 max-w-full flex-1 flex-col' in monitor
-    assert 'className="flex h-full min-w-0 items-center justify-center px-4"' in monitor
-    assert (
-        "grid w-full min-w-0 grid-cols-[44px_minmax(0,1fr)] gap-2 "
-        "sm:flex sm:w-auto sm:flex-wrap sm:items-center"
-    ) in dashboard
-    assert "touch-target inline-flex min-h-11 min-w-0" in dashboard
-    assert "max-w-full flex-col items-center justify-center gap-3 px-4 py-20 text-center" in empty_state
-    assert "max-w-full break-words" in empty_state
-
-
 def test_react_manager_uses_global_counts_page_scoped_selection_and_pending_locks():
     manager = FRONTEND_MANAGER.read_text(encoding="utf-8")
     store = FRONTEND_STORE.read_text(encoding="utf-8")

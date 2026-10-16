@@ -167,7 +167,12 @@ export default function TaskSearchInput({
       if (!filterMenuRef.current?.contains(event.target as Node)) setFiltersOpen(false)
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setFiltersOpen(false)
+      if (event.key === 'Escape') {
+        setFiltersOpen(false)
+        // Keep keyboard users anchored to the control that opened the popover.
+        // The next frame lets React remove the menu before restoring focus.
+        window.requestAnimationFrame(() => filterTriggerRef.current?.focus())
+      }
     }
     document.addEventListener('pointerdown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)

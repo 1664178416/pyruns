@@ -115,6 +115,10 @@ MAX_MONITOR_LINE_HEIGHT = 2.5
 DEFAULT_TASK_SUMMARY_SEARCH_TEXT_CHARS = 50_000
 MAX_CONFIG_FILE_BYTES = 4 * 1024 * 1024
 
+# GPU scheduling. This UI/runtime default is usable on common 8-24 GiB cards;
+# the CLI ``--gpu-wait`` rule remains explicit and does not use this setting.
+DEFAULT_GPU_MIN_FREE_MEMORY_GB = 8.0
+
 DEFAULT_SHELL_MODE = "follow"
 
 # Generator syntax

@@ -72,6 +72,14 @@ test('desktop keeps six GPUs and recent work compact without crowding log action
 
   const gpus = page.getByRole('button', { name: /^View details for GPU \d / })
   await expect(gpus).toHaveCount(6)
+  const gpuSurface = await gpus.first().evaluate(element => getComputedStyle(element).backgroundColor)
+  const gpuChannels = gpuSurface.match(/\d+/g)?.map(Number) ?? []
+  expect(gpuChannels).toHaveLength(3)
+  // GPU telemetry uses a pale, low-saturation surface in the light theme.
+  // Keep this guard broad enough for theme tuning while preventing a return to
+  // dark/navy cards that disappear against the white dashboard.
+  expect(Math.min(...gpuChannels)).toBeGreaterThanOrEqual(220)
+  expect(Math.max(...gpuChannels) - Math.min(...gpuChannels)).toBeLessThanOrEqual(28)
   for (const gpu of await gpus.all()) {
     const box = await gpu.boundingBox()
     expect(box!.height).toBeLessThanOrEqual(100)

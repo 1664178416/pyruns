@@ -28,6 +28,7 @@ _FINAL_STATUSES = {"completed", "failed", "cancelled"}
 _ACTIVE_STATUSES = {"queued", "running"}
 _CLEANUP_TIMEOUT_SEC = RUNNER_CLEANUP_TIMEOUT_SEC
 _POLL_INTERVAL_SEC = 0.05
+_MAX_POLL_INTERVAL_SEC = 1.0
 
 
 def _parse_args() -> argparse.Namespace:
@@ -109,6 +110,8 @@ def _claimed_tasks_stopped(
     attempt_id = getattr(tm, "_submission_attempt_id", None)
     requested: set[str] = set()
     deadline = time.monotonic() + max(0.05, _CLEANUP_TIMEOUT_SEC)
+    poll_interval = _POLL_INTERVAL_SEC
+    previous_unsettled_count: int | None = None
     while True:
         unsettled: list[str] = []
         for name in claimed:
@@ -149,7 +152,17 @@ def _claimed_tasks_stopped(
             return True
         if time.monotonic() >= deadline:
             return False
-        time.sleep(_POLL_INTERVAL_SEC)
+        progressed = (
+            previous_unsettled_count is None
+            or len(unsettled) != previous_unsettled_count
+        )
+        previous_unsettled_count = len(unsettled)
+        time.sleep(poll_interval)
+        poll_interval = (
+            _POLL_INTERVAL_SEC
+            if progressed
+            else min(_MAX_POLL_INTERVAL_SEC, poll_interval * 1.5)
+        )
 
 
 def _stop_and_report(
@@ -349,6 +362,8 @@ def main() -> int:
         accepted_reported = True
         settled: dict[str, str | None] = {}
         expected_runner_id = str(getattr(tm, "runner_id", "") or "") or None
+        poll_interval = _POLL_INTERVAL_SEC
+        previous_settled_count = 0
         while True:
             if abort_requested(abort_file, token=token):
                 return _stop_and_report(
@@ -389,7 +404,14 @@ def main() -> int:
                         detail="accepted submission was aborted during handoff",
                     )
                 return 0 if all(status == "completed" for status in settled.values()) else 1
-            time.sleep(_POLL_INTERVAL_SEC)
+            progressed = len(settled) != previous_settled_count
+            previous_settled_count = len(settled)
+            time.sleep(poll_interval)
+            poll_interval = (
+                _POLL_INTERVAL_SEC
+                if progressed
+                else min(_MAX_POLL_INTERVAL_SEC, poll_interval * 1.5)
+            )
     except Exception as exc:
         if receipt_file and not accepted_reported:
             try:

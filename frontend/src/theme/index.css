@@ -26,11 +26,11 @@
   --card-border: #e9ecef;
   --input-bg: #f1f3f5;
 
-  /* Keep GPU telemetry visually distinct from the white dashboard surface. */
-  --gpu-card-surface: #22364f;
-  --gpu-card-surface-hover: #2d4663;
-  --gpu-card-secondary: #d9e4f0;
-  --gpu-card-tertiary: #b8c8da;
+  /* Keep GPU telemetry distinct with a soft, low-saturation surface. */
+  --gpu-card-surface: #e8eef5;
+  --gpu-card-surface-hover: #dfe8f2;
+  --gpu-card-secondary: #4c5a73;
+  --gpu-card-tertiary: #68758c;
 
   --xterm-bg: #101218;
   --scrollbar-thumb: #ced4da;
@@ -166,13 +166,14 @@ summary::-webkit-details-marker {
   position: relative;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   background: var(--gpu-card-surface);
-  color: #f4f7fb;
+  color: var(--text-primary);
 }
 
 .gpu-metric-row:hover { background: var(--gpu-card-surface-hover); }
-.gpu-metric-row .text-txt-primary { color: #f8fafc; }
+.gpu-metric-row .text-txt-primary { color: var(--text-primary); }
 .gpu-metric-row .text-txt-secondary { color: var(--gpu-card-secondary); }
 .gpu-metric-row .text-txt-tertiary { color: var(--gpu-card-tertiary); }
+.gpu-metric-row .gpu-usage-track > div { background: rgb(38 52 77 / 12%); }
 
 .gpu-metric-row > :first-child {
   grid-column: 1 / -1;
@@ -189,6 +190,8 @@ summary::-webkit-details-marker {
   right: 0.75rem;
   top: 0.8rem;
 }
+
+.dark .gpu-metric-row .gpu-usage-track > div { background: rgb(255 255 255 / 15%); }
 
 @container (max-width: 47.999rem) {
   .gpu-metric-row {

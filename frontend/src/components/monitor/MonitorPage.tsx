@@ -2178,12 +2178,11 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
   return (
     <section
       aria-labelledby="gpu-wait-heading"
-      className="gpu-wait-panel border-b border-border-subtle bg-surface-raised px-3 py-3 sm:px-4"
+      className="gpu-wait-panel border-b border-border-subtle bg-amber-500/[0.035] px-3 py-2.5 sm:px-4"
     >
-      <div className="rounded-xl border border-amber-500/20 bg-gradient-to-br from-amber-500/5 via-surface-raised to-surface-raised p-3 shadow-sm dark:from-amber-500/10">
-      <div className="flex flex-wrap items-start gap-3">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2 border-l-2 border-amber-500/60 pl-3">
         <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-2.5">
-          <span className="mt-0.5 inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+          <span className="mt-0.5 inline-flex h-7 w-7 flex-none items-center justify-center rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300">
             <Cpu className="h-4 w-4" />
           </span>
           <div className="min-w-0">
@@ -2199,37 +2198,36 @@ function GPUWaitPanel({ wait }: { wait: GPUWaitStatus | null }) {
           </div>
         </div>
 
-        <dl className="grid min-w-[15rem] flex-none grid-cols-2 gap-1.5 text-2xs sm:grid-cols-3">
-          <div className="rounded-lg bg-surface-overlay/45 px-2.5 py-1.5">
+        <dl className="grid min-w-[15rem] flex-none grid-cols-2 gap-x-4 gap-y-1 text-2xs sm:grid-cols-3">
+          <div>
             <dt className="text-txt-tertiary">{t("Waited")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">{formatDuration(waitedSeconds)}</dd>
           </div>
-          <div className="rounded-lg bg-surface-overlay/45 px-2.5 py-1.5">
+          <div>
             <dt className="text-txt-tertiary">{t("Time left")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">
               {remainingSeconds === null ? t("No limit") : formatDuration(remainingSeconds)}
             </dd>
           </div>
-          <div className="col-span-2 rounded-lg bg-surface-overlay/45 px-2.5 py-1.5 sm:col-span-1">
+          <div className="col-span-2 sm:col-span-1">
             <dt className="text-txt-tertiary">{t("Visible GPUs")}</dt>
             <dd className="font-medium tabular-nums text-txt-primary">
               {wait?.total_gpu_count ?? (devices.length || '—')}
             </dd>
           </div>
         </dl>
-      </div>
 
       {devices.length > 0 && (
-        <details className="group mt-3 rounded-lg border border-border-subtle bg-surface-overlay/60">
-          <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-1.5 text-2xs font-medium text-txt-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35">
+        <details className="group mt-2 border-t border-border-subtle">
+          <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-2 py-1.5 text-2xs font-medium text-txt-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35">
             <span>{t("Why each GPU is waiting")}</span>
             <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
           </summary>
-          <ul className="grid gap-1 border-t border-border-subtle p-2 sm:grid-cols-2" aria-label={t("GPU eligibility details")}>
+          <ul className="grid gap-x-4 border-t border-border-subtle py-1.5 sm:grid-cols-2" aria-label={t("GPU eligibility details")}>
             {devices.map(device => (
-              <li key={device.uuid || device.index} className="flex min-w-0 items-start gap-2 rounded-lg bg-surface-raised/65 px-2.5 py-2 text-2xs">
+              <li key={device.uuid || device.index} className="flex min-w-0 items-start gap-2 border-b border-border-subtle/70 py-1.5 text-2xs last:border-b-0">
                 <span className={clsx(
-                  'mt-1 h-2 w-2 flex-none rounded-full',
+                  'mt-1 h-1.5 w-1.5 flex-none rounded-full',
                   device.eligible ? 'bg-emerald-500' : 'bg-amber-500',
                 )} />
                 <span className="min-w-0">

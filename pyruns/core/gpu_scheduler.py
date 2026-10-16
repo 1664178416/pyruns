@@ -8,6 +8,7 @@ import re
 import threading
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
+from pyruns._config import DEFAULT_GPU_MIN_FREE_MEMORY_GB
 from pyruns.core.system_metrics import SystemMonitor
 from pyruns.utils.gpu_wait import parse_gpu_wait_rule
 
@@ -122,7 +123,7 @@ class GpuSchedulerConfig:
     gpus_per_task: int = 1
     device_ids: List[int] = field(default_factory=list)
     memory_used_pct: float = 100.0
-    min_free_memory_gb: float = 40.0
+    min_free_memory_gb: float = DEFAULT_GPU_MIN_FREE_MEMORY_GB
     compute_used_pct: float = 30.0
     stable_seconds: float = 15.0
     max_wait_seconds: float = 172800.0
@@ -146,7 +147,13 @@ class GpuSchedulerConfig:
             device_ids=_coerce_device_ids(settings.get("gpu_scheduler_device_ids", [])),
             # Admission uses concrete free GiB, not the retired memory-percent limit.
             memory_used_pct=100.0,
-            min_free_memory_gb=max(0.0, _coerce_float(settings.get("gpu_scheduler_min_free_memory_gb"), 40.0)),
+            min_free_memory_gb=max(
+                0.0,
+                _coerce_float(
+                    settings.get("gpu_scheduler_min_free_memory_gb"),
+                    DEFAULT_GPU_MIN_FREE_MEMORY_GB,
+                ),
+            ),
             compute_used_pct=(
                 100.0 - _coerce_pct(settings.get("gpu_scheduler_min_idle_pct"), 70.0)
                 if "gpu_scheduler_min_idle_pct" in settings
