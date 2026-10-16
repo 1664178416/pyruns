@@ -14,6 +14,39 @@ REGEX_CONCURRENT_MIN_CHARS = 4096
 DEFAULT_MAX_SEARCH_RESULTS = 20_000
 
 
+def _regex_search_with_retry(pattern, text: str, *, concurrent: bool):
+    """Search a short field again with the GIL released after a timeout.
+
+    The ``regex`` extension has shown occasional short-lived timeout spikes
+    on newer CPython builds when ``concurrent=False``.  Retrying only the
+    short-field path keeps the normal low-contention fast path while retaining
+    the bounded timeout for genuinely expensive expressions.
+    """
+
+    try:
+        return pattern.search(text, timeout=REGEX_TIMEOUT_SECONDS, concurrent=concurrent)
+    except TimeoutError:
+        if concurrent:
+            raise
+        return pattern.search(text, timeout=REGEX_TIMEOUT_SECONDS, concurrent=True)
+
+
+def _regex_finditer_with_retry(pattern, text: str, *, concurrent: bool):
+    """Yield regex matches, retrying a short-field timeout once safely."""
+
+    yielded = False
+    try:
+        for match in pattern.finditer(text, timeout=REGEX_TIMEOUT_SECONDS, concurrent=concurrent):
+            yielded = True
+            yield match
+    except TimeoutError:
+        # Restarting after yielding would duplicate matches.  A timeout before
+        # the first match is safe to retry with the alternate execution mode.
+        if concurrent or yielded:
+            raise
+        yield from pattern.finditer(text, timeout=REGEX_TIMEOUT_SECONDS, concurrent=True)
+
+
 @dataclass
 class SearchBudget:
     """Count accepted matches and stop work once the requested limit is reached."""
@@ -109,7 +142,7 @@ class SearchQuery:
         try:
             return {
                 needle for needle in self.needles
-                if (self.patterns[needle].search(text, timeout=REGEX_TIMEOUT_SECONDS, concurrent=concurrent)
+                if (_regex_search_with_retry(self.patterns[needle], text, concurrent=concurrent)
                     if self.patterns else needle in text)
             }
         except TimeoutError as exc:
@@ -129,7 +162,9 @@ class SearchQuery:
             for needle in self.needles:
                 if self.patterns:
                     kept = 0
-                    for match in self.patterns[needle].finditer(normalized, timeout=REGEX_TIMEOUT_SECONDS, concurrent=concurrent):
+                    for match in _regex_finditer_with_retry(
+                        self.patterns[needle], normalized, concurrent=concurrent,
+                    ):
                         if max_count is not None and count >= max_count:
                             break
                         found.add(needle)

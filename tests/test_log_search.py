@@ -38,6 +38,38 @@ def test_literal_spaces_and_search_options(tmp_path, query, options, count):
     assert not result["errors"]
 
 
+def test_short_regex_timeout_retries_with_concurrent_engine(monkeypatch):
+    """A transient short-field timeout must not reject a simple search."""
+
+    class _Pattern:
+        def __init__(self):
+            self.search_modes = []
+            self.iter_modes = []
+
+        def search(self, _text, *, timeout, concurrent):
+            assert timeout > 0
+            self.search_modes.append(concurrent)
+            if not concurrent:
+                raise TimeoutError()
+            return True
+
+        def finditer(self, _text, *, timeout, concurrent):
+            assert timeout > 0
+            self.iter_modes.append(concurrent)
+            if not concurrent:
+                raise TimeoutError()
+            yield type("_Match", (), {"span": lambda self: (0, 5)})()
+
+    matcher = SearchQuery("Token", whole_word=True)
+    pattern = _Pattern()
+    monkeypatch.setitem(matcher.patterns, "token", pattern)
+
+    assert matcher.found("Token") == {"token"}
+    assert matcher.scan("Token")["match_count"] == 1
+    assert pattern.search_modes == [False, True]
+    assert pattern.iter_modes == [False, True]
+
+
 def test_newline_only_regex_does_not_create_cached_hits(tmp_path):
     for payload in (b"token\n", b"token\r\n"):
         task, _ = write_log(tmp_path, payload)
