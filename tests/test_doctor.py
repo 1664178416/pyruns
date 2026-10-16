@@ -35,7 +35,11 @@ def test_doctor_reports_broken_dependency_from_clean_cli_process(tmp_path):
     result = subprocess.run(
         [sys.executable, "-c", "from pyruns.cli.app import main; raise SystemExit(main(['doctor', '--json']))"],
         cwd=tmp_path,
-        env={**os.environ, "PYTHONPATH": str(tmp_path) + os.pathsep + str(Path(__file__).resolve().parents[1])},
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path) + os.pathsep + str(Path(__file__).resolve().parents[1]),
+            "PYTHONIOENCODING": "utf-8",
+        },
         capture_output=True, text=True, encoding="utf-8", timeout=30, check=False,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )

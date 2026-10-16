@@ -256,7 +256,11 @@ finally:
 """
     result = subprocess.run(
         [sys.executable, "-c", code, str(tmp_path)],
-        capture_output=True, text=True, encoding="utf-8", timeout=10,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        timeout=10,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
