@@ -126,6 +126,27 @@ function waitForTarget(selector: string, signal: AbortSignal): Promise<HTMLEleme
   })
 }
 
+function waitForPath(pathname: string, signal: AbortSignal): Promise<boolean> {
+  return new Promise(resolve => {
+    let timer: number
+    const deadline = Date.now() + 5000
+    const finish = (matched: boolean) => {
+      window.clearTimeout(timer)
+      signal.removeEventListener('abort', abort)
+      resolve(matched)
+    }
+    const abort = () => finish(false)
+    const check = () => {
+      if (signal.aborted) return finish(false)
+      if (window.location.pathname === pathname) return finish(true)
+      if (Date.now() >= deadline) return finish(false)
+      timer = window.setTimeout(check, 50)
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    check()
+  })
+}
+
 export function startOnboardingTour({ navigate, onFinish, onError }: {
   navigate: NavigateFunction
   onFinish: (completed: boolean) => void
@@ -221,6 +242,7 @@ export function startOnboardingTour({ navigate, onFinish, onError }: {
     if (step.route && (window.location.pathname !== step.route
       || (!step.panel && new URLSearchParams(window.location.search).has('launcher')))) {
       navigate(step.route)
+      if (!(await waitForPath(step.route, controller.signal))) return
     }
     if (step.panel) {
       openedPanels.add(step.panel)
