@@ -1,8 +1,4 @@
-<<<<<<<< HEAD:pyruns/web/static/assets/public-api-q09s3glP.js
-import{c as nt,i as Te}from"./index-NAX54BXW.js";import{j as Y}from"./vendor-react-BgTe_xh3.js";/**
-========
-import{c as nt,i as Te}from"./index-CkDl5Ysy.js";import{j as Y}from"./vendor-react-BgTe_xh3.js";/**
->>>>>>>> pr-5:pyruns/web/static/assets/public-api-B_DMmZUi.js
+import{c as nt,i as Te}from"./index-CuAhCHLv.js";import{j as Y}from"./vendor-react-BgTe_xh3.js";/**
  * @license lucide-react v0.460.0 - ISC
  *
  * This source code is licensed under the ISC license.

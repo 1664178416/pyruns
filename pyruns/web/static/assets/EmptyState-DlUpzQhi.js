@@ -1,8 +1,4 @@
-<<<<<<<< HEAD:pyruns/web/static/assets/EmptyState-CO-aFdZE.js
-import{j as e}from"./vendor-react-BgTe_xh3.js";import{c as a}from"./index-NAX54BXW.js";/**
-========
-import{j as e}from"./vendor-react-BgTe_xh3.js";import{c as a}from"./index-CkDl5Ysy.js";/**
->>>>>>>> pr-5:pyruns/web/static/assets/EmptyState-DZ8Br451.js
+import{j as e}from"./vendor-react-BgTe_xh3.js";import{c as a}from"./index-CuAhCHLv.js";/**
  * @license lucide-react v0.460.0 - ISC
  *
  * This source code is licensed under the ISC license.
