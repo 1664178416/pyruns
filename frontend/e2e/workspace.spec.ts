@@ -1478,6 +1478,19 @@ test('task search shares keyboard history without taking over multiline editing 
 
 test('Monitor and Manager group full log matches and load context only on demand', async ({ page, isMobile }, testInfo) => {
   if (isMobile) await page.setViewportSize({ width: 375, height: 667 })
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('permission denied') } },
+    })
+    // Exercise real modal focus and selection; intercept only the OS clipboard write.
+    document.execCommand = command => {
+      const input = document.activeElement
+      if (command !== 'copy' || !(input instanceof HTMLTextAreaElement)) return false
+      ;(window as Window & { copiedLog?: string }).copiedLog = input.value.slice(input.selectionStart, input.selectionEnd)
+      return true
+    }
+  })
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   let contextRequests = 0
@@ -1573,6 +1586,10 @@ test('Monitor and Manager group full log matches and load context only on demand
     } else {
       await expect(dialog.getByLabel('Log context', { exact: true })).toContainText('needle found in old history')
       await expect(dialog.getByRole('button', { name: 'Copy log context' })).toBeEnabled()
+      await dialog.getByRole('button', { name: 'Copy log context' }).click()
+      await expect(dialog.getByRole('button', { name: 'Copied', exact: true })).toBeFocused()
+      expect(await page.evaluate(() => (window as Window & { copiedLog?: string }).copiedLog))
+        .toBe('before\nneedle found in old history\nafter\n'.repeat(30))
       await page.screenshot({ path: testInfo.outputPath(`${view}-context.png`) })
       await page.keyboard.press('Escape')
       await expect(dialog).toBeHidden()
@@ -2044,6 +2061,26 @@ test('mobile navigation and runtime controls stay touch friendly without overflo
     expect(box?.height).toBeGreaterThanOrEqual(44)
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('a stalled workspace connection times out and can be retried', async ({ page }) => {
+  await page.clock.install()
+  let stalled = true
+  let requests = 0
+  await page.route('**/api/workspace', route => {
+    requests++
+    if (!stalled) return route.continue()
+  })
+  await page.goto('/?token=pyruns-e2e-access-token')
+  await expect.poll(() => requests).toBe(1)
+  await expect(page.getByText('Connecting to the Pyruns server...', { exact: true })).toBeVisible()
+  await page.clock.fastForward(30_001)
+  await expect(page.getByRole('heading', { name: 'Unable to connect', exact: true })).toBeVisible()
+  await expect(page.getByText('The connection timed out. Please try again.', { exact: true })).toBeVisible()
+  stalled = false
+  await page.getByRole('button', { name: 'Retry connection', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  expect(requests).toBe(2)
 })
 
 test('authentication failures show a recoverable session screen', async ({ page }) => {

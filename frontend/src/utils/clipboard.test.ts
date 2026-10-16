@@ -27,7 +27,7 @@ describe('copyText', () => {
       setSelectionRange: vi.fn(),
       remove: vi.fn(),
     }
-    const activeElement = { focus: vi.fn() }
+    const activeElement = { focus: vi.fn(), closest: vi.fn(() => null) }
     const body = { appendChild: vi.fn() }
     const documentStub = {
       body,

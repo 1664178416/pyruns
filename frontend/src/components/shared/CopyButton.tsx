@@ -76,7 +76,8 @@ export default function CopyButton({
         variant="secondary"
         size={size === 'xs' ? 'sm' : size}
         icon={icon}
-        disabled={disabled || !available || state === 'copying'}
+        disabled={disabled || !available}
+        aria-disabled={state === 'copying' || undefined}
         onClick={handleCopy}
         className={clsx('flex-none', className)}
         aria-label={translateMessage(statusLabel)}
@@ -91,7 +92,8 @@ export default function CopyButton({
     <button
       type="button"
       {...props}
-      disabled={disabled || !available || state === 'copying'}
+      disabled={disabled || !available}
+      aria-disabled={state === 'copying' || undefined}
       onClick={handleCopy}
       className={clsx(
         'touch-target inline-flex flex-none items-center justify-center rounded-md text-txt-secondary transition-colors hover:bg-surface-overlay hover:text-txt-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:cursor-not-allowed disabled:opacity-45',

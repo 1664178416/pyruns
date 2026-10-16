@@ -4,6 +4,7 @@ export default {
   'Take a guided tour of your workspace, task tools, and live logs.': '跟随引导认识工作区、任务工具和实时日志。',
   'Explore the interface without creating tasks, running commands, or changing your workspace.': '先熟悉界面；引导不会创建任务、执行命令或切换你的工作区。',
   'Start tour': '开始引导',
+  'Loading guide...': '正在加载引导...',
   'Maybe later': '稍后再说',
   'Close beginner guide': '关闭新手指南',
   'Save your changes before starting the tour. Your draft will stay here.': '请先保存正在编辑的内容，再开始引导。你的草稿会保留在当前页面。',

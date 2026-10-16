@@ -1,4 +1,8 @@
+<<<<<<<< HEAD:pyruns/web/static/assets/ManagerPage-HakV-F9D.js
 import{r as l,b as Ut,u as Wt,j as t}from"./vendor-react-BgTe_xh3.js";import{c as ie,u as X,E as oe,G as zt,d as Gt,b as Z,H as Ee,I as ut,e as G,t as a,J as Vt,K as mt,M as Yt,N as Kt,f as Xt,O as Ht,P as xt,Q as pt,L as we,R as ft,k as He,T as jt,i as R,v as $e,q as $t}from"./index-NAX54BXW.js";import{u as Qt,a as Zt,S as Nt,T as Jt,b as St,P as Ct,R as Tt,c as ea,d as ta,e as aa}from"./TaskDetailPanel-D4wAgf-R.js";import{A as J}from"./CopyButton-C6x9sMau.js";import{C as bt,P as Mt}from"./public-api-q09s3glP.js";import{A as ra,S as Rt}from"./tokens-DzOINViO.js";import{C as na}from"./taskRuntime-BXuo0DKj.js";import{R as sa}from"./rotate-ccw-FFULchfb.js";import"./chevron-right-DKtC95bJ.js";import"./check-CxIMBseq.js";/**
+========
+import{r as l,b as Ut,u as Wt,j as t}from"./vendor-react-BgTe_xh3.js";import{c as ie,u as X,E as oe,G as zt,d as Gt,b as Z,H as Ee,I as ut,e as G,t as a,J as Vt,K as mt,M as Yt,N as Kt,f as Xt,O as Ht,P as xt,Q as pt,L as we,R as ft,k as He,T as jt,i as R,v as $e,q as $t}from"./index-CkDl5Ysy.js";import{u as Qt,a as Zt,S as Nt,T as Jt,b as St,P as Ct,R as Tt,c as ea,d as ta,e as aa}from"./TaskDetailPanel-BTAaRlHz.js";import{A as J}from"./CopyButton-Bg9YGkHk.js";import{C as bt,P as Mt}from"./public-api-B_DMmZUi.js";import{A as ra,S as Rt}from"./tokens-DzOINViO.js";import{C as na}from"./taskRuntime-CAWcu4Wb.js";import{R as sa}from"./rotate-ccw-BN8k5AYB.js";import"./chevron-right-DKdopJ3U.js";import"./check-CWrX6Rjb.js";/**
+>>>>>>>> pr-5:pyruns/web/static/assets/ManagerPage-B_22796P.js
  * @license lucide-react v0.460.0 - ISC
  *
  * This source code is licensed under the ISC license.

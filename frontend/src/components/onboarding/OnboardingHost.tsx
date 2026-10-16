@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { ArrowRight, Compass, X } from 'lucide-react'
+import { ArrowRight, Compass, LoaderCircle, X } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   useGeneratorStore,
@@ -27,6 +27,8 @@ export default function OnboardingHost({ enabled }: { enabled: boolean }) {
   const titleId = useId()
   const descriptionId = useId()
   const [error, setError] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [tourModule, setTourModule] = useState<typeof import('./tour') | null>(null)
   const dirty = generatorDirty || runtimeDirty || detailDirty || launcherLoading
   const launcherOpen = location.pathname === '/launcher' || new URLSearchParams(location.search).get('launcher') === '1'
   const panelOpen = preferencesOpen || launcherOpen || Boolean(document.querySelector('[data-tour-panel="runtime"]'))
@@ -62,31 +64,44 @@ export default function OnboardingHost({ enabled }: { enabled: boolean }) {
   }, [enabled, phase])
 
   useEffect(() => {
-    if (!enabled || phase !== 'tour') return
+    if (!loading) return
+    if (!enabled || phase !== 'welcome' || dirty || panelOpen) {
+      setLoading(false)
+      return
+    }
     let cancelled = false
-    let tour: { destroy: () => void } | undefined
     void import('./tour').then(module => {
       if (cancelled) return
-      tour = module.startOnboardingTour({
-        navigate,
-        onFinish: completed => useOnboardingStore.getState().finish(completed),
-        onError: () => {
-          useOnboardingStore.getState().finish()
-          setError(true)
-          useOnboardingStore.getState().open()
-        },
-      })
+      setTourModule(module)
+      setLoading(false)
+      useOnboardingStore.getState().start()
     }).catch(() => {
       if (cancelled) return
+      setLoading(false)
+      setError(true)
+    })
+    return () => { cancelled = true }
+  }, [enabled, phase, loading, dirty, panelOpen])
+
+  useEffect(() => {
+    if (!enabled || phase !== 'tour' || !tourModule) return
+    const showError = () => {
       useOnboardingStore.getState().finish()
       setError(true)
       useOnboardingStore.getState().open()
-    })
-    return () => {
-      cancelled = true
-      tour?.destroy()
     }
-  }, [enabled, phase, navigate])
+    let tour: { destroy: () => void } | undefined
+    try {
+      tour = tourModule.startOnboardingTour({
+        navigate,
+        onFinish: completed => useOnboardingStore.getState().finish(completed),
+        onError: showError,
+      })
+    } catch {
+      showError()
+    }
+    return () => tour?.destroy()
+  }, [enabled, phase, navigate, tourModule])
 
   if (!enabled || phase !== 'welcome') return null
 
@@ -141,12 +156,15 @@ export default function OnboardingHost({ enabled }: { enabled: boolean }) {
           <button
             type="button"
             ref={startButtonRef}
-            disabled={dirty || panelOpen}
-            onClick={() => { setError(false); useOnboardingStore.getState().start() }}
+            disabled={dirty || panelOpen || loading}
+            aria-busy={loading}
+            onClick={() => { setError(false); setLoading(true) }}
             className="touch-target inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {t('Start tour')}
-            <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            {t(loading ? 'Loading guide...' : 'Start tour')}
+            {loading
+              ? <LoaderCircle aria-hidden="true" className="h-4 w-4 motion-safe:animate-spin" />
+              : <ArrowRight aria-hidden="true" className="h-4 w-4" />}
           </button>
         </div>
       </div>

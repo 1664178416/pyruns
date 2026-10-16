@@ -1,4 +1,8 @@
+<<<<<<<< HEAD:pyruns/web/static/assets/chevron-right-DKtC95bJ.js
 import{c as t}from"./index-NAX54BXW.js";/**
+========
+import{c as t}from"./index-CkDl5Ysy.js";/**
+>>>>>>>> pr-5:pyruns/web/static/assets/chevron-right-DKdopJ3U.js
  * @license lucide-react v0.460.0 - ISC
  *
  * This source code is licensed under the ISC license.

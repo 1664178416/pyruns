@@ -53,6 +53,7 @@ export default {
   'Workspace changed': '工作区已变更',
   'Session expired': '会话已过期',
   'Unable to connect': '无法连接',
+  'The connection timed out. Please try again.': '连接超时，请重试。',
   'The server selected another workspace. Reconnecting will discard these unsaved changes: {{changes}}.': '服务已切换到其他工作区。重新连接将丢弃以下未保存的更改：{{changes}}。',
   'This browser no longer has access to the local Pyruns server. Open the latest UI link shown in the terminal, or retry after restoring the session.': '浏览器已失去本地 Pyruns 服务的访问权限。请打开终端中最新的界面链接，或恢复会话后重试。',
   'The local Pyruns server did not finish loading the workspace. Check that it is still running, then try again.': '本地 Pyruns 服务未能加载工作区。请确认服务仍在运行，然后重试。',

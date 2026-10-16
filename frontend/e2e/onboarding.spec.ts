@@ -52,6 +52,37 @@ test('first visit offers a guide, dismissal persists, and Preferences can replay
   await expect(page.getByRole('button', { name: '偏好设置', exact: true })).toBeFocused()
 })
 
+test('a delayed guide stays cancellable and cannot start after dismissal', async ({ page }, testInfo) => {
+  let releaseGuide!: () => void
+  const gate = new Promise<void>(resolve => { releaseGuide = resolve })
+  const guideAsset = /\/assets\/tour-[^/]+\.js(?:\?|$)/
+  await page.route(guideAsset, async route => {
+    await gate
+    await route.continue()
+  })
+  try {
+    await page.goto('/?token=pyruns-e2e-access-token')
+    const welcome = page.getByRole('dialog', { name: '欢迎使用 Pyruns', exact: true })
+    await welcome.getByRole('button', { name: '开始引导', exact: true }).click()
+    await expect(welcome).toBeVisible()
+    await expect(welcome.getByRole('button', { name: '正在加载引导...', exact: true })).toBeDisabled()
+    await page.screenshot({ path: testInfo.outputPath('guide-loading.png') })
+    await page.keyboard.press('Escape')
+    await expect(welcome).toHaveCount(0)
+    await page.getByRole('link', { name: '任务管理', exact: true }).click()
+    const loaded = page.waitForResponse(guideAsset)
+    releaseGuide()
+    await (await loaded).finished()
+    await expect(page).toHaveURL(/\/manager$/)
+    await expect(popover(page)).toHaveCount(0)
+    await page.getByRole('button', { name: '新手指南', exact: true }).click()
+    await welcome.getByRole('button', { name: '开始引导', exact: true }).click()
+    await expectStep(page, 'home')
+  } finally {
+    releaseGuide()
+  }
+})
+
 test('the interactive tour visits real pages, previews panels, and never mutates tasks or runtime', async ({ page }, testInfo) => {
   const mutations: string[] = []
   const errors: string[] = []
