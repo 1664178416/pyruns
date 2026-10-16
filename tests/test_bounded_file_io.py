@@ -44,7 +44,12 @@ def test_small_document_readers_do_not_allocate_their_size_limits():
     # ensures this child cannot create a console window.
     result = subprocess.run(
         [sys.executable, str(root / "scripts/benchmark_file_reads.py"), "--iterations", "0"],
-        cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=60,
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads(result.stdout)
