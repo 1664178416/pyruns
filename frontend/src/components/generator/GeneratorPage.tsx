@@ -1084,7 +1084,7 @@ export default function GeneratorPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex flex-col gap-2 border-b border-border-subtle bg-surface-raised px-3 py-2 min-[701px]:flex-row min-[701px]:items-center">
+      <div data-tour="generator-controls" className="flex flex-col gap-2 border-b border-border-subtle bg-surface-raised px-3 py-2 min-[701px]:flex-row min-[701px]:items-center">
         <div className="flex w-full min-w-0 flex-wrap items-center gap-2 min-[701px]:flex-1">
           {!isShellWorkspace ? (
             <TemplatePicker
@@ -1382,7 +1382,7 @@ export default function GeneratorPage() {
             </CompactSection>
           )}
 
-          <div className="sticky bottom-0 mt-auto border-t border-border-subtle bg-surface-raised pt-3">
+          <div data-tour="generator-create" className="sticky bottom-0 mt-auto border-t border-border-subtle bg-surface-raised pt-3">
             <ActionButton
               icon={generationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               variant="primary"

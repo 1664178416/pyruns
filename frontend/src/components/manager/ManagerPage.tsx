@@ -880,7 +880,7 @@ export default function ManagerPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface-base">
-      <header className="flex-none border-b border-border-subtle bg-surface-raised px-3 py-3 sm:px-4">
+      <header data-tour="manager-controls" className="flex-none border-b border-border-subtle bg-surface-raised px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2">

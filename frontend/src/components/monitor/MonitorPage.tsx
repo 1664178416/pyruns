@@ -1583,7 +1583,7 @@ export default function MonitorPage() {
           ? { height: sidebarSearchActive ? '100%' : COMPACT_MONITOR_SIDEBAR_HEIGHT }
           : { width: `max(${monitorSidebarWidthPct}%, ${MIN_MONITOR_SIDEBAR_WIDTH_PX}px)` }}
       >
-        <div className="flex-none border-b border-border-subtle px-3 pb-3 pt-3.5">
+        <div data-tour="monitor-controls" className="flex-none border-b border-border-subtle px-3 pb-3 pt-3.5">
           <div className="mb-3 flex min-h-8 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <h1 className="text-sm font-semibold tracking-tight text-txt-primary">{t("Monitor")}</h1>

@@ -14,6 +14,13 @@ export default defineConfig({
   reporter: process.env.CI ? 'github' : 'list',
   use: {
     baseURL: `http://127.0.0.1:${port}`,
+    storageState: {
+      cookies: [],
+      origins: [{
+        origin: `http://127.0.0.1:${port}`,
+        localStorage: [{ name: 'pyruns.onboarding.v1', value: 'completed' }],
+      }],
+    },
     headless: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

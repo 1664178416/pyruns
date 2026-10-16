@@ -2,13 +2,14 @@ import { NavLink, useSearchParams } from 'react-router-dom'
 import { Suspense, lazy, useRef, useState } from 'react'
 import {
   LayoutDashboard, Wand2, ListTodo, Terminal, Rocket,
-  Sun, Moon, Languages, ChevronsUpDown, FileCode, SlidersHorizontal, Settings2,
+  Sun, Moon, Languages, ChevronsUpDown, FileCode, SlidersHorizontal, Settings2, CircleHelp,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useWorkspaceStore, useThemeStore, usePreferencesStore } from '@/store'
 import { getWorkspaceWorkingPath } from '@/utils/workspace'
 import UpdateControl from './UpdateControl'
 import { setLanguage, useTranslation } from '@/i18n'
+import { useOnboardingStore } from '@/components/onboarding/store'
 
 const RuntimePanel = lazy(() => import('./RuntimePanel'))
 
@@ -94,6 +95,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
           <NavLink
             key={to}
             to={to}
+            data-tour={to === '/' ? 'home' : to.slice(1)}
             end={end}
             aria-label={t(label)}
             title={t(label)}
@@ -109,6 +111,20 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             {!compact && <span>{t(label)}</span>}
           </NavLink>
         ))}
+        <button
+          type="button"
+          data-tour="guide"
+          aria-label={t('Beginner guide')}
+          title={t('Beginner guide')}
+          onClick={event => useOnboardingStore.getState().open(event.currentTarget)}
+          className={clsx(
+            'touch-target mt-auto flex min-h-11 flex-none items-center gap-2.5 rounded-lg py-2 text-sm font-medium text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:min-h-10',
+            compact ? 'justify-center px-0' : 'pl-2.5 pr-3',
+          )}
+        >
+          <CircleHelp aria-hidden="true" className="h-4 w-4 flex-none" />
+          {!compact && <span>{t('Beginner guide')}</span>}
+        </button>
       </nav>
 
       <div className={clsx('border-t border-border-subtle', compact ? 'p-2' : 'p-2.5')}>
@@ -119,6 +135,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
         )}
         <button
           data-launcher-trigger="true"
+          data-tour="workspace"
           type="button"
           onClick={() => openWorkspaceLauncher(shellWorkspaceActive ? 'shell' : 'python')}
           aria-label={workspaceLabel}
@@ -154,6 +171,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
 
         <button
           ref={runtimeButtonRef}
+          data-tour="runtime"
           type="button"
           onClick={() => setRuntimeOpen(true)}
           aria-label={t('Runtime')}
@@ -179,6 +197,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
           <button
             type="button"
             onClick={event => openPreferences(event.currentTarget)}
+            data-tour="preferences"
             aria-label={t('Preferences')}
             aria-keyshortcuts="Control+, Meta+,"
             title={t('Preferences (Ctrl/Cmd+,)')}
@@ -193,6 +212,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             aria-label={t(languageAction)}
             title={t(languageAction)}
             data-testid="language-toggle"
+            data-tour="language"
             className="touch-target flex h-11 w-11 flex-none items-center justify-center rounded-lg text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:h-9 sm:w-9"
           >
             <Languages aria-hidden="true" className="h-4 w-4" />
@@ -203,6 +223,7 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
             aria-label={t(theme === 'dark' ? 'Light Mode' : 'Dark Mode')}
             title={t(theme === 'dark' ? 'Light Mode' : 'Dark Mode')}
             data-testid="theme-toggle"
+            data-tour="theme"
             className="touch-target flex h-11 w-11 flex-none items-center justify-center rounded-lg text-txt-tertiary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:h-9 sm:w-9"
           >
             {theme === 'dark' ? <Sun aria-hidden="true" className="h-4 w-4" /> : <Moon aria-hidden="true" className="h-4 w-4" />}

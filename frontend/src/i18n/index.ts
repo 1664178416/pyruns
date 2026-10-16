@@ -4,6 +4,7 @@ import common from './locales/common'
 import tasks from './locales/tasks'
 import creation from './locales/creation'
 import runtime from './locales/runtime'
+import onboarding from './locales/onboarding'
 
 export { useTranslation } from 'react-i18next'
 export type Language = 'en' | 'zh-CN'
@@ -25,7 +26,7 @@ function initialLanguage(): Language {
   return resolveLanguage(stored, typeof navigator === 'undefined' ? [] : navigator.languages)
 }
 
-const chinese = { ...tasks, ...creation, ...runtime, ...common }
+const chinese = { ...tasks, ...creation, ...runtime, ...common, ...onboarding }
 const english = Object.fromEntries(Object.keys(chinese).map(key => [key, key]))
 
 void i18n.use(initReactI18next).init({
