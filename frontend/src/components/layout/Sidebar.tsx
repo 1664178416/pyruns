@@ -2,14 +2,13 @@ import { NavLink, useSearchParams } from 'react-router-dom'
 import { Suspense, lazy, useRef, useState } from 'react'
 import {
   LayoutDashboard, Wand2, ListTodo, Terminal, Rocket,
-  Sun, Moon, Languages, ChevronsUpDown, FileCode, SlidersHorizontal, Settings2, CircleHelp,
+  Sun, Moon, Languages, ChevronsUpDown, FileCode, SlidersHorizontal, Settings2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useWorkspaceStore, useThemeStore, usePreferencesStore } from '@/store'
 import { getWorkspaceWorkingPath } from '@/utils/workspace'
 import UpdateControl from './UpdateControl'
 import { setLanguage, useTranslation } from '@/i18n'
-import { useOnboardingStore } from '@/components/onboarding/store'
 
 const RuntimePanel = lazy(() => import('./RuntimePanel'))
 
@@ -179,34 +178,21 @@ export default function Sidebar({ width = 220, compact = false }: SidebarProps) 
           </div>
         </button>
 
-        <button
-          type="button"
-          data-tour="guide"
-          aria-label={t('Beginner guide')}
-          title={t('Beginner guide')}
-          onClick={event => useOnboardingStore.getState().open(event.currentTarget)}
-          className={clsx(
-            'touch-target mt-0.5 flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:min-h-9',
-            compact && 'justify-center px-0',
-          )}
-        >
-          <CircleHelp aria-hidden="true" className="h-4 w-4 flex-none" />
-          {!compact && <span>{t('Beginner guide')}</span>}
-        </button>
-
         <div className={clsx('mt-2 flex gap-1 border-t border-border-subtle pt-2', compact && 'flex-col')}>
-          <button
-            type="button"
-            onClick={event => openPreferences(event.currentTarget)}
-            data-tour="preferences"
-            aria-label={t('Preferences')}
-            aria-keyshortcuts="Control+, Meta+,"
-            title={t('Preferences (Ctrl/Cmd+,)')}
-            className={clsx('touch-target flex min-h-11 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:min-h-9', compact && 'justify-center px-0')}
-          >
-            <Settings2 aria-hidden="true" className="h-4 w-4 flex-none" />
-            {!compact && <span className="min-w-0 truncate">{t('Preferences')}</span>}
-          </button>
+          <div data-tour="guide" className="min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={event => openPreferences(event.currentTarget)}
+              data-tour="preferences"
+              aria-label={t('Preferences')}
+              aria-keyshortcuts="Control+, Meta+,"
+              title={t('Preferences (Ctrl/Cmd+,)')}
+              className={clsx('touch-target flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-txt-secondary transition-colors hover:bg-surface-hover hover:text-txt-primary sm:min-h-9', compact && 'justify-center px-0')}
+            >
+              <Settings2 aria-hidden="true" className="h-4 w-4 flex-none" />
+              {!compact && <span className="min-w-0 truncate">{t('Preferences')}</span>}
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => void setLanguage(chinese ? 'en' : 'zh-CN')}

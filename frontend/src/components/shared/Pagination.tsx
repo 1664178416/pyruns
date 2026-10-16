@@ -19,7 +19,10 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
   const totalPages = Math.ceil(total / limit)
 
   return (
-    <div className="flex shrink-0 flex-nowrap items-center gap-1 whitespace-nowrap text-xs text-txt-tertiary">
+    <div className={clsx(
+      'flex shrink-0 flex-nowrap items-center whitespace-nowrap text-txt-tertiary',
+      compact ? 'gap-0.5 text-[10px]' : 'gap-1 text-xs',
+    )}>
       <button
         type="button"
         disabled={disabled || offset === 0}
@@ -27,13 +30,13 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
         aria-label={t('Previous page')}
         className={clsx(
           'touch-target inline-flex h-11 w-11 items-center justify-center rounded-md transition-colors hover:bg-surface-overlay sm:h-8 sm:w-8',
-          compact && 'h-7 w-7 sm:h-7 sm:w-7',
+          compact && 'h-6 w-6 sm:h-6 sm:w-6',
           (disabled || offset === 0) && 'opacity-30 cursor-not-allowed'
         )}
       >
         <ChevronLeft className="w-3.5 h-3.5" />
       </button>
-      <span className="tabular-nums">
+      <span className={clsx('tabular-nums', compact && 'text-[10px]')}>
         {currentPage} / {totalPages}
       </span>
       <button
@@ -43,13 +46,15 @@ export default function Pagination({ total, offset, limit, onOffsetChange, disab
         aria-label={t('Next page')}
         className={clsx(
           'touch-target inline-flex h-11 w-11 items-center justify-center rounded-md transition-colors hover:bg-surface-overlay sm:h-8 sm:w-8',
-          compact && 'h-7 w-7 sm:h-7 sm:w-7',
+          compact && 'h-6 w-6 sm:h-6 sm:w-6',
           (disabled || offset + limit >= total) && 'opacity-30 cursor-not-allowed'
         )}
       >
         <ChevronRight className="w-3.5 h-3.5" />
       </button>
-      <span className={compact ? 'text-txt-tertiary' : 'ml-1 text-txt-tertiary'}>{t('{{total}} total', { total })}</span>
+      <span className={clsx(compact ? 'text-[10px] text-txt-tertiary' : 'ml-1 text-txt-tertiary')}>
+        {t('{{total}} total', { total })}
+      </span>
     </div>
   )
 }

@@ -1760,8 +1760,8 @@ export default function MonitorPage() {
 
         <div className="flex-none border-t border-border-subtle px-2 py-1">
           {monitorTotal > MONITOR_TASK_PAGE_SIZE && (
-            <div className="mb-1 flex min-w-0 flex-nowrap items-center justify-between gap-1" aria-label={t("Monitor task pagination")}>
-              <div className="shrink-0 whitespace-nowrap text-2xs tabular-nums text-txt-tertiary">
+            <div className="mb-1 flex min-w-0 flex-nowrap items-center gap-1" aria-label={t("Monitor task pagination")}>
+              <div className="min-w-0 flex-1 truncate whitespace-nowrap text-2xs tabular-nums text-txt-tertiary">
                 {t('Tasks {{start}}–{{end}}', { start: monitorOffset + 1, end: monitorOffset + monitorTasks.length })}
               </div>
               <Pagination total={monitorTotal} offset={monitorOffset} limit={MONITOR_TASK_PAGE_SIZE}

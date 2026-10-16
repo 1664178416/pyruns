@@ -754,10 +754,14 @@ def test_react_task_lists_use_summaries_and_fetch_full_details_on_open():
         manager,
     )
     assert "detailRequestControllerRef.current?.abort()" in manager
+    assert "const loadDetailTask = useCallback((task: Task) => {" in monitor
+    assert "detailTaskControllerRef.current?.abort()" in monitor
     assert re.search(
-        r"api\.getTask\(\s*task\.name\s*,\s*true\s*,\s*false\s*,\s*controller\.signal\s*\)\s*\.then\(\s*fullTask",
+        r"api\.getTask\(\s*task\.name\s*,\s*true\s*,\s*false\s*,\s*controller\.signal\s*\)",
         monitor,
     )
+    assert "TASK_DETAIL_REQUEST_TIMEOUT_MS" in monitor
+    assert "setDetailTask(current => current?.name === task.name" in monitor
     assert "dropIndicator" in manager
     assert "data-task-card={task.name}" in manager
     assert "data-task-card-pinned={task.pinned ? 'true' : 'false'}" in manager

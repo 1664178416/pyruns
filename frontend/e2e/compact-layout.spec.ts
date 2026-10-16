@@ -116,6 +116,15 @@ test('375px layout keeps GPU details and log controls reachable without horizont
   const gpuDialog = page.getByRole('dialog', { name: 'GPU 0 | NVIDIA A100-PCIE-40GB' })
   await expect(gpuDialog).toBeVisible()
   await gpuDialog.getByRole('button', { name: 'Close GPU details' }).click()
+  const gpuRow = page.getByRole('button', { name: 'View details for GPU 0 NVIDIA A100-PCIE-40GB' })
+  const usageTracks = gpuRow.locator('.gpu-usage-track')
+  await expect(usageTracks).toHaveCount(2)
+  for (const track of await usageTracks.all()) {
+    const box = await track.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.width).toBeGreaterThan(120)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(375)
+  }
   await page.screenshot({ path: testInfo.outputPath('compact-dashboard-mobile.png') })
 
   await page.getByRole('link', { name: 'Monitor', exact: true }).click()

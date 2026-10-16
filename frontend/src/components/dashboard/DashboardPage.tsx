@@ -584,7 +584,7 @@ function UsageTrack({ label, value, tone }: { label: string; value: number | nul
     : pct > 92 ? 'bg-rose-400' : pct > 75 ? 'bg-amber-400' : 'bg-emerald-400'
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="gpu-usage-track flex min-w-0 items-center gap-2">
       <span className="w-12 flex-none text-2xs text-txt-secondary">{label}</span>
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/15">
         <div className={clsx('h-full rounded-full transition-all duration-500', barColor)} style={{ width: `${pct}%` }} />

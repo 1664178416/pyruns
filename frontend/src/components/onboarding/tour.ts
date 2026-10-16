@@ -90,8 +90,8 @@ const steps: TourStep[] = [
   },
   {
     target: 'guide', route: '/monitor',
-    title: 'Come back anytime',
-    description: 'This guide stays in the sidebar. Replay it whenever you want to review the workflow.',
+    title: 'Replay the guide from Preferences',
+    description: 'Open Preferences to replay this guide whenever you want to review the workflow.',
   },
   {
     target: 'preferences', route: '/monitor', click: 'finish',

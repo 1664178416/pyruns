@@ -50,7 +50,7 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     set({ phase: 'idle', hasSeen: true, returnFocus: null })
     window.requestAnimationFrame(() => {
       if (get().phase === 'idle' && !document.querySelector('dialog[open]')) {
-        const fallback = document.querySelector<HTMLElement>('[data-tour="guide"]')
+        const fallback = document.querySelector<HTMLElement>('[data-tour="preferences"]')
         ;(target?.isConnected ? target : fallback)?.focus({ preventScroll: true })
       }
     })

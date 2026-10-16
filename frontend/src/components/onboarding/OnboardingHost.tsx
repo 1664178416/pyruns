@@ -35,7 +35,7 @@ export default function OnboardingHost({ enabled }: { enabled: boolean }) {
     if (!enabled || hasSeen || dirty || panelOpen || phase !== 'idle') return
     const offerGuide = () => {
       if (document.querySelector('[data-tour="home"]') && !document.querySelector('dialog[open], [role="dialog"]')) {
-        useOnboardingStore.getState().open(document.querySelector<HTMLElement>('[data-tour="guide"]'))
+        useOnboardingStore.getState().open(document.querySelector<HTMLElement>('[data-tour="preferences"]'))
       }
     }
     // The route and sidebar can arrive after the initial lazy-loaded screen.

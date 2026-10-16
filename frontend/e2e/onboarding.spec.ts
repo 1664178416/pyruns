@@ -34,7 +34,7 @@ async function next(page: Page, target: string) {
   await expectStep(page, target)
 }
 
-test('first visit offers a guide, dismissal persists, and the sidebar can replay it', async ({ page }, testInfo) => {
+test('first visit offers a guide, dismissal persists, and Preferences can replay it', async ({ page }, testInfo) => {
   await page.goto('/?token=pyruns-e2e-access-token')
   const welcome = page.getByRole('dialog', { name: '欢迎使用 Pyruns', exact: true })
   await expect(welcome).toBeVisible()
@@ -44,11 +44,12 @@ test('first visit offers a guide, dismissal persists, and the sidebar can replay
   await page.reload()
   await expect(page.getByRole('link', { name: '首页', exact: true })).toBeVisible()
   await expect(welcome).toHaveCount(0)
-  await page.getByRole('button', { name: '新手指南', exact: true }).click()
+  await page.getByRole('button', { name: '偏好设置', exact: true }).click()
+  await page.getByRole('dialog', { name: '偏好设置', exact: true }).getByRole('button', { name: '新手指南', exact: true }).click()
   await expect(welcome).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(welcome).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '新手指南', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '偏好设置', exact: true })).toBeFocused()
 })
 
 test('the interactive tour visits real pages, previews panels, and never mutates tasks or runtime', async ({ page }, testInfo) => {
@@ -116,7 +117,7 @@ test('the interactive tour visits real pages, previews panels, and never mutates
   await expect(page.getByRole('dialog', { name: 'Welcome to Pyruns', exact: true })).toHaveCount(0)
 })
 
-test('back and Escape clean up preview panels and restore the guide entry focus', async ({ page }) => {
+test('back and Escape clean up preview panels and restore the Preferences focus', async ({ page }) => {
   await beginTour(page)
   await next(page, 'workspace')
   await next(page, 'workspace-picker')
@@ -128,7 +129,7 @@ test('back and Escape clean up preview panels and restore the guide entry focus'
   await expect(popover(page)).toHaveCount(0)
   await expect(page.locator('[data-tour-panel="workspace"]')).toHaveCount(0)
   await expect(page.locator('body')).not.toHaveClass(/driver-active/)
-  await expect(page.getByRole('button', { name: '新手指南', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '偏好设置', exact: true })).toBeFocused()
   await expect(page).not.toHaveURL(/launcher=/)
 })
 
@@ -138,7 +139,8 @@ test('replaying the guide protects an unsaved generator draft', async ({ page })
   await page.getByRole('link', { name: '任务生成', exact: true }).click()
   const name = page.locator('#task-prefix')
   await name.fill('keep_my_draft')
-  await page.getByRole('button', { name: '新手指南', exact: true }).click()
+  await page.getByRole('button', { name: '偏好设置', exact: true }).click()
+  await page.getByRole('dialog', { name: '偏好设置', exact: true }).getByRole('button', { name: '新手指南', exact: true }).click()
   await expect(page.getByRole('button', { name: '开始引导', exact: true })).toBeDisabled()
   await expect(page.getByRole('dialog', { name: '欢迎使用 Pyruns', exact: true }).getByRole('status')).toContainText('你的草稿会保留在当前页面')
   await page.getByRole('button', { name: '关闭新手指南', exact: true }).click()
@@ -153,7 +155,8 @@ test('the guide still opens when browser storage is blocked', async ({ page }) =
   await beginTour(page)
   await popover(page).getByRole('button', { name: '跳过引导', exact: true }).click()
   await expect(popover(page)).toHaveCount(0)
-  await page.getByRole('button', { name: '新手指南', exact: true }).click()
+  await page.getByRole('button', { name: '偏好设置', exact: true }).click()
+  await page.getByRole('dialog', { name: '偏好设置', exact: true }).getByRole('button', { name: '新手指南', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '欢迎使用 Pyruns', exact: true })).toBeVisible()
 })
 
