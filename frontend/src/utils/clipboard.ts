@@ -27,7 +27,9 @@ export async function copyText(value: string): Promise<boolean> {
   textarea.style.opacity = '0'
 
   const activeElement = document.activeElement as HTMLElement | null
-  document.body.appendChild(textarea)
+  // A modal dialog makes nodes outside it inert, preventing text selection.
+  const container = activeElement?.closest('dialog[open]') ?? document.body
+  container.appendChild(textarea)
 
   let copied = false
   try {

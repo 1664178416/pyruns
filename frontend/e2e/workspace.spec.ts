@@ -1478,6 +1478,19 @@ test('task search shares keyboard history without taking over multiline editing 
 
 test('Monitor and Manager group full log matches and load context only on demand', async ({ page, isMobile }, testInfo) => {
   if (isMobile) await page.setViewportSize({ width: 375, height: 667 })
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('permission denied') } },
+    })
+    // Exercise real modal focus and selection; intercept only the OS clipboard write.
+    document.execCommand = command => {
+      const input = document.activeElement
+      if (command !== 'copy' || !(input instanceof HTMLTextAreaElement)) return false
+      ;(window as Window & { copiedLog?: string }).copiedLog = input.value.slice(input.selectionStart, input.selectionEnd)
+      return true
+    }
+  })
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   let contextRequests = 0
@@ -1573,6 +1586,10 @@ test('Monitor and Manager group full log matches and load context only on demand
     } else {
       await expect(dialog.getByLabel('Log context', { exact: true })).toContainText('needle found in old history')
       await expect(dialog.getByRole('button', { name: 'Copy log context' })).toBeEnabled()
+      await dialog.getByRole('button', { name: 'Copy log context' }).click()
+      await expect(dialog.getByRole('button', { name: 'Copied', exact: true })).toBeFocused()
+      expect(await page.evaluate(() => (window as Window & { copiedLog?: string }).copiedLog))
+        .toBe('before\nneedle found in old history\nafter\n'.repeat(30))
       await page.screenshot({ path: testInfo.outputPath(`${view}-context.png`) })
       await page.keyboard.press('Escape')
       await expect(dialog).toBeHidden()
