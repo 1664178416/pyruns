@@ -8,7 +8,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import TypedDict
 
@@ -16,6 +15,10 @@ from typing import TypedDict
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = ROOT / "frontend"
 STATIC_DIR = ROOT / "pyruns" / "web" / "static"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from pyruns.utils.temp_paths import create_inherited_temp_dir  # noqa: E402
 
 
 class _HiddenSubprocessKwargs(TypedDict, total=False):
@@ -70,32 +73,45 @@ def check_frontend_static(*, root: Path = ROOT) -> list[str]:
     if npm_executable is None:
         return ["npm executable not found; install Node.js/npm to check frontend static assets"]
 
-    with tempfile.TemporaryDirectory(prefix="pyruns-frontend-static-") as tmp:
-        build_dir = Path(tmp) / "static"
-        command = [
-            npm_executable,
-            "run",
-            "build",
-            "--",
-            "--outDir",
-            str(build_dir),
-            "--emptyOutDir",
+    tmp = create_inherited_temp_dir("pyruns-frontend-static-")
+    try:
+        build_dir = tmp / "static"
+        # ``tsc -b`` writes ``tsconfig.tsbuildinfo`` beside the source tree.
+        # That is useful for an interactive frontend build, but it fails on
+        # some synced/NFS workspaces and leaves a generated file in the
+        # checkout.  Run the type check without build mode, then invoke Vite
+        # directly with the output redirected to the isolated directory.
+        commands = [
+            [npm_executable, "exec", "--", "tsc", "--noEmit", "--project", "tsconfig.json"],
+            [
+                npm_executable,
+                "exec",
+                "--",
+                "vite",
+                "build",
+                "--outDir",
+                str(build_dir),
+                "--emptyOutDir",
+            ],
         ]
-        result = subprocess.run(
-            command,
-            cwd=frontend_dir,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            **hidden_subprocess_kwargs(),
-        )
-        if result.returncode != 0:
-            output = "\n".join(part for part in (result.stdout, result.stderr) if part)
-            return [f"frontend build failed with exit code {result.returncode}\n{output}".rstrip()]
+        for command in commands:
+            result = subprocess.run(
+                command,
+                cwd=frontend_dir,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                **hidden_subprocess_kwargs(),
+            )
+            if result.returncode != 0:
+                output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+                return [f"frontend build failed with exit code {result.returncode}\n{output}".rstrip()]
 
         expected = _snapshot_files(build_dir)
         committed = _snapshot_files(static_dir)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
     expected_files = set(expected)
     committed_files = set(committed)

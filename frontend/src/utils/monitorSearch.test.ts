@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  groupTaskSearchMatches,
   splitTaskSearchSnippet,
   shouldDecorateTerminalSearch,
   TERMINAL_SEARCH_DECORATION_ROW_LIMIT,
@@ -45,6 +46,17 @@ describe('monitor terminal search policy', () => {
       '😀 ',
       'foo',
       '',
+    ])
+  })
+
+  it('groups matches in source order without duplicating rows', () => {
+    const first = { source: 'log.txt', line: 1 }
+    const second = { source: 'script.sh', line: 2 }
+    const third = { source: 'log.txt', line: 3 }
+
+    expect(groupTaskSearchMatches([first, second, third], match => match.source)).toEqual([
+      ['log.txt', [first, third]],
+      ['script.sh', [second]],
     ])
   })
 })

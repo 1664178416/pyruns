@@ -109,6 +109,16 @@ def test_log_tail_preserves_line_and_unicode_boundaries(tmp_path, capsys, data, 
     assert capsys.readouterr().out == expected
 
 
+def test_tty_queue_progress_redraws_carriage_return_updates_in_one_block():
+    progress = commands._QueueProgressOutput()
+
+    rendered = progress.render("GPU 1/2 ready\rGPU 2/2 ready")
+
+    assert rendered.count("\x1b[2K") == 1
+    assert "GPU 1/2 ready" in rendered
+    assert rendered.endswith("GPU 2/2 ready\r\n")
+
+
 @pytest.mark.parametrize("line_length", [65535, 2_000_000])
 def test_log_tail_limits_reverse_reads_and_streams_long_lines(tmp_path, monkeypatch, line_length):
     path = tmp_path / "run1.log"

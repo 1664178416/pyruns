@@ -367,6 +367,8 @@ def test_frontend_static_checker_rejects_stale_assets(tmp_path, monkeypatch):
 
     def fake_run(command, cwd, text, capture_output, **kwargs):
         captured_kwargs.update(kwargs)
+        if "--outDir" not in command:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         build_dir = Path(command[command.index("--outDir") + 1])
         build_dir.mkdir(parents=True)
         (build_dir / "index.html").write_text("new\n", encoding="utf-8")
@@ -389,6 +391,8 @@ def test_frontend_static_checker_allows_text_line_ending_differences(tmp_path, m
     monkeypatch.setattr(checker.shutil, "which", lambda _name: "npm")
 
     def fake_run(command, cwd, text, capture_output, **_kwargs):
+        if "--outDir" not in command:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         build_dir = Path(command[command.index("--outDir") + 1])
         build_dir.mkdir(parents=True)
         (build_dir / "index.html").write_bytes(b"<div>\nok\n</div>\n")

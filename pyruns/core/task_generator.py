@@ -8,7 +8,6 @@ import secrets
 import shutil
 import socket
 import stat
-import tempfile
 import time
 from typing import Any, Dict, List, Sequence
 
@@ -33,6 +32,7 @@ from pyruns.utils.process_utils import get_process_create_time, is_pid_running
 from pyruns.utils.lock_owner import RELEASED_LOCK_SUFFIX, mark_json_lock_released, parse_json_lock_owner
 from pyruns.utils.native_lock import LOCK_PROTOCOL, NativeFileGuard
 from pyruns.utils.shell_runtime import get_shell_config_filename_for_workspace
+from pyruns.utils.temp_paths import create_inherited_temp_dir
 from pyruns.utils.task_files import (
     build_task_preview_and_search,
     is_known_task_kind,
@@ -636,7 +636,9 @@ class TaskGenerator:
                     attempt += 1
                     continue
 
-                staging_dir = tempfile.mkdtemp(prefix=".pyruns-task-", dir=self.root_dir)
+                staging_dir = str(
+                    create_inherited_temp_dir(".pyruns-task-", parent=self.root_dir)
+                )
                 staging_identity = self._path_identity(staging_dir)
                 if staging_identity is None:
                     raise OSError(f"Could not verify private task directory: {staging_dir}")

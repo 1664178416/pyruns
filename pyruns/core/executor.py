@@ -68,6 +68,7 @@ from pyruns.utils.shell_runtime import (
 )
 from pyruns.utils.settings import load_settings
 from pyruns.utils.env_utils import normalize_environment
+from pyruns.utils.temp_paths import create_inherited_temp_dir
 from pyruns.utils.task_files import (
     normalize_task_kind,
     resolve_task_config_file,
@@ -236,7 +237,19 @@ def _copy_dist_info(package_parent: str, import_root: str) -> None:
 def _new_private_runtime_root(prefix: str) -> str:
     """Create an unpredictable process-private directory for executable support code."""
 
+    # Runtime import guards and sitecustomize copies may contain executable
+    # support code, so keep this directory private to the current process.
     root = tempfile.mkdtemp(prefix=prefix)
+    # A few managed Windows/OneDrive profiles create the private root but
+    # reject child directories.  Probe before copying support code and fall
+    # back to a uniquely named ordinary directory only in that environment.
+    probe = os.path.join(root, ".pyruns-write-probe")
+    try:
+        os.mkdir(probe)
+        os.rmdir(probe)
+    except OSError:
+        shutil.rmtree(root, ignore_errors=True)
+        root = str(create_inherited_temp_dir(prefix))
     try:
         if os.name != "nt":
             os.chmod(root, 0o700)

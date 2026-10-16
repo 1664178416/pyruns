@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, FileText, LoaderCircle, X } from 'lucide-react'
 import type { Task, TaskSearchMatch } from '@/types'
-import { splitTaskSearchSnippet } from '@/utils/monitorSearch'
+import { groupTaskSearchMatches, splitTaskSearchSnippet } from '@/utils/monitorSearch'
 import { errorMessage } from '@/utils/errors'
 import { getTaskLogs } from '@/api'
 import CopyButton from './CopyButton'
@@ -25,11 +25,8 @@ export default function TaskSearchMatches({ task, onSelect, onSelectMatch, actio
   const { t } = useTranslation()
   const [preview, setPreview] = useState<TaskSearchMatch | null>(null)
   const matches = task.search_matches ?? []
-  const groups = new Map<string, TaskSearchMatch[]>()
-  for (const match of matches) {
-    const source = match.log_file || `${t(LABELS[match.field])}${match.location ? `: ${match.location}` : ''}`
-    groups.set(source, [...(groups.get(source) ?? []), match])
-  }
+  const groups = useMemo(() => groupTaskSearchMatches(matches, match =>
+    match.log_file || `${t(LABELS[match.field])}${match.location ? `: ${match.location}` : ''}`), [matches, t])
   const count = Math.max(matches.length, task.search_match_count ?? 0)
   return <div aria-label={t('Matches in {{name}}', { name: task.name })} className="min-w-0">
     {Array.from(groups, ([source, rows]) => <details key={source} open className="group/search border-l border-border-subtle">

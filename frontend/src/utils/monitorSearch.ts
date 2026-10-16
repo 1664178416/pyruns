@@ -2,6 +2,25 @@ export const TERMINAL_SEARCH_DEBOUNCE_MS = 150
 export const TERMINAL_SEARCH_HIGHLIGHT_LIMIT = 250
 export const TERMINAL_SEARCH_DECORATION_ROW_LIMIT = 10_000
 
+/**
+ * Groups search matches in one pass while preserving both source and match
+ * order. Search responses can contain thousands of matches, so avoid cloning
+ * an ever-growing array for every item in a group.
+ */
+export function groupTaskSearchMatches<T>(
+  matches: readonly T[],
+  sourceForMatch: (match: T) => string,
+): Array<[string, T[]]> {
+  const groups = new Map<string, T[]>()
+  for (const match of matches) {
+    const source = sourceForMatch(match)
+    const rows = groups.get(source)
+    if (rows) rows.push(match)
+    else groups.set(source, [match])
+  }
+  return Array.from(groups)
+}
+
 export function shouldDecorateTerminalSearch(bufferRows: number) {
   return Number.isFinite(bufferRows) && bufferRows <= TERMINAL_SEARCH_DECORATION_ROW_LIMIT
 }

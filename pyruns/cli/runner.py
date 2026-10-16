@@ -350,8 +350,23 @@ def submit_cli_tasks(
     ]
 
     env = os.environ.copy()
-    runtime = get_follow_shell_runtime()
-    shell_executable = str(runtime.get("executable", "") or "").strip()
+    # A CLI process may have been launched by a Python test runner, an IDE,
+    # or another wrapper whose process ancestry does not expose the user's
+    # actual shell.  Shell tasks already persist the resolved executable at
+    # creation time, so prefer that value when handing work to the detached
+    # runner.  Falling back to ancestry detection keeps older tasks and
+    # Python workspaces compatible.
+    shell_executables = {
+        str(task.get("shell_executable", "") or "").strip()
+        for task in getattr(tm, "tasks", [])
+        if task and str(task.get("name", "")) in names
+    }
+    shell_executables.discard("")
+    if len(shell_executables) == 1:
+        shell_executable = next(iter(shell_executables))
+    else:
+        runtime = get_follow_shell_runtime()
+        shell_executable = str(runtime.get("executable", "") or "").strip()
     if shell_executable:
         env[ENV_KEY_CLI_SHELL_EXECUTABLE] = shell_executable
 

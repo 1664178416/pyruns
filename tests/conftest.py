@@ -123,7 +123,13 @@ def _isolate_process_state(monkeypatch, tmp_path):
     # The project's custom ``tmp_path`` avoids the locked pytest temp root on
     # Windows/OneDrive.  Keep process state in a sibling so tests that assert
     # their workspace directory contents are not polluted by this fixture.
-    state_root = Path(tempfile.mkdtemp(prefix=".process-state-", dir=str(tmp_path.parent)))
+    # ``tempfile.mkdtemp`` requests a private 0700 directory on Windows.  A
+    # number of OneDrive and managed Windows profiles reject subsequent child
+    # creation in that directory, even for the creating process.  Use a
+    # unique ordinary directory instead so the inherited workspace ACL remains
+    # usable while each test still gets isolated process state.
+    state_root = tmp_path.parent / f".process-state-{uuid.uuid4().hex}"
+    state_root.mkdir(parents=True, exist_ok=False)
     update_dir = state_root / "update"
     session_dir = state_root / "session"
     update_dir.mkdir()
