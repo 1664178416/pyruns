@@ -23,6 +23,7 @@ import AppShell from '@/components/layout/AppShell'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
 import ConfirmationHost from '@/components/shared/ConfirmationHost'
 import ToastHost from '@/components/shared/ToastHost'
+import OnboardingHost from '@/components/onboarding/OnboardingHost'
 import { t, useTranslation, translateMessage } from '@/i18n'
 import { ApiError, beginAuthorizationAttempt, recoverSession, subscribeUnauthorized, subscribeWorkspaceChanged } from '@/api'
 import {
@@ -552,6 +553,7 @@ export default function App() {
         />
         <ConfirmationHost />
         <ToastHost />
+        <OnboardingHost enabled={!connectionBlocked} />
       </div>
       {connectionBlocked && (
         <ConnectionOverlay

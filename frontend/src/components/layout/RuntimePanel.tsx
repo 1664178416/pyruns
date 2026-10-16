@@ -18,6 +18,7 @@ import { gpuFreeMemoryMb, gpuMemoryUsedPercent } from '@/utils/gpuMetrics'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
 import ToggleSwitch from '@/components/shared/ToggleSwitch'
 import { t, useTranslation } from '@/i18n'
+import { useOnboardingStore } from '@/components/onboarding/store'
 
 const CodeTextEditor = lazy(() => import('@/components/shared/CodeTextEditor'))
 
@@ -224,6 +225,7 @@ function gpuRuleReasons(
 }
 
 export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps) {
+  const touring = useOnboardingStore(state => state.phase === 'tour')
   const { i18n } = useTranslation()
   const language = i18n.language
   const refreshWorkspace = useWorkspaceStore(s => s.fetch)
@@ -630,6 +632,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
     }
 
     const handleDocumentPointerDown = (event: PointerEvent) => {
+      if (useOnboardingStore.getState().phase === 'tour') return
       if (document.querySelector('dialog[open]')) {
         closeGestureRef.current = null
         return
@@ -677,6 +680,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
       closeGestureRef.current = null
     }
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (useOnboardingStore.getState().phase === 'tour') return
       if (document.querySelector('dialog[open]')) {
         return
       }
@@ -712,6 +716,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
       document.addEventListener('pointercancel', handleDocumentPointerCancel)
     }, 0)
     const focusTimer = window.setTimeout(() => {
+      if (useOnboardingStore.getState().phase === 'tour') return
       panelRef.current?.querySelector<HTMLElement>('[data-runtime-initial-focus]')?.focus()
     }, 0)
     document.addEventListener('keydown', handleKeyDown)
@@ -894,14 +899,15 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
   return (
     <div
       ref={panelRef}
+      data-tour-panel="runtime"
       role="dialog"
-      aria-modal="true"
+      aria-modal={touring ? undefined : 'true'}
       aria-label={t('Runtime settings')}
       className="runtime-panel fixed bottom-3 z-50 flex max-h-[calc(100dvh-24px)] w-[620px] flex-col overflow-hidden rounded-lg border border-border bg-surface-raised shadow-xl"
       style={{ left, maxWidth: `calc(100vw - ${left + 12}px)` }}
       onClick={event => event.stopPropagation()}
     >
-      <div className="flex h-12 items-center gap-1.5 border-b border-border-subtle px-2 sm:h-10 sm:gap-2 sm:px-3">
+      <div data-tour="runtime-controls" className="flex h-12 items-center gap-1.5 border-b border-border-subtle px-2 sm:h-10 sm:gap-2 sm:px-3">
         <div className="hidden min-w-0 flex-1 items-center gap-2 sm:flex">
           <div className="text-sm font-semibold text-txt-primary">{t('Runtime')}</div>
           <div className="truncate rounded-md bg-surface-overlay px-2 py-0.5 text-2xs text-txt-secondary">
@@ -964,6 +970,7 @@ export default function RuntimePanel({ open, left, onClose }: RuntimePanelProps)
         <button
           type="button"
           onClick={requestClose}
+          data-tour-close="runtime"
           className="touch-target inline-flex h-11 w-11 items-center justify-center rounded-md text-txt-tertiary transition-colors hover:bg-surface-overlay hover:text-txt-primary sm:h-8 sm:w-8"
           aria-label={t('Close runtime panel')}
         >

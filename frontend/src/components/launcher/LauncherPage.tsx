@@ -14,6 +14,7 @@ import {
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import type { ConfigCandidate, PathValidationResult } from '@/types'
 import * as api from '@/api'
+import { useOnboardingStore } from '@/components/onboarding/store'
 
 function pathName(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() || path
@@ -130,6 +131,7 @@ function usePathValidation(kind: 'python' | 'shell' | 'config', path: string, en
 }
 
 export default function LauncherPage({ onClose }: { onClose: () => void }) {
+  const touring = useOnboardingStore(state => state.phase === 'tour')
   useTranslation()
   const backdropPointerStartedRef = useRef(false)
   const launcherActionInFlightRef = useRef(false)
@@ -455,6 +457,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
       ? document.activeElement
       : null
     const focusFrame = window.requestAnimationFrame(() => {
+      if (useOnboardingStore.getState().phase === 'tour') return
       const firstControl = modalRef.current?.querySelector<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       )
@@ -462,6 +465,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
     })
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (useOnboardingStore.getState().phase === 'tour') return
       if (document.querySelector('dialog[open]')) {
         return
       }
@@ -523,8 +527,9 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
     >
       <div
         ref={modalRef}
+        data-tour-panel="workspace"
         role="dialog"
-        aria-modal="true"
+        aria-modal={touring ? undefined : 'true'}
         aria-busy={loading || undefined}
         aria-labelledby="launcher-dialog-title"
         aria-describedby="launcher-dialog-description"
@@ -684,6 +689,7 @@ export default function LauncherPage({ onClose }: { onClose: () => void }) {
             type="button"
             disabled={opening || launcherActionInFlightRef.current}
             onClick={requestClose}
+            data-tour-close="workspace"
             className="touch-target inline-flex min-h-11 items-center px-2 text-xs text-txt-tertiary transition-colors hover:text-txt-secondary disabled:cursor-wait disabled:opacity-50 sm:min-h-8"
           >
             {t('Cancel')}
@@ -704,7 +710,7 @@ function LaunchChoiceTabs({
   onChange: (mode: 'python' | 'shell') => void
 }) {
   return (
-    <div className="grid gap-2 md:grid-cols-2" role="group" aria-label={t('Workspace type')}>
+    <div data-tour="workspace-picker" className="grid gap-2 md:grid-cols-2" role="group" aria-label={t('Workspace type')}>
       <button
         type="button"
         aria-pressed={launchMode === 'python'}

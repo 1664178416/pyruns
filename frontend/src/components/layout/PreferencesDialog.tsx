@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Check, ChevronDown, Moon, Settings2, Sun, X } from 'lucide-react'
+import { Check, ChevronDown, CircleHelp, Moon, Settings2, Sun, X } from 'lucide-react'
 import clsx from 'clsx'
 import { setLanguage, useTranslation, type Language } from '@/i18n'
+import { useOnboardingStore } from '@/components/onboarding/store'
 import {
   DEFAULT_SEARCH_SETTINGS,
   usePreferencesStore,
@@ -70,6 +71,19 @@ export default function PreferencesDialog() {
         </header>
 
         <div className="min-h-0 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">
+          <section className="mb-5 border-b border-border-subtle pb-5">
+            <button
+              type="button"
+              onClick={() => {
+                close()
+                window.requestAnimationFrame(() => useOnboardingStore.getState().open())
+              }}
+              className="touch-target inline-flex min-h-11 items-center gap-2 rounded-md border border-border-subtle px-3 py-2 text-sm font-medium text-txt-secondary hover:bg-surface-overlay"
+            >
+              <CircleHelp aria-hidden="true" className="h-4 w-4" />
+              {t('Beginner guide')}
+            </button>
+          </section>
           <section className="mb-5 border-b border-border-subtle pb-5">
             <label className="flex min-h-11 items-center justify-between gap-3 text-sm">
               <span className="font-medium">{t('Language')}</span>
