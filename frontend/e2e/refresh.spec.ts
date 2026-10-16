@@ -1,8 +1,25 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const emptyCounts = { pending: 0, queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
 
+async function observeTaskHeartbeats(page: Page) {
+  await page.addInitScript(() => {
+    const state = { count: 0 }
+    Object.assign(window, { taskHeartbeats: state })
+    const dispatch = EventTarget.prototype.dispatchEvent
+    EventTarget.prototype.dispatchEvent = function(event) {
+      const result = dispatch.call(this, event)
+      if (this instanceof WebSocket && event instanceof MessageEvent
+        && new URL(this.url).pathname === '/api/tasks/events'
+        && JSON.parse(event.data).type === 'heartbeat') state.count++
+      return result
+    }
+  })
+  return () => page.evaluate(() => (window as typeof window & { taskHeartbeats: { count: number } }).taskHeartbeats.count)
+}
+
 test('Manager coalesces task events, pauses while hidden and reconciles on return', async ({ page }) => {
+  const heartbeats = await observeTaskHeartbeats(page)
   const now = new Date()
   await page.clock.install({ time: now })
   await page.clock.pauseAt(new Date(now.getTime() + 100))
@@ -32,11 +49,11 @@ test('Manager coalesces task events, pauses while hidden and reconciles on retur
     return route.fulfill({ json: { items: [task], total: 1, offset: 0, limit: 50,
       has_more: false, status_counts: { ...emptyCounts, [task.status]: 1 } } })
   })
-  let sendEvent!: () => void
+  let sendEvent!: (type?: string) => void
   let connections = 0
   await page.routeWebSocket('**/api/tasks/events?*', socket => {
     connections++
-    sendEvent = () => socket.send(JSON.stringify({ type: 'changed' }))
+    sendEvent = (type = 'changed') => socket.send(JSON.stringify({ type }))
     socket.send(JSON.stringify({ type: 'ready' }))
   })
   const visibility = (state: string) => page.evaluate(value => {
@@ -75,7 +92,10 @@ test('Manager coalesces task events, pauses while hidden and reconciles on retur
   await page.clock.runFor(200)
   await expect.poll(() => refreshes.length).toBe(4)
   expect(refreshes.at(-1)).toBe('true')
-  await page.clock.runFor(60_001)
+  await page.clock.runFor(30_000)
+  sendEvent('heartbeat')
+  await expect.poll(heartbeats).toBe(1)
+  await page.clock.runFor(30_001)
   await expect.poll(() => refreshes.length).toBe(5)
   expect(refreshes.at(-1)).toBe('true')
 })
@@ -428,6 +448,7 @@ for (const stalledEndpoint of ['dashboard', 'metrics']) {
 }
 
 test('monitor pauses background streams and resumes logs with one reconciled snapshot', async ({ page }) => {
+  const heartbeats = await observeTaskHeartbeats(page)
   const now = new Date()
   await page.clock.install({ time: now })
   await page.clock.pauseAt(new Date(now.getTime() + 100))
@@ -536,6 +557,8 @@ test('monitor pauses background streams and resumes logs with one reconciled sna
   await page.clock.runFor(30_000)
   // Model the server heartbeat while this test keeps the live log idle.
   sendLog(JSON.stringify({ type: 'heartbeat', task_name: task.name }))
+  sendEvent(JSON.stringify({ type: 'heartbeat' }))
+  await expect.poll(heartbeats).toBe(1)
   await page.clock.runFor(30_001)
   await expect.poll(reads).toBe(before + 2)
   expect((await refreshes()).at(-1)).toBe('true')
