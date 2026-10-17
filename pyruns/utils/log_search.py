@@ -268,6 +268,7 @@ class LogSearch:
                 result["matches"].extend(cached["matches"][:max(0, _PREVIEW_LIMIT - len(result["matches"]))])
             return current
 
+        progress_count = 0
         last_progress = None
         last_progress_count = 0
 
@@ -276,11 +277,10 @@ class LogSearch:
             if on_progress is None:
                 return
             now = time.monotonic()
-            count = sum(result["match_count"] for result in contents.values())
-            if last_progress is None or (not last_progress_count and count) or now - last_progress >= 0.1:
+            if last_progress is None or (not last_progress_count and progress_count) or now - last_progress >= 0.1:
                 on_progress(snapshot())
                 last_progress = now
-                last_progress_count = count
+                last_progress_count = progress_count
 
         for task_dir in results:
             if cancelled.is_set():
@@ -308,7 +308,7 @@ class LogSearch:
         cursor = 0
 
         def advance(path=None, completed=()):
-            nonlocal cursor
+            nonlocal cursor, progress_count
             while cursor < len(steps) and not budget.limit_hit:
                 if cancelled.is_set():
                     raise CancelledError()
@@ -319,6 +319,7 @@ class LogSearch:
                 elif current in cached_contents:
                     cached = cached_contents[current]
                     accepted = budget.take(cached["match_count"])
+                    progress_count += accepted
                     contents[current] = {**cached, "match_count": accepted, "matches": cached["matches"][:accepted]}
                 elif current == path:
                     break
@@ -356,6 +357,7 @@ class LogSearch:
                             advance()
                         elif event["type"] == "match" and data["submatches"]:
                             accepted = budget.take(len(data["submatches"]))
+                            progress_count += accepted
                             data = {**data, "submatches": data["submatches"][:accepted]}
                             _, name, info = files[path]
                             contents[path]["found"].add(needle)

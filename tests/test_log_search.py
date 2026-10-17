@@ -151,6 +151,7 @@ def test_counts_all_occurrences_with_bounded_previews(tmp_path, payload, count):
 def test_batching_literal_multiline_and_cache_capacity(tmp_path, monkeypatch):
     monkeypatch.setattr(log_search, "_CACHE_FILES_PER_QUERY", 1)
     monkeypatch.setattr(log_search, "_CACHE_MISSES_PER_QUERY", 2)
+    monkeypatch.setattr(log_search.time, "monotonic", lambda: 0)
     tasks = [write_log(tmp_path, b"needle\n" if i == 4 else b"other\n", task=f"task{i}")[0] for i in range(5)]
     original = log_search._ripgrep_events
     batches = []
@@ -162,8 +163,14 @@ def test_batching_literal_multiline_and_cache_capacity(tmp_path, monkeypatch):
     monkeypatch.setattr(log_search, "_ripgrep_events", record)
     search = log_search.LogSearch()
     for iteration in range(3):
-        results = search.search_many(tasks, "needle", threading.Event())
+        progress = []
+        results = search.search_many(
+            tasks, "needle", threading.Event(),
+            on_progress=lambda values: progress.append(sum(value["match_count"] for value in values.values())),
+        )
         assert sum(result["match_count"] for result in results.values()) == 1
+        # First live and cached hits both bypass the 100 ms update throttle.
+        assert progress == [0, 1]
         assert len(batches) == iteration + 1
         assert len(batches[-1]) == (5 if iteration == 0 else 2)
     results = search.search_many(tasks, "need\nneedle", threading.Event())
@@ -235,10 +242,16 @@ def test_match_limit_uses_input_order_with_partially_warmed_files(tmp_path, monk
     tasks = [write_log(tmp_path, b"needle\n", task=name)[0] for name in ("z-first", "a-second", "b-third")]
     search = log_search.LogSearch()
     search.search(tasks[-1], "needle", threading.Event())
+    monkeypatch.setattr(log_search.time, "monotonic", lambda: 0)
     for argument_bytes in (256_000, 1):
         monkeypatch.setattr(log_search, "_ARG_BYTES", argument_bytes)
-        result = search.search_many(tasks, "needle", threading.Event(), budget=SearchBudget(2))
+        progress = []
+        result = search.search_many(
+            tasks, "needle", threading.Event(), budget=SearchBudget(2),
+            on_progress=lambda values: progress.append(sum(value["match_count"] for value in values.values())),
+        )
         assert [result[task]["match_count"] for task in tasks] == [1, 1, 0]
+        assert progress == [0, 1]
     write_log(tmp_path, b"absent\n", task="a-second")
     result = search.search_many(tasks, "needle", threading.Event(), budget=SearchBudget(2))
     assert [result[task]["match_count"] for task in tasks] == [1, 0, 1]
