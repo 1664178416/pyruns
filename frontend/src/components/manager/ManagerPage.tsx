@@ -1217,8 +1217,8 @@ export default function ManagerPage() {
         )}
       </section>
 
-      <footer className="flex flex-none flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-surface-raised px-3 py-2 sm:px-4">
-        <span className="text-2xs text-txt-secondary">
+      <footer className="flex flex-none items-center gap-3 border-t border-border-subtle bg-surface-raised px-3 py-2 sm:px-4">
+        <span className="min-w-0 flex-1 truncate text-2xs text-txt-secondary">
           {selectMode && visibleSelectedCount > 0 ? t('{{count}} selected on page · ', { count: visibleSelectedCount }) : ''}
           {tasks.length > 0 ? t('Showing {{start}}–{{end}} of ', { start: offset + 1, end: offset + tasks.length }) : ''}
           {t('{{count}} matching task(s)', { count: total })}

@@ -26,11 +26,11 @@
   --card-border: #e9ecef;
   --input-bg: #f1f3f5;
 
-  /* Keep GPU telemetry distinct with a soft, low-saturation surface. */
-  --gpu-card-surface: #e8eef5;
-  --gpu-card-surface-hover: #dfe8f2;
-  --gpu-card-secondary: #4c5a73;
-  --gpu-card-tertiary: #68758c;
+  /* A pale blue telemetry surface keeps GPU rows visible without adding another card. */
+  --gpu-card-surface: #edf4ff;
+  --gpu-card-surface-hover: #e3edfc;
+  --gpu-card-secondary: #3f4d66;
+  --gpu-card-tertiary: #5d6d86;
 
   --xterm-bg: #101218;
   --scrollbar-thumb: #ced4da;
@@ -59,10 +59,10 @@
   --card-border: #1f1f1f;
   --input-bg: #1c1c1c;
 
-  --gpu-card-surface: #1c2b3f;
-  --gpu-card-surface-hover: #273c56;
-  --gpu-card-secondary: #d2deeb;
-  --gpu-card-tertiary: #afc0d4;
+  --gpu-card-surface: #21364f;
+  --gpu-card-surface-hover: #294663;
+  --gpu-card-secondary: #d4e1f0;
+  --gpu-card-tertiary: #b5c7dc;
 
   --scrollbar-thumb: #27272a;
   --scrollbar-hover: #3a3a3a;
@@ -188,7 +188,7 @@ summary::-webkit-details-marker {
 .gpu-row-chevron {
   position: absolute;
   right: 0.75rem;
-  top: 0.8rem;
+  top: 0.375rem;
 }
 
 .dark .gpu-metric-row .gpu-usage-track > div { background: rgb(255 255 255 / 15%); }
@@ -201,6 +201,7 @@ summary::-webkit-details-marker {
   .gpu-metric-row > :first-child {
     grid-column: 1;
     min-width: 0;
+    padding-right: 0;
   }
 
   .gpu-metric-row > .gpu-usage-track {
@@ -210,6 +211,7 @@ summary::-webkit-details-marker {
   .gpu-memory-value {
     grid-column: 2;
     grid-row: 1;
+    padding-right: 1.25rem;
     text-align: right;
   }
 }

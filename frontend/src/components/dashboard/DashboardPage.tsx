@@ -470,24 +470,20 @@ function TaskRow({ task, onClick }: { task: Task; onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-11 w-full items-center gap-3 px-2 py-2 text-left transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
+      className="grid min-h-11 w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] lg:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto]"
     >
       <div className="flex-none">
         <StatusBadge status={task.status as TaskStatus} />
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="min-w-0 truncate text-sm font-medium text-txt-primary" title={task.name}>{task.name}</span>
-          <span className="rounded-md bg-surface-overlay px-1.5 py-0.5 text-2xs uppercase tracking-[0.14em] text-txt-tertiary">
-            {taskKindLabel}
-          </span>
-          <span className="font-mono text-2xs text-txt-tertiary">{t('Run #{{run}}', { run: runIndex })}</span>
-        </div>
-        <div className="mt-0.5 font-mono text-2xs text-txt-tertiary" title={task.created_at}>
-          {task.created_at}
-        </div>
-      </div>
-      <ChevronRight className="mt-1 h-3.5 w-3.5 flex-none text-txt-tertiary" />
+      <span className="min-w-0 truncate text-sm font-medium text-txt-primary" title={task.name}>{task.name}</span>
+      <span className="hidden rounded-md bg-surface-overlay px-1.5 py-0.5 text-2xs uppercase tracking-[0.14em] text-txt-tertiary sm:inline">
+        {taskKindLabel}
+      </span>
+      <span className="whitespace-nowrap font-mono text-2xs text-txt-tertiary">{t('Run #{{run}}', { run: runIndex })}</span>
+      <time className="hidden whitespace-nowrap font-mono text-2xs text-txt-tertiary lg:block" dateTime={task.created_at} title={task.created_at}>
+        {task.created_at}
+      </time>
+      <ChevronRight className="h-3.5 w-3.5 flex-none text-txt-tertiary" />
     </button>
   )
 }

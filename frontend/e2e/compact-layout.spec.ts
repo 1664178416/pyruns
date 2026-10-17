@@ -33,11 +33,13 @@ async function mockWorkspace(page: Page, taskCount = 1) {
     })),
   } }))
   await page.route('**/api/tasks?*', route => {
-    const offset = Number(new URL(route.request().url()).searchParams.get('offset') || 0)
+    const params = new URL(route.request().url()).searchParams
+    const offset = Number(params.get('offset') || 0)
+    const limit = Number(params.get('limit') || 200)
     return route.fulfill({ json: {
-      items: tasks.slice(offset, offset + 200), total: taskCount, offset, limit: 200,
-      has_more: offset + 200 < taskCount,
-      status_counts: { ...summary, total: taskCount, completed: taskCount, failed: 0 },
+      items: tasks.slice(offset, offset + limit), total: taskCount, offset, limit,
+      has_more: offset + limit < taskCount,
+      status_counts: { pending: 0, queued: 0, running: 0, completed: taskCount, failed: 0, cancelled: 0 },
     } })
   })
   await page.route(`**/api/tasks/${taskName}?*`, route => route.fulfill({ json: task }))
@@ -64,6 +66,41 @@ async function expectInsideViewport(page: Page, locator: Locator) {
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height + 1)
 }
 
+async function expectCompactTaskRow(page: Page) {
+  const row = page.getByRole('button').filter({ hasText: taskName })
+  await row.scrollIntoViewIfNeeded()
+  await expectInsideViewport(page, row)
+  expect((await row.boundingBox())!.height).toBeLessThanOrEqual(44)
+  const layout = await row.evaluate(element => {
+    const rowBox = element.getBoundingClientRect()
+    const children = Array.from(element.children).filter(child => getComputedStyle(child).display !== 'none')
+    return {
+      rowRight: rowBox.right,
+      children: children.map(child => {
+        const box = child.getBoundingClientRect()
+        return { centerY: box.y + box.height / 2, right: box.right, width: box.width }
+      }),
+    }
+  })
+  const centers = layout.children.map(child => child.centerY)
+  expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(1)
+  expect(layout.children[1].width).toBeGreaterThan(0)
+  // The chevron stays at the trailing edge when the timestamp is hidden.
+  expect(layout.rowRight - layout.children.at(-1)!.right).toBeLessThanOrEqual(10)
+}
+
+async function expectCompactManagerFooter(page: Page) {
+  const footer = page.locator('footer').filter({ hasText: 'matching task(s)' })
+  await expectInsideViewport(page, footer)
+  const summary = footer.locator(':scope > span')
+  const next = footer.getByRole('button', { name: 'Next page', exact: true })
+  await expect(next).toBeVisible()
+  const summaryBox = (await summary.boundingBox())!
+  const nextBox = (await next.boundingBox())!
+  expect(Math.abs(summaryBox.y + summaryBox.height / 2 - nextBox.y - nextBox.height / 2)).toBeLessThanOrEqual(1)
+  expect((await footer.boundingBox())!.height).toBeLessThanOrEqual(61)
+}
+
 test('desktop keeps six GPUs and recent work compact without crowding log actions', async ({ page, isMobile }, testInfo) => {
   test.skip(isMobile, 'Desktop density is checked with a fine pointer.')
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -85,9 +122,15 @@ test('desktop keeps six GPUs and recent work compact without crowding log action
     expect(box!.height).toBeLessThanOrEqual(100)
   }
   const recentTask = page.getByRole('button').filter({ hasText: taskName })
-  await expectInsideViewport(page, recentTask)
+  await expectCompactTaskRow(page)
   expect((await recentTask.boundingBox())!.y).toBeLessThanOrEqual(500)
   await page.screenshot({ path: testInfo.outputPath('compact-dashboard-desktop.png') })
+
+  await page.setViewportSize({ width: 768, height: 900 })
+  await expectCompactTaskRow(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('compact-dashboard-tablet.png') })
+  await page.setViewportSize({ width: 1440, height: 900 })
 
   await recentTask.click()
   const actions = page.getByRole('toolbar', { name: 'Log actions' })
@@ -111,14 +154,23 @@ test('desktop keeps six GPUs and recent work compact without crowding log action
   await expect(pagination.getByRole('button', { name: 'Previous page', exact: true })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'View layout-task-200, completed', exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('compact-monitor-desktop.png') })
+
+  await page.getByRole('link', { name: 'Manager', exact: true }).click()
+  await expectCompactManagerFooter(page)
+  await page.screenshot({ path: testInfo.outputPath('compact-manager-desktop.png') })
+  await page.setViewportSize({ width: 768, height: 900 })
+  await expectCompactManagerFooter(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('compact-manager-tablet.png') })
 })
 
 test('375px layout keeps GPU details and log controls reachable without horizontal overflow', async ({ page, isMobile }, testInfo) => {
   test.skip(!isMobile, 'The narrow layout is checked with touch input.')
   await page.setViewportSize({ width: 375, height: 812 })
-  await mockWorkspace(page)
+  await mockWorkspace(page, 201)
   await page.goto('/?token=pyruns-e2e-access-token')
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  await expectCompactTaskRow(page)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.getByRole('button', { name: 'View details for GPU 0 NVIDIA A100-PCIE-40GB' }).click()
   const gpuDialog = page.getByRole('dialog', { name: 'GPU 0 | NVIDIA A100-PCIE-40GB' })
@@ -146,4 +198,9 @@ test('375px layout keeps GPU details and log controls reachable without horizont
   await expect(page.getByRole('dialog', { name: `Task details for ${taskName}`, exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('compact-monitor-mobile.png') })
+  await page.getByRole('dialog', { name: `Task details for ${taskName}`, exact: true }).getByRole('button', { name: 'Close task details' }).click()
+  await page.getByRole('link', { name: 'Manager', exact: true }).click()
+  await expectCompactManagerFooter(page)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('compact-manager-mobile.png') })
 })
