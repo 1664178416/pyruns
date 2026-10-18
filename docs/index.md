@@ -53,4 +53,10 @@ pyr exec -nt train -d --gpu-wait 2-20-70-15-2 -c "python train.py"
 就不进行 GPU 等待。UI 的 Runtime 开关只影响之后从 UI 提交的任务。
 详见 [GPU 等待规则](/cli-guide#gpu-wait)。
 
+需要持续的 Web UI 调度时，运行 `pyr ui` 或 `pyr ui shell`，在 `Runtime -> GPU`
+开启 `GPU scheduling` 并保存。UI 支持 `GPUs required`、最低空闲显存（GiB）、最低 GPU
+空闲率（%）、稳定时间（秒）和最长等待（小时），也支持自动选卡、指定 GPU 编号、
+`CUDA_VISIBLE_DEVICES` 约束和多卡同型号检查；Monitor 会显示 `ready` / `blocked` 与逐卡阻塞原因。
+CLI 的 `--gpu-wait` 只对当前一次 `exec` / `run` 生效，不会继承 UI 设置。
+
 从 [安装与快速开始](/getting-started) 进入完整使用流程，或直接查看 [Web 界面操作](/ui-guide) 和 [命令行 CLI 控制](/cli-guide)。

@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/pypi/l/pyruns.svg)](https://github.com/LthreeC/pyruns/blob/main/LICENSE)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-2563eb.svg)](https://lthreec.github.io/pyruns/)
 
-Pyruns 是一个磁盘优先、面向复现实验和终端任务的运行管理器。它把命令、配置、日志、环境、运行历史和指标保存在项目的 `_pyruns_` 目录中，并提供 Git 式一次性 CLI 与可选 Web UI。
+Pyruns 是一个磁盘优先、面向复现实验和终端任务的运行管理器。它把命令、配置、日志、环境、运行历史和指标保存在项目的 `_pyruns_` 目录中，并提供 Git 式一次性 CLI、GPU 空闲等待（GPU wait）、显存与利用率阈值、多 GPU 任务排队调度（`--gpu-wait`）和可选 Web UI。
 
 ![Generator](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/tab_generator.png)
 
@@ -105,7 +105,9 @@ pyr exec -nt gpu-pipeline -d --gpu-wait 1-8-70-15-2 --stdin < pipeline.sh
 并标明 `ready` / `blocked` 及原因。例如 GPU 利用率 93% 对应空闲率 7%，未达到 100% 空闲的要求。
 
 CLI 规则仅本次运行生效，再次 `run` 时需要重新传入；不传 `--gpu-wait` 就不进行 GPU 等待。
-UI 的 Runtime 开关只影响之后从 UI 提交的任务。
+UI 的 Runtime 开关只影响之后从 UI 提交的任务，不会回溯修改已经排队或运行中的任务，也不会替 CLI 自动启用等待。
+
+使用 UI 时运行 `pyr ui` 或 `pyr ui shell`，打开侧栏 `Runtime -> GPU`，启用 `GPU scheduling` 后保存。UI 的 GPU scheduler 提供 `GPUs required`、`Minimum free memory (GiB)`、`Minimum GPU idle (%)`、`Stable for (sec)` 和 `Maximum wait (hr)`；高级设置还可选择自动分配或指定 GPU 编号、遵循 `CUDA_VISIBLE_DEVICES`、要求多卡同型号。Monitor 会显示排队任务的 `ready` / `blocked` 状态和每张卡的阻塞原因。
 用 `pyr show gpu-train` 查看本次规则和等待状态，`pyr metrics` 查看当前 GPU 指标。
 指定卡、单位等完整说明见 [CLI 指南](docs/cli-guide.md) 或 `pyr exec --help`。
 

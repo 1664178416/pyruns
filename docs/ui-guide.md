@@ -128,6 +128,30 @@ Generator 是整个 UI 最像“工作台”的页面。
 
 创建成功会立即显示任务结果；随后刷新模板列表不会阻塞继续操作。
 
+## Runtime：运行环境与 GPU 调度
+
+GPU 等待（GPU wait）是 UI 的任务调度规则，适合在共享 GPU 机器上按显存与空闲率排队运行任务。
+
+侧栏 `Runtime` 面板按 `Python`、`Env`、`GPU` 三个标签组织运行设置。Python 和环境变量设置用于后续从 UI 提交的任务；GPU 设置是项目运行时的持久化调度规则。修改后必须点击 `Save`，标签上的未保存标记会提示尚未写入；`Reset` 恢复当前已保存值。
+
+### GPU scheduling / GPU wait
+
+在 `Runtime -> GPU` 打开 `GPU scheduling` 后，UI 只会在 GPU 满足规则时启动之后提交的任务。它是 UI 的持续设置，作用于后续 UI 任务；CLI 的 `pyr exec` / `pyr run` 仍须在单次命令中显式传入 `--gpu-wait`。关闭 UI 开关或不传 CLI 参数都表示不等待 GPU。
+
+| UI 字段 | 含义 |
+| --- | --- |
+| `GPUs required` | 一次任务需要同时满足条件的 GPU 数量；多张卡必须一起达标 |
+| `Minimum free memory (GiB)` | 每张候选卡最低空闲显存，单位固定为 GiB |
+| `Minimum GPU idle (%)` | 每张候选卡最低空闲率；空闲率等于 `100 - GPU utilization` |
+| `Stable for (sec)` | 显存和空闲率连续达标的秒数；`0` 表示立即启动 |
+| `Maximum wait (hr)` | 启动前最长排队时间；`0` 表示不限时，不限制任务开始后的运行时间 |
+
+GPU 预览会逐卡显示当前显存、利用率、`Pass` / `Blocked` 和原因。预览只反映当前指标；真正启动时还会检查任务的 `CUDA_VISIBLE_DEVICES`、工作区内 GPU reservation、稳定时间和可用性。指标缺失不会被当成空闲，也不会在超时后自动退回 CPU。
+
+`Advanced scheduling rules` 可选择 `Auto pick` 或 `Specific indices`（例如 `0,1`），并可开启 `Respect task CUDA_VISIBLE_DEVICES` 和 `Require the same model for multi-GPU tasks`。UI 不再要求单独填写 `tasks per GPU` 或 `GPU per task`；一次任务所需卡数统一由 `GPUs required` 表达。
+
+任务进入排队后，Monitor 会显示 `Waiting for GPU capacity`、已就绪/所需卡数、稳定时间、剩余等待时间以及每张 GPU 的显存、空闲率、预留和缺失指标等阻塞原因。完整的 CLI 五段规则、单位、指定卡写法和 `ready` / `blocked` 输出见 [GPU 空闲等待规则](cli-guide.md#gpu-wait)。
+
 ## Manager
 
 Manager 是任务的调度台。  

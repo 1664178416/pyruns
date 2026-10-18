@@ -210,6 +210,19 @@ python_executable: ""
 conda_env: ""
 conda_executable: conda
 global_env: {}
+
+# GPU scheduler / GPU wait defaults
+gpu_scheduler_enabled: false
+gpu_scheduler_task_mode: single
+gpu_scheduler_selection_mode: auto
+gpu_scheduler_gpus_per_task: 1
+gpu_scheduler_device_ids: []
+gpu_scheduler_min_free_memory_gb: 8
+gpu_scheduler_min_idle_pct: 70
+gpu_scheduler_stable_seconds: 15
+gpu_scheduler_max_wait_seconds: 172800
+gpu_scheduler_respect_cuda_visible_devices: true
+gpu_scheduler_require_same_gpu_model: false
 ```
 
 `global_env` 的覆盖顺序为：终端环境 < `global_env` < 任务 Env。UI 里的 Workspace Env 文本支持 `KEY=value`、`export KEY=value`、单双引号和注释；不会执行命令替换、变量展开或任意 shell 代码。
@@ -250,6 +263,25 @@ Manager 的并发数不是持久设置。CLI 在每次批量运行时用 `run -j
 ### `shell_executable`
 
 只有在 `shell_mode: custom` 时才会生效。
+
+### GPU scheduler / GPU 空闲等待
+
+这些 `gpu_scheduler_*` 键是 Web UI Runtime 的持久化设置，保存在项目的
+`_pyruns_settings.yaml` 中。常用设置如下：
+
+| 设置 | 作用与单位 |
+| --- | --- |
+| `gpu_scheduler_enabled` | `true` 时，后续从 UI 提交的任务等待 GPU；`false` 时直接按普通运行流程提交 |
+| `gpu_scheduler_task_mode` / `gpu_scheduler_gpus_per_task` | 内部兼容字段；UI 用 `GPUs required` 统一表达一次任务需要的卡数 |
+| `gpu_scheduler_selection_mode` / `gpu_scheduler_device_ids` | `auto` 自动选择，或 `specified` 配置固定的物理 GPU 编号列表 |
+| `gpu_scheduler_min_free_memory_gb` | 每卡最低空闲显存，单位 GiB，默认 8 |
+| `gpu_scheduler_min_idle_pct` | 每卡最低空闲率，单位百分比，默认 70；空闲率为 `100 - GPU utilization` |
+| `gpu_scheduler_stable_seconds` | 连续达标时间，单位秒，默认 15；0 表示立即启动 |
+| `gpu_scheduler_max_wait_seconds` | 最长排队时间，单位秒，默认 172800（48 小时）；0 表示不限时 |
+| `gpu_scheduler_respect_cuda_visible_devices` | 是否尊重任务的 `CUDA_VISIBLE_DEVICES`，默认开启 |
+| `gpu_scheduler_require_same_gpu_model` | 多 GPU 任务是否要求同型号，默认关闭 |
+
+UI 保存后只影响之后从 UI 提交的任务，不回溯修改已排队或运行中的任务，也不替 CLI 的一次性 `--gpu-wait` 规则。旧配置中的利用率上限会迁移为空闲率下限；UI 不再显示 `tasks per GPU` 或 `GPU per task` 两个容易混淆的独立字段。
 
 ## 8. shell 任务执行约束
 

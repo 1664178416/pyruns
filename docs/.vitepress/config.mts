@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   base: "/pyruns/",
   title: "Pyruns",
-  description: "python调参、任务批量生成、批量运行、管理、监控",
+  description: "Python 调参、批量实验、Shell 任务、GPU wait、GPU scheduler、显存与 GPU 空闲率阈值、多 GPU 排队、CLI 与 Web UI 运行管理",
   useWebFonts: false,
   themeConfig: {
     sidebar: [

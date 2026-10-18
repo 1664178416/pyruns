@@ -131,6 +131,10 @@ UI 的 Runtime 开关只影响之后从 UI 提交的任务。
 用 `pyr show gpu-train` 查看本次规则和等待状态，`pyr metrics` 查看当前 GPU 指标。
 指定卡、单位和其他细节见 [GPU 等待规则](cli-guide.md#gpu-wait) 或 `pyr exec --help`。
 
+如果要让后续从 Web UI 提交的任务持续使用 GPU wait scheduler，运行 `pyr ui` 或 `pyr ui shell`，
+在 `Runtime -> GPU` 打开并保存 `GPU scheduling`。UI 的 `GPUs required`、空闲显存、GPU 空闲率、
+稳定时间和最长等待与 CLI 的五项规则含义一致；UI 设置持续生效，CLI 的 `--gpu-wait` 仍只对当前一次运行生效。
+
 ## 4. 使用 `-c` 执行完整命令
 
 普通程序和脚本文件都使用 `-c "完整命令"`。脚本需要的解释器写在命令内，

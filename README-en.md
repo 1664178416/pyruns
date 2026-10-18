@@ -9,7 +9,7 @@ English | [简体中文](README.md)
 [![License](https://img.shields.io/pypi/l/pyruns.svg)](https://github.com/LthreeC/pyruns/blob/main/LICENSE)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-2563eb.svg)](https://lthreec.github.io/pyruns/)
 
-Pyruns is a disk-first runner for reproducible experiments and terminal workloads. It stores commands, configurations, logs, environments, run history, and metrics under the project's `_pyruns_` directory, then exposes them through a Git-style one-shot CLI and an optional Web UI.
+Pyruns is a disk-first runner for reproducible experiments and terminal workloads. It stores commands, configurations, logs, environments, run history, and metrics under the project's `_pyruns_` directory, then exposes them through a Git-style one-shot CLI, GPU wait scheduling (GPU wait), memory and utilization thresholds, multi-GPU queueing with `--gpu-wait`, and an optional Web UI.
 
 ![Generator](https://raw.githubusercontent.com/LthreeC/pyruns/main/docs/assets/tab_generator.png)
 
@@ -110,7 +110,9 @@ For example, 93% GPU utilization means 7% idle, which does not meet a 100% idle 
 
 The CLI rule applies only to this invocation and does not become a task default.
 Pass it again on a rerun. Omitting `--gpu-wait` skips GPU waiting.
-The UI Runtime switch affects only future tasks submitted from the UI.
+The UI Runtime switch affects only future tasks submitted from the UI; it does not change tasks that are already queued or running, and it never enables GPU waiting for CLI submissions.
+
+For the Web UI, run `pyr ui` or `pyr ui shell`, open `Runtime -> GPU`, enable `GPU scheduling`, and save. The UI GPU scheduler exposes `GPUs required`, `Minimum free memory (GiB)`, `Minimum GPU idle (%)`, `Stable for (sec)`, and `Maximum wait (hr)`. Advanced settings cover automatic or specific GPU selection, `CUDA_VISIBLE_DEVICES`, and requiring one GPU model for multi-GPU tasks. Monitor shows `ready` / `blocked` status and per-GPU reasons for queued tasks.
 Inspect this run's rule and waiting state with
 `pyr show gpu-train`, or current GPU metrics with `pyr metrics`.
 See the [CLI guide](docs/cli-guide.md) or `pyr exec --help` for device selection and units.

@@ -342,7 +342,9 @@ pyr exec --name train --detach -c "python train.py --epochs 100"
 pyr -w shell wait train
 ```
 
-### 等待 GPU：`--gpu-wait` {#gpu-wait}
+### GPU 空闲等待 / GPU wait scheduler：`--gpu-wait` {#gpu-wait}
+
+这是 CLI 的一次性 GPU wait 参数：它让 `pyr exec` 或 `pyr run` 在满足显存、GPU 空闲率、稳定时间和多卡数量后再启动。要记录完整的多行 Shell 命令，使用 `--stdin`；普通单行命令使用 `-c`。不传 `--gpu-wait` 就直接运行。
 
 `exec` 和 `run` 使用同一条规则，必须完整填写五项；裸数字的单位与 Web UI 一致：
 
